@@ -5,7 +5,13 @@ const baseURL = window.location.port === '3001' || window.location.pathname.star
   ? `${window.location.origin}/api`
   : import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3001/api`;
 
-const api = axios.create({ baseURL, timeout: 10000 });
+const api = axios.create({
+  baseURL,
+  timeout: 10000,
+  headers: {
+    'ngrok-skip-browser-warning': 'true',
+  },
+});
 
 // Auth
 export const getAuthEmployees = () => api.get('/auth/employees');
