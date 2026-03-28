@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd backend && npm run dev"],
+      "port": 3001
+    },
+    {
+      "name": "mobile",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd mobile && npm run dev -- --port 5176"],
+      "port": 5176
+    },
+    {
+      "name": "desktop",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd desktop && npm run dev"],
+      "port": 5173
+    }
+  ]
+}

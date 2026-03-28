@@ -1,0 +1,23 @@
+{
+  "name": "nexgen",
+  "version": "1.0.0",
+  "description": "Petrol Station Management System",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "backend",
+    "desktop",
+    "mobile"
+  ],
+  "scripts": {
+    "backend:dev": "cd backend && npm run dev",
+    "desktop:dev": "cd desktop && npm run dev",
+    "mobile:dev": "cd mobile && npm run dev",
+    "dev": "concurrently \"npm run backend:dev\" \"npm run desktop:dev\"",
+    "db:migrate": "cd backend && npm run migrate",
+    "db:seed": "cd backend && npm run seed"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
