@@ -24,6 +24,14 @@ export function verifyToken(token: string): { id: number; role: string; ts: numb
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  // Allow desktop app (Electron) using shared desktop key — desktop is admin-only by design
+  const desktopKey = req.headers['x-desktop-key'];
+  if (desktopKey && desktopKey === (process.env.DESKTOP_KEY || 'nexgen-desktop-2026')) {
+    (req as any).employee = { id: 0, role: 'admin' };
+    return next();
+  }
+
+  // Mobile: require Bearer token
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, error: 'Authentication required' });

@@ -3,6 +3,10 @@ import axios from 'axios';
 const api = axios.create({
   baseURL: 'http://localhost:3001/api',
   timeout: 10000,
+  headers: {
+    // Desktop app is admin-only — bypass mobile role auth with shared key
+    'x-desktop-key': 'nexgen-desktop-2026',
+  },
 });
 
 // ============ Employees ============
@@ -22,9 +26,11 @@ export const deletePump = (id: number) => api.delete(`/pumps/${id}`);
 
 // ============ Tanks ============
 export const getTanks = () => api.get('/tanks');
+export const getTank = (id: number) => api.get(`/tanks/${id}`);
 export const createTank = (data: any) => api.post('/tanks', data);
 export const updateTank = (id: number, data: any) => api.put(`/tanks/${id}`, data);
 export const deleteTank = (id: number) => api.delete(`/tanks/${id}`);
+export const getTankStockSummary = (id: number) => api.get(`/tanks/${id}/stock-summary`);
 
 // ============ Shifts ============
 export const getShifts = (params?: any) => api.get('/shifts', { params });
@@ -85,11 +91,14 @@ export const getCreditAccountStatement = (id: number) => api.get(`/credit-accoun
 // ============ Fuel Deliveries ============
 export const getFuelDeliveries = (params?: any) => api.get('/fuel-deliveries', { params });
 export const createFuelDelivery = (data: any) => api.post('/fuel-deliveries', data);
+export const updateFuelDelivery = (id: number, data: any) => api.put(`/fuel-deliveries/${id}`, data);
 export const deleteFuelDelivery = (id: number) => api.delete(`/fuel-deliveries/${id}`);
 
 // ============ Tank Dips ============
 export const getTankDips = (params?: any) => api.get('/tank-dips', { params });
 export const createTankDip = (data: any) => api.post('/tank-dips', data);
+export const updateTankDip = (id: number, data: any) => api.put(`/tank-dips/${id}`, data);
+export const deleteTankDip = (id: number) => api.delete(`/tank-dips/${id}`);
 
 // ============ Invoices ============
 export const getInvoices = (params?: any) => api.get('/invoices', { params });
