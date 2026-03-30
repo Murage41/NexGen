@@ -562,6 +562,28 @@ router.put('/:id/close', async (req, res) => {
       }
     }
 
+    // Deduct litres sold from each linked tank
+    const allReadings = await db('pump_readings')
+      .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+      .where('pump_readings.shift_id', req.params.id)
+      .where('pumps.active', true)
+      .whereNotNull('pumps.tank_id')
+      .select('pumps.tank_id', 'pump_readings.litres_sold');
+
+    // Group litres sold by tank_id
+    const tankDeductions: Record<number, number> = {};
+    for (const r of allReadings) {
+      const tankId = r.tank_id;
+      tankDeductions[tankId] = (tankDeductions[tankId] || 0) + parseFloat(r.litres_sold || 0);
+    }
+    for (const [tankId, litres] of Object.entries(tankDeductions)) {
+      if (litres > 0) {
+        await db('tanks')
+          .where({ id: parseInt(tankId) })
+          .decrement('current_stock_litres', litres);
+      }
+    }
+
     // Close the shift
     await db('shifts').where({ id: req.params.id }).update({
       status: 'closed',

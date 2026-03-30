@@ -18,12 +18,17 @@ export default function Login() {
       .finally(() => setLoading(false));
   }, []);
 
+  function storeSession(data: any, token?: string) {
+    if (token) localStorage.setItem('nexgen_token', token);
+    setUser(data);
+  }
+
   async function handleLogin() {
     if (!selectedId || pin.length !== 4) return;
     setError('');
     try {
       const res = await apiLogin(selectedId, pin);
-      setUser(res.data.data);
+      storeSession(res.data.data, res.data.token);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Login failed');
     }
@@ -38,7 +43,7 @@ export default function Login() {
         setTimeout(() => {
           setError('');
           apiLogin(selectedId, newPin)
-            .then(res => setUser(res.data.data))
+            .then(res => storeSession(res.data.data, res.data.token))
             .catch((err: any) => {
               setError(err.response?.data?.error || 'Login failed');
               setPin('');

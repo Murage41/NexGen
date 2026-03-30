@@ -36,7 +36,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const isAdmin = user?.role === 'admin';
-  const logout = () => setUser(null);
+  const logout = () => {
+    localStorage.removeItem('nexgen_token');
+    setUser(null);
+  };
 
   return (
     <AuthContext.Provider value={{ user, setUser, isAdmin, logout }}>

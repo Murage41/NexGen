@@ -13,6 +13,15 @@ const api = axios.create({
   },
 });
 
+// Attach session token to every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('nexgen_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Auth
 export const getAuthEmployees = () => api.get('/auth/employees');
 export const login = (employee_id: number, pin: string) => api.post('/auth/login', { employee_id, pin });
@@ -51,10 +60,30 @@ export const getPumps = () => api.get('/pumps');
 export const getActivePumps = () => api.get('/pumps/active');
 export const createPump = (data: any) => api.post('/pumps', data);
 export const updatePump = (id: number, data: any) => api.put(`/pumps/${id}`, data);
+export const deletePump = (id: number) => api.delete(`/pumps/${id}`);
 
 // Tanks
 export const getTanks = () => api.get('/tanks');
+export const getTank = (id: number) => api.get(`/tanks/${id}`);
 export const createTank = (data: any) => api.post('/tanks', data);
+export const updateTank = (id: number, data: any) => api.put(`/tanks/${id}`, data);
+export const deleteTank = (id: number) => api.delete(`/tanks/${id}`);
+export const getTankStockSummary = (id: number) => api.get(`/tanks/${id}/stock-summary`);
+
+// Tank Dips
+export const getTankDips = (params?: { tank_id?: number; date?: string }) => api.get('/tank-dips', { params });
+export const createTankDip = (data: { tank_id: number; measured_litres: number; dip_date?: string }) =>
+  api.post('/tank-dips', data);
+export const updateTankDip = (id: number, data: { measured_litres?: number; dip_date?: string }) =>
+  api.put(`/tank-dips/${id}`, data);
+export const deleteTankDip = (id: number) => api.delete(`/tank-dips/${id}`);
+
+// Fuel Deliveries
+export const getFuelDeliveries = (params?: { from?: string; to?: string; tank_id?: number }) =>
+  api.get('/fuel-deliveries', { params });
+export const createFuelDelivery = (data: any) => api.post('/fuel-deliveries', data);
+export const updateFuelDelivery = (id: number, data: any) => api.put(`/fuel-deliveries/${id}`, data);
+export const deleteFuelDelivery = (id: number) => api.delete(`/fuel-deliveries/${id}`);
 
 // Fuel Prices
 export const getFuelPrices = () => api.get('/fuel-prices');

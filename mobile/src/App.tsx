@@ -12,6 +12,9 @@ import Credits from './pages/Credits';
 import FuelPricing from './pages/FuelPricing';
 import Employees from './pages/Employees';
 import Pumps from './pages/Pumps';
+import Tanks from './pages/Tanks';
+import TankDips from './pages/TankDips';
+import FuelDeliveries from './pages/FuelDeliveries';
 import Reports from './pages/Reports';
 import More from './pages/More';
 
@@ -35,6 +38,9 @@ export default function App() {
               <Route path="/more" element={<More />} />
               <Route path="/employees" element={<Employees />} />
               <Route path="/pumps" element={<Pumps />} />
+              <Route path="/tanks" element={<Tanks />} />
+              <Route path="/tanks/:id/dips" element={<TankDips />} />
+              <Route path="/deliveries" element={<FuelDeliveries />} />
               <Route path="/prices" element={<FuelPricing />} />
               <Route path="/reports" element={<Reports />} />
             </>

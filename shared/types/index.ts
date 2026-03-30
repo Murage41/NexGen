@@ -25,6 +25,7 @@ export interface Tank {
   label: string;
   fuel_type: FuelType;
   capacity_litres: number;
+  current_stock_litres: number;
   created_at: string;
 }
 
@@ -109,7 +110,8 @@ export interface TankDip {
   id: number;
   tank_id: number;
   measured_litres: number;
-  timestamp: string;
+  dip_date: string; // 'YYYY-MM-DD' — the date of the physical measurement
+  timestamp: string; // when the entry was recorded
   // Joined
   tank_label?: string;
   fuel_type?: FuelType;
@@ -183,12 +185,19 @@ export interface StockSummary {
   tank_id: number;
   tank_label: string;
   fuel_type: FuelType;
-  capacity: number;
-  last_dip: number;
-  total_deliveries: number;
-  total_sales: number;
-  expected_stock: number;
-  variance: number;
+  capacity_litres: number;
+  current_stock_litres: number;
+  last_dip: {
+    id: number;
+    dip_date: string;
+    measured_litres: number;
+    timestamp: string;
+  } | null;
+  dip_variance: number | null; // current_stock_litres - last_dip.measured_litres (positive = book says more than physical = loss)
+  total_deliveries_in: number;
+  total_pump_sales_out: number;
+  deliveries: FuelDelivery[];
+  dips: TankDip[];
 }
 
 export interface ApiResponse<T> {

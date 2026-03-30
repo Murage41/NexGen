@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import db from '../database';
+import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
+
+// Helper: check if any shift is currently open
+async function hasOpenShift(): Promise<boolean> {
+  const open = await db('shifts').where({ status: 'open' }).first();
+  return !!open;
+}
 
 router.get('/', async (req, res) => {
   try {
@@ -37,7 +44,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const { label, nozzle_label, fuel_type, tank_id, initial_litres, initial_amount } = req.body;
     const [id] = await db('pumps').insert({
@@ -52,8 +59,11 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAdmin, async (req, res) => {
   try {
+    if (await hasOpenShift()) {
+      return res.status(400).json({ success: false, error: 'Cannot edit pumps while a shift is open. Close the shift first.' });
+    }
     const { label, nozzle_label, fuel_type, tank_id, active, initial_litres, initial_amount } = req.body;
     const updateData: any = { label, nozzle_label, fuel_type, tank_id, active };
     if (initial_litres !== undefined) updateData.initial_litres = initial_litres;
@@ -102,8 +112,11 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
+    if (await hasOpenShift()) {
+      return res.status(400).json({ success: false, error: 'Cannot deactivate pumps while a shift is open. Close the shift first.' });
+    }
     await db('pumps').where({ id: req.params.id }).update({ active: false });
     res.json({ success: true });
   } catch (err: any) {

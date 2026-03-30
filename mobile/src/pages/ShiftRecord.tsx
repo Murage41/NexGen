@@ -255,7 +255,9 @@ export default function ShiftRecord() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm">KES {c.amount.toLocaleString()}</span>
-                <button onClick={() => handleDeleteCredit(c.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>
+                {isAdmin && (
+                  <button onClick={() => handleDeleteCredit(c.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>
+                )}
               </div>
             </div>
           ))}
@@ -352,7 +354,9 @@ export default function ShiftRecord() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm">KES {e.amount.toLocaleString()}</span>
-                <button onClick={() => handleDeleteExpense(e.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>
+                {isAdmin && (
+                  <button onClick={() => handleDeleteExpense(e.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>
+                )}
               </div>
             </div>
           ))}

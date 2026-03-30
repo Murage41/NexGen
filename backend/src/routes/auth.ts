@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import db from '../database';
+import { generateToken } from '../middleware/requireAdmin';
 
 const router = Router();
 
@@ -23,9 +24,10 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid PIN' });
     }
 
-    // Return employee data without pin
+    // Return employee data without pin, plus a session token
     const { pin: _pin, ...employeeData } = employee;
-    res.json({ success: true, data: employeeData });
+    const token = generateToken(employee.id, employee.role);
+    res.json({ success: true, data: employeeData, token });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

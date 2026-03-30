@@ -1,11 +1,13 @@
 import { useNavigate } from 'react-router-dom';
-import { Users, Fuel, DollarSign, BarChart3, LogOut } from 'lucide-react';
+import { Users, Fuel, DollarSign, BarChart3, LogOut, Droplets, Truck } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 
 const menuItems = [
   { label: 'Employees', path: '/employees', icon: Users, color: 'text-purple-500', bg: 'bg-purple-50' },
   { label: 'Pumps', path: '/pumps', icon: Fuel, color: 'text-blue-500', bg: 'bg-blue-50' },
+  { label: 'Tanks & Stock', path: '/tanks', icon: Droplets, color: 'text-cyan-500', bg: 'bg-cyan-50' },
+  { label: 'Fuel Deliveries', path: '/deliveries', icon: Truck, color: 'text-orange-500', bg: 'bg-orange-50' },
   { label: 'Fuel Pricing', path: '/prices', icon: DollarSign, color: 'text-green-500', bg: 'bg-green-50' },
   { label: 'Reports', path: '/reports', icon: BarChart3, color: 'text-amber-500', bg: 'bg-amber-50' },
 ];
