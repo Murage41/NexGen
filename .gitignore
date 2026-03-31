@@ -145,3 +145,6 @@ temp/
 # -----------------------------------------------------------------------------
 .pm2/
 ecosystem.config.js.bak
+
+# Claude Code internal
+.claude/

@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// When served from backend (/mobile), use same origin; otherwise use same host on port 3001
-const baseURL = window.location.port === '3001' || window.location.pathname.startsWith('/mobile')
+// When served from backend (port 3001), use same origin; otherwise use same host on port 3001
+const baseURL = window.location.port === '3001'
   ? `${window.location.origin}/api`
   : import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3001/api`;
 
@@ -94,6 +94,8 @@ export const createFuelPrice = (data: any) => api.post('/fuel-prices', data);
 export const getExpenses = (params?: any) => api.get('/expenses', { params });
 export const createExpense = (data: any) => api.post('/expenses', data);
 export const deleteExpense = (id: number) => api.delete(`/expenses/${id}`);
+export const getExpenseCategories = () => api.get('/expenses/categories');
+export const getExpenseSummary = (params?: any) => api.get('/expenses/summary', { params });
 
 // Credits
 export const getCredits = (params?: any) => api.get('/credits', { params });
@@ -109,5 +111,8 @@ export const deleteCreditAccount = (id: number) => api.delete(`/credit-accounts/
 // Reports
 export const getDailyReport = (date?: string) => api.get('/reports/daily', { params: { date } });
 export const getMonthlyReport = (month?: string) => api.get('/reports/monthly', { params: { month } });
+export const getStockReconciliation = (date?: string) => api.get('/reports/stock-reconciliation', { params: { date } });
+export const getDebtorAging = () => api.get('/reports/debtor-aging');
+export const getCashFlow = (params?: { from?: string; to?: string }) => api.get('/reports/cash-flow', { params });
 
 export default api;
