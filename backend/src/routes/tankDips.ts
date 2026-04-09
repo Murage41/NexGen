@@ -1,14 +1,12 @@
 import { Router } from 'express';
 import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
+import { validate } from '../middleware/validate';
+import { createTankDipSchema, updateTankDipSchema } from '../schemas';
+import { computeBookStock } from '../services/stockCalculator';
+import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
-
-// Helper: check if any shift is currently open
-async function hasOpenShift(): Promise<boolean> {
-  const open = await db('shifts').where({ status: 'open' }).first();
-  return !!open;
-}
 
 // GET all dips (filterable by tank_id and date)
 router.get('/', async (req, res) => {
@@ -16,6 +14,7 @@ router.get('/', async (req, res) => {
     const { tank_id, date } = req.query;
     let query = db('tank_dips')
       .join('tanks', 'tank_dips.tank_id', 'tanks.id')
+      .whereNull('tank_dips.deleted_at')
       .select('tank_dips.*', 'tanks.label as tank_label', 'tanks.fuel_type')
       .orderByRaw('tank_dips.dip_date DESC, tank_dips.timestamp DESC');
     if (tank_id) query = query.where('tank_dips.tank_id', tank_id);
@@ -27,19 +26,23 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST create a new dip — blocked while a shift is open
-router.post('/', requireAdmin, async (req, res) => {
+// POST create a new dip — admins can dip anytime
+router.post('/', requireAdmin, validate(createTankDipSchema), async (req, res) => {
   try {
-    if (await hasOpenShift()) {
-      return res.status(400).json({ success: false, error: 'Cannot record a tank dip while a shift is open. Close the shift first.' });
-    }
     const { tank_id, measured_litres, dip_date } = req.body;
-    // Default dip_date to today if not provided
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getKenyaDate();
+    const dipDate = dip_date || today;
+
+    // Computed book stock as-of the dip date (not the running counter)
+    const bookStock = await computeBookStock(tank_id, dipDate);
+    const varianceLitres = parseFloat(measured_litres) - bookStock;
+
     const [id] = await db('tank_dips').insert({
       tank_id,
       measured_litres,
-      dip_date: dip_date || today,
+      dip_date: dipDate,
+      book_stock_at_dip: bookStock,
+      variance_litres: varianceLitres,
     });
     const dip = await db('tank_dips')
       .join('tanks', 'tank_dips.tank_id', 'tanks.id')
@@ -52,16 +55,25 @@ router.post('/', requireAdmin, async (req, res) => {
   }
 });
 
-// PUT edit a dip — blocked while a shift is open
-router.put('/:id', requireAdmin, async (req, res) => {
+// PUT edit a dip
+router.put('/:id', requireAdmin, validate(updateTankDipSchema), async (req, res) => {
   try {
-    if (await hasOpenShift()) {
-      return res.status(400).json({ success: false, error: 'Cannot edit a tank dip while a shift is open. Close the shift first.' });
-    }
+    const existing = await db('tank_dips').where({ id: req.params.id }).first();
+    if (!existing) return res.status(404).json({ success: false, error: 'Dip not found' });
+
     const { measured_litres, dip_date } = req.body;
     const updateData: any = {};
-    if (measured_litres !== undefined) updateData.measured_litres = measured_litres;
-    if (dip_date !== undefined) updateData.dip_date = dip_date;
+    const effectiveDate = dip_date !== undefined ? dip_date : existing.dip_date;
+
+    if (measured_litres !== undefined || dip_date !== undefined) {
+      // Recompute book stock as-of the (possibly new) dip date
+      const bookStock = await computeBookStock(existing.tank_id, effectiveDate);
+      const ml = measured_litres !== undefined ? parseFloat(measured_litres) : parseFloat(existing.measured_litres);
+      updateData.book_stock_at_dip = bookStock;
+      updateData.variance_litres = ml - bookStock;
+      if (measured_litres !== undefined) updateData.measured_litres = measured_litres;
+      if (dip_date !== undefined) updateData.dip_date = dip_date;
+    }
     await db('tank_dips').where({ id: req.params.id }).update(updateData);
     const dip = await db('tank_dips')
       .join('tanks', 'tank_dips.tank_id', 'tanks.id')
@@ -74,13 +86,10 @@ router.put('/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE a dip — blocked while a shift is open
+// DELETE a dip
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
-    if (await hasOpenShift()) {
-      return res.status(400).json({ success: false, error: 'Cannot delete a tank dip while a shift is open. Close the shift first.' });
-    }
-    await db('tank_dips').where({ id: req.params.id }).delete();
+    await db('tank_dips').where({ id: req.params.id }).update({ deleted_at: new Date().toISOString() });
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

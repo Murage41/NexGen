@@ -8,6 +8,7 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
+  const [shiftDate, setShiftDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -30,7 +31,7 @@ export default function Shifts() {
   async function handleOpenShift() {
     if (!selectedEmployee) return;
     try {
-      const res = await openShift({ employee_id: parseInt(selectedEmployee) });
+      const res = await openShift({ employee_id: parseInt(selectedEmployee), shift_date: shiftDate });
       setShowNew(false);
       setSelectedEmployee('');
       navigate(`/shifts/${res.data.data.id}`);
@@ -72,6 +73,14 @@ export default function Shifts() {
                 <option key={emp.id} value={emp.id}>{emp.name}</option>
               ))}
             </select>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Shift Date</label>
+            <input
+              type="date"
+              value={shiftDate}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={e => setShiftDate(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg p-2 mb-4"
+            />
             {employees.length === 0 && (
               <p className="text-sm text-red-500 mb-4">No employees found. Add employees in the Employees page first.</p>
             )}
@@ -107,7 +116,7 @@ export default function Shifts() {
             {shifts.map((shift: any) => (
               <tr key={shift.id} className="border-t hover:bg-gray-50">
                 <td className="p-3 text-gray-500">{shift.id}</td>
-                <td className="p-3">{formatDate(shift.start_time)}</td>
+                <td className="p-3">{shift.shift_date ? formatDate(shift.shift_date + 'T12:00:00') : formatDate(shift.start_time)}</td>
                 <td className="p-3 font-medium">{shift.employee_name}</td>
                 <td className="p-3">{formatTime(shift.start_time)}</td>
                 <td className="p-3">{shift.end_time ? formatTime(shift.end_time) : '-'}</td>

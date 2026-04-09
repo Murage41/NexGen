@@ -3,9 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
-  repayDebt, getCreditAccounts,
+  repayDebt, getCreditAccounts, getShiftTankSummary,
 } from '../services/api';
-import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign } from 'lucide-react';
+import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets } from 'lucide-react';
 
 export default function ShiftDetail() {
   const { id } = useParams();
@@ -32,6 +32,8 @@ export default function ShiftDetail() {
   const [partialAmount, setPartialAmount] = useState('');
   const [showDebtRepayModal, setShowDebtRepayModal] = useState(false);
   const [debtRepayAmount, setDebtRepayAmount] = useState('');
+  const [tankSummary, setTankSummary] = useState<any[]>([]);
+  const [wagePaid, setWagePaid] = useState('');
 
   useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
 
@@ -59,6 +61,12 @@ export default function ShiftDetail() {
       setOutstandingDebts(d.outstanding_debts || []);
       setTotalOutstandingDebt(d.total_outstanding_debt || 0);
       setNotes(d.notes || '');
+      setWagePaid(String(d.employee_wage || 0));
+      // Load tank stock summary
+      try {
+        const tankRes = await getShiftTankSummary(parseInt(id!));
+        setTankSummary(tankRes.data.data?.tanks || []);
+      } catch { setTankSummary([]); }
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }
@@ -139,8 +147,11 @@ export default function ShiftDetail() {
       // 'none' = null (no deduction, full deficit becomes debt)
     }
     try {
-      await closeShift(parseInt(id!), { notes, deduct_amount: deductAmount });
+      const res = await closeShift(parseInt(id!), { notes, deduct_amount: deductAmount, wage_paid: parseFloat(wagePaid) || 0 });
       setShowCloseModal(false);
+      if (res.data?.warnings?.length) {
+        alert('Shift closed with warnings:\n\n' + res.data.warnings.join('\n'));
+      }
       await loadShift();
     } catch (err) { console.error(err); }
   }
@@ -194,8 +205,9 @@ export default function ShiftDetail() {
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Shift #{shift.id} — {shift.employee_name}</h1>
           <p className="text-sm text-gray-500">
-            {new Date(shift.start_time).toLocaleString('en-KE')}
-            {shift.end_time && ` — ${new Date(shift.end_time).toLocaleString('en-KE')}`}
+            Shift Date: {shift.shift_date || new Date(shift.start_time).toLocaleDateString('en-KE')}
+            {' · '}Started: {new Date(shift.start_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
+            {shift.end_time && ` — Closed: ${new Date(shift.end_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}`}
           </p>
         </div>
         <span className={`px-3 py-1 rounded-full text-sm font-medium ${isOpen ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -266,6 +278,42 @@ export default function ShiftDetail() {
           </div>
         </div>
       </div>
+
+      {/* Tank Stock Movement */}
+      {tankSummary.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <h2 className="text-lg font-semibold text-gray-700 flex items-center gap-2 mb-3">
+            <Droplets size={18} /> Tank Stock Movement
+          </h2>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 font-medium text-gray-600">Tank</th>
+                <th className="text-right p-2 font-medium text-gray-600">Opening (L)</th>
+                <th className="text-right p-2 font-medium text-gray-600">Deliveries (L)</th>
+                <th className="text-right p-2 font-medium text-gray-600">Sales (L)</th>
+                <th className="text-right p-2 font-medium text-gray-600">Closing (L)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tankSummary.map((t: any) => (
+                <tr key={t.tank_id} className="border-t hover:bg-gray-50">
+                  <td className="p-2">
+                    <span className="font-medium">{t.tank_label}</span>
+                    <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${t.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {t.fuel_type}
+                    </span>
+                  </td>
+                  <td className="p-2 text-right">{Number(t.opening_stock_litres || 0).toFixed(1)}</td>
+                  <td className="p-2 text-right text-green-600">{Number(t.deliveries_litres || 0) > 0 ? `+${Number(t.deliveries_litres).toFixed(1)}` : '—'}</td>
+                  <td className="p-2 text-right text-red-600">{Number(t.sales_litres || 0) > 0 ? `-${Number(t.sales_litres).toFixed(1)}` : '—'}</td>
+                  <td className="p-2 text-right font-semibold">{Number(t.closing_stock_litres || 0).toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Wage & Deduction */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
@@ -613,6 +661,17 @@ export default function ShiftDetail() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <h2 className="text-lg font-semibold mb-4">Close Shift #{shift.id}</h2>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Wages Paid This Shift (KES)</label>
+              <input type="number" step="0.01" min="0" value={wagePaid}
+                onChange={e => setWagePaid(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg p-2"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Default: employee daily wage. Set to 0 if already paid in a previous shift today.
+              </p>
+            </div>
 
             {variance >= 0 ? (
               <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">

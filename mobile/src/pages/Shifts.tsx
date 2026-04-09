@@ -9,6 +9,7 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState('');
+  const [shiftDate, setShiftDate] = useState(new Date().toISOString().split('T')[0]);
   const navigate = useNavigate();
 
   useEffect(() => { loadData(); }, []);
@@ -22,7 +23,7 @@ export default function Shifts() {
   async function handleOpen() {
     if (!selectedEmp) return;
     try {
-      const res = await openShift({ employee_id: parseInt(selectedEmp) });
+      const res = await openShift({ employee_id: parseInt(selectedEmp), shift_date: shiftDate });
       setShowNew(false);
       navigate(`/shifts/${res.data.data.id}`);
     } catch (err: any) {
@@ -47,6 +48,10 @@ export default function Shifts() {
               <option value="">Select Employee</option>
               {employees.map((e: any) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
+            <label className="block text-sm text-gray-600 mb-1">Shift Date</label>
+            <input type="date" value={shiftDate} max={new Date().toISOString().split('T')[0]}
+              onChange={e => setShiftDate(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg p-3 mb-3 text-base" />
             <div className="flex gap-2">
               <button onClick={() => setShowNew(false)} className="flex-1 py-3 rounded-lg bg-gray-100 text-gray-600 font-medium">Cancel</button>
               <button onClick={handleOpen} disabled={!selectedEmp} className="flex-1 py-3 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50">Open Shift</button>
@@ -62,7 +67,9 @@ export default function Shifts() {
             <div>
               <p className="font-medium text-gray-800">{s.employee_name}</p>
               <p className="text-xs text-gray-400">
-                {new Date(s.start_time).toLocaleDateString('en-KE', { day: '2-digit', month: 'short' })}
+                {s.shift_date
+                  ? new Date(s.shift_date + 'T12:00:00').toLocaleDateString('en-KE', { day: '2-digit', month: 'short' })
+                  : new Date(s.start_time).toLocaleDateString('en-KE', { day: '2-digit', month: 'short' })}
                 {' '}{new Date(s.start_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
               </p>
             </div>

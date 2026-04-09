@@ -146,4 +146,20 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// GET tank stock ledger (audit trail)
+router.get('/:id/ledger', async (req, res) => {
+  try {
+    const { from, to, limit } = req.query;
+    let query = db('tank_stock_ledger')
+      .where({ tank_id: req.params.id })
+      .orderBy('created_at', 'desc');
+    if (from) query = query.where('created_at', '>=', from);
+    if (to) query = query.where('created_at', '<=', to + 'T23:59:59');
+    const rows = await query.limit(parseInt(limit as string) || 50);
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

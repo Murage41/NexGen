@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import db from '../database';
+import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
 
@@ -36,12 +37,12 @@ router.post('/', async (req, res) => {
   try {
     const { credit_id, amount, date } = req.body;
     // Generate invoice number: INV-YYYYMMDD-XXX
-    const today = (date || new Date().toISOString().split('T')[0]).replace(/-/g, '');
+    const today = (date || getKenyaDate()).replace(/-/g, '');
     const count = await db('invoices').where('invoice_number', 'like', `INV-${today}%`).count('* as c').first();
     const seq = String(((count as any).c || 0) + 1).padStart(3, '0');
     const invoice_number = `INV-${today}-${seq}`;
 
-    const [id] = await db('invoices').insert({ credit_id, invoice_number, amount, date: date || new Date().toISOString().split('T')[0], status: 'unpaid' });
+    const [id] = await db('invoices').insert({ credit_id, invoice_number, amount, date: date || getKenyaDate(), status: 'unpaid' });
     const invoice = await db('invoices')
       .join('credits', 'invoices.credit_id', 'credits.id')
       .select('invoices.*', 'credits.customer_name')

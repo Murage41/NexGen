@@ -267,9 +267,14 @@ export default function Credits() {
                     type="number"
                     className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="0"
+                    max={paymentCredit?.balance || paymentCredit?.amount || undefined}
                     value={paymentForm.amount}
                     onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
                   />
+                  <p className="text-xs text-gray-500 mt-1">Max payable: {fmt(paymentCredit?.balance || paymentCredit?.amount || 0)}</p>
+                  {paymentForm.amount && parseFloat(paymentForm.amount) > (paymentCredit?.balance || paymentCredit?.amount || 0) && (
+                    <p className="text-xs text-red-600 mt-1">Amount exceeds outstanding balance</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm text-gray-600 mb-1 block">Payment Method</label>

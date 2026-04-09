@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
-  getDebtorAging, getCashFlow,
+  getStockReconciliationByShift, getDebtorAging, getCashFlow,
 } from '../services/api';
 import {
   BarChart3, Calendar, TrendingUp, TrendingDown, Minus,
@@ -25,6 +25,8 @@ export default function Reports() {
   // Stock Reconciliation
   const [stockDate, setStockDate] = useState(new Date().toISOString().split('T')[0]);
   const [stockData, setStockData] = useState<any>(null);
+  const [stockByShift, setStockByShift] = useState<any>(null);
+  const [expandedTank, setExpandedTank] = useState<number | null>(null);
 
   // Debtor Aging
   const [debtorData, setDebtorData] = useState<any>(null);
@@ -48,8 +50,15 @@ export default function Reports() {
   }
   async function loadStockReport() {
     setLoading(true);
-    try { const res = await getStockReconciliation(stockDate); setStockData(res.data.data); }
-    catch { setStockData(null); }
+    try {
+      const [res, byShiftRes] = await Promise.all([
+        getStockReconciliation(stockDate),
+        getStockReconciliationByShift(stockDate),
+      ]);
+      setStockData(res.data.data);
+      setStockByShift(byShiftRes.data.data);
+    }
+    catch { setStockData(null); setStockByShift(null); }
     finally { setLoading(false); }
   }
   async function loadDebtorReport() {
@@ -654,28 +663,55 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody>
-                  {stockData.tanks.map((t: any, i: number) => (
-                    <tr key={i} className={`border-t hover:bg-gray-50 ${t.variance_alert ? 'bg-red-50' : ''}`}>
-                      <td className="p-3 font-medium">{t.label}</td>
-                      <td className="p-3 capitalize text-gray-600">{t.fuel_type}</td>
-                      <td className="p-3 text-right">{t.opening_stock !== null ? litres(t.opening_stock) : '—'}</td>
-                      <td className="p-3 text-right text-blue-600">{litres(t.deliveries)}</td>
-                      <td className="p-3 text-right text-gray-600">{litres(t.sales)}</td>
-                      <td className="p-3 text-right font-medium">{t.closing_book_stock !== null ? litres(t.closing_book_stock) : '—'}</td>
-                      <td className="p-3 text-right">{t.dip_reading !== null ? litres(t.dip_reading) : '—'}</td>
-                      <td className={`p-3 text-right font-medium ${t.variance_alert ? 'text-red-600' : 'text-gray-600'}`}>
-                        {t.variance !== null ? (
-                          <span className="flex items-center justify-end gap-1">
-                            {t.variance_alert && <AlertTriangle size={12} />}
-                            {litres(t.variance)}
-                          </span>
-                        ) : '—'}
-                      </td>
-                      <td className={`p-3 text-right ${t.variance_alert ? 'text-red-600 font-bold' : 'text-gray-500'}`}>
-                        {pct(t.variance_pct)}
-                      </td>
-                    </tr>
-                  ))}
+                  {stockData.tanks.map((t: any, i: number) => {
+                    const shiftTank = stockByShift?.tanks?.find((st: any) => st.tank_id === t.tank_id);
+                    const isExpanded = expandedTank === t.tank_id;
+                    return (
+                      <Fragment key={i}>
+                        <tr className={`border-t hover:bg-gray-50 cursor-pointer ${t.variance_alert ? 'bg-red-50' : ''}`}
+                            onClick={() => setExpandedTank(isExpanded ? null : t.tank_id)}>
+                          <td className="p-3 font-medium">
+                            <span className="mr-1 text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+                            {t.label}
+                          </td>
+                          <td className="p-3 capitalize text-gray-600">{t.fuel_type}</td>
+                          <td className="p-3 text-right">{t.opening_stock !== null ? litres(t.opening_stock) : '—'}</td>
+                          <td className="p-3 text-right text-blue-600">{litres(t.deliveries)}</td>
+                          <td className="p-3 text-right text-gray-600">{litres(t.sales)}</td>
+                          <td className="p-3 text-right font-medium">{t.closing_book_stock !== null ? litres(t.closing_book_stock) : '—'}</td>
+                          <td className="p-3 text-right">{t.dip_reading !== null ? litres(t.dip_reading) : '—'}</td>
+                          <td className={`p-3 text-right font-medium ${t.variance_alert ? 'text-red-600' : 'text-gray-600'}`}>
+                            {t.variance !== null ? (
+                              <span className="flex items-center justify-end gap-1">
+                                {t.variance_alert && <AlertTriangle size={12} />}
+                                {litres(t.variance)}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className={`p-3 text-right ${t.variance_alert ? 'text-red-600 font-bold' : 'text-gray-500'}`}>
+                            {pct(t.variance_pct)}
+                          </td>
+                        </tr>
+                        {isExpanded && shiftTank?.shifts?.map((s: any, si: number) => (
+                          <tr key={`shift-${si}`} className="bg-blue-50/30 border-t border-gray-100">
+                            <td className="p-2 pl-10 text-xs text-gray-500" colSpan={2}>
+                              {s.employee_name} <span className={`ml-1 px-1 py-0.5 rounded text-xs ${s.status === 'closed' ? 'bg-gray-100' : 'bg-green-100 text-green-700'}`}>{s.status}</span>
+                            </td>
+                            <td className="p-2 text-right text-xs">{s.opening_stock !== null ? litres(s.opening_stock) : '—'}</td>
+                            <td className="p-2 text-right text-xs text-blue-600">{s.deliveries !== null && s.deliveries > 0 ? `+${Number(s.deliveries).toFixed(1)}` : '—'}</td>
+                            <td className="p-2 text-right text-xs text-gray-600">{s.sales !== null && s.sales > 0 ? litres(s.sales) : '—'}</td>
+                            <td className="p-2 text-right text-xs font-medium">{s.closing_stock !== null ? litres(s.closing_stock) : '—'}</td>
+                            <td className="p-2" colSpan={3}></td>
+                          </tr>
+                        ))}
+                        {isExpanded && (!shiftTank?.shifts || shiftTank.shifts.length === 0) && (
+                          <tr className="bg-gray-50/50 border-t border-gray-100">
+                            <td className="p-2 pl-10 text-xs text-gray-400" colSpan={9}>No shift snapshots for this date (pre-migration data)</td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
               <div className="p-4 bg-gray-50 border-t text-xs text-gray-500">

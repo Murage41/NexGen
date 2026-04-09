@@ -33,12 +33,12 @@ export const getDashboard = () => api.get('/dashboard');
 export const getShifts = (params?: any) => api.get('/shifts', { params });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
-export const openShift = (data: { employee_id: number }) => api.post('/shifts', data);
+export const openShift = (data: { employee_id: number; shift_date?: string }) => api.post('/shifts', data);
 export const updateReadings = (shiftId: number, readings: any[]) => api.put(`/shifts/${shiftId}/readings`, { readings });
 export const updateCollections = (shiftId: number, data: any) => api.put(`/shifts/${shiftId}/collections`, data);
 export const addShiftExpense = (shiftId: number, data: any) => api.post(`/shifts/${shiftId}/expenses`, data);
 export const deleteShiftExpense = (shiftId: number, expenseId: number) => api.delete(`/shifts/${shiftId}/expenses/${expenseId}`);
-export const closeShift = (shiftId: number, data?: { notes?: string; deduct_amount?: number | null }) =>
+export const closeShift = (shiftId: number, data?: { notes?: string; deduct_amount?: number | null; wage_paid?: number }) =>
   api.put(`/shifts/${shiftId}/close`, data || {});
 export const addShiftCredit = (shiftId: number, data: any) => api.post(`/shifts/${shiftId}/credits`, data);
 export const deleteShiftCredit = (shiftId: number, creditId: number) => api.delete(`/shifts/${shiftId}/credits/${creditId}`);
@@ -89,6 +89,7 @@ export const deleteFuelDelivery = (id: number) => api.delete(`/fuel-deliveries/$
 export const getFuelPrices = () => api.get('/fuel-prices');
 export const getCurrentPrices = () => api.get('/fuel-prices/current');
 export const createFuelPrice = (data: any) => api.post('/fuel-prices', data);
+export const updateFuelPrice = (fuelType: string, data: any) => api.put(`/fuel-prices/${fuelType}`, data);
 
 // Expenses
 export const getExpenses = (params?: any) => api.get('/expenses', { params });
@@ -112,7 +113,12 @@ export const deleteCreditAccount = (id: number) => api.delete(`/credit-accounts/
 export const getDailyReport = (date?: string) => api.get('/reports/daily', { params: { date } });
 export const getMonthlyReport = (month?: string) => api.get('/reports/monthly', { params: { month } });
 export const getStockReconciliation = (date?: string) => api.get('/reports/stock-reconciliation', { params: { date } });
+export const getStockReconciliationByShift = (date?: string) => api.get('/reports/stock-reconciliation-by-shift', { params: { date } });
 export const getDebtorAging = () => api.get('/reports/debtor-aging');
 export const getCashFlow = (params?: { from?: string; to?: string }) => api.get('/reports/cash-flow', { params });
+
+// Tank Accountability
+export const getShiftTankSummary = (shiftId: number) => api.get(`/shifts/${shiftId}/tank-summary`);
+export const getTankLedger = (tankId: number, params?: any) => api.get(`/tanks/${tankId}/ledger`, { params });
 
 export default api;

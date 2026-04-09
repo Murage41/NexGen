@@ -1,49 +1,23 @@
 import { Router } from 'express';
 import db from '../database';
+import { computeBookStock, computeAllTankStocks, getFIFOCostByFuelType } from '../services/stockCalculator';
+import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 const router = Router();
-
-// ─── Helper: Weighted average cost per litre by fuel type ────────────────────
-async function getWeightedAvgCost(): Promise<Record<string, number>> {
-  const deliveries = await db('fuel_deliveries')
-    .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
-    .select('tanks.fuel_type')
-    .sum('fuel_deliveries.total_cost as total_cost')
-    .sum('fuel_deliveries.litres as total_litres')
-    .groupBy('tanks.fuel_type');
-
-  const costs: Record<string, number> = {};
-  for (const d of deliveries) {
-    const litres = Number(d.total_litres) || 0;
-    const cost = Number(d.total_cost) || 0;
-    costs[d.fuel_type] = litres > 0 ? cost / litres : 0;
-  }
-  return costs;
-}
-
-// ─── Helper: Get tank stock value using weighted avg cost ────────────────────
-function stockValue(litresMap: Record<string, number>, avgCosts: Record<string, number>): number {
-  let total = 0;
-  for (const [fuelType, litres] of Object.entries(litresMap)) {
-    total += litres * (avgCosts[fuelType] || 0);
-  }
-  return total;
-}
 
 // ─── Daily Report ─────────────────────────────────────────────────────────────
 router.get('/daily', async (req, res) => {
   try {
-    const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
+    const date = (req.query.date as string) || getKenyaDate();
 
     const shifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
       .select('shifts.*', 'employees.name as employee_name', 'employees.daily_wage')
-      .where('shifts.start_time', '>=', date + 'T00:00:00')
-      .where('shifts.start_time', '<=', date + 'T23:59:59')
+      .where('shifts.shift_date', date)
       .orderBy('shifts.start_time');
 
-    // Weighted avg cost for COGS
-    const avgCosts = await getWeightedAvgCost();
+    // FIFO cost for COGS
+    const fifoCosts = await getFIFOCostByFuelType(date, date);
 
     const shiftDetails = [];
     let totalSales = 0;
@@ -62,10 +36,12 @@ router.get('/daily', async (req, res) => {
         .where('pump_readings.shift_id', shift.id);
 
       const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
-      const expenses = await db('shift_expenses').where({ shift_id: shift.id });
+      const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
 
-      const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).first();
-      const actualWagePaid = wageDeduction ? Number(wageDeduction.final_wage) : Number(shift.daily_wage);
+      const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
+      const actualWagePaid = shift.status === 'closed'
+        ? (Number(shift.wage_paid) || 0)
+        : (Number(shift.daily_wage) || 0);
 
       const shiftSales = readings.reduce((s: number, r: any) => s + (Number(r.amount_sold) || 0), 0);
       const shiftExpensesTotal = expenses.reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
@@ -107,18 +83,21 @@ router.get('/daily', async (req, res) => {
         standard_wage: Number(shift.daily_wage),
         wage_deduction: wageDeduction ? Number(wageDeduction.deduction_amount) : 0,
         actual_wage_paid: actualWagePaid,
-        variance: totalCollections - shiftSales,
+        variance: (cash + mpesa + credits + shiftExpensesTotal + actualWagePaid) - shiftSales,
       });
     }
 
     // General business expenses for the day
-    const dayExpenses = await db('expenses').where({ date });
+    const dayExpenses = await db('expenses').where({ date }).whereNull('deleted_at');
     const totalDayExpenses = dayExpenses.reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
 
-    // COGS: litres sold x weighted average cost per litre
-    const cogs =
-      totalPetrolLitres * (avgCosts['petrol'] || 0) +
-      totalDieselLitres * (avgCosts['diesel'] || 0);
+    // COGS from FIFO batch consumption
+    const cogs = (fifoCosts['petrol'] || 0) + (fifoCosts['diesel'] || 0);
+
+    // Cost per litre from FIFO (for margin calculation)
+    const avgCosts: Record<string, number> = {};
+    if (totalPetrolLitres > 0) avgCosts['petrol'] = (fifoCosts['petrol'] || 0) / totalPetrolLitres;
+    if (totalDieselLitres > 0) avgCosts['diesel'] = (fifoCosts['diesel'] || 0) / totalDieselLitres;
 
     // Margin per litre
     const marginPerLitre: Record<string, number> = {};
@@ -147,8 +126,8 @@ router.get('/daily', async (req, res) => {
     const totalCollected = totalCash + totalMpesa + totalCredits;
     const collectionRate = totalSales > 0 ? (totalCollected / totalSales) * 100 : 0;
 
-    // Tank stock snapshot for the day
-    const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'current_stock_litres', 'capacity_litres');
+    // Tank stock snapshot for the day — computed as-of report date (fixes Issue 3)
+    const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'capacity_litres');
     const tankSnapshot = [];
     for (const tank of tanks) {
       // Sales from pumps linked to this tank today
@@ -166,6 +145,7 @@ router.get('/daily', async (req, res) => {
       // Deliveries to this tank today
       const delResult = await db('fuel_deliveries')
         .where({ tank_id: tank.id, date })
+        .whereNull('deleted_at')
         .sum('litres as total')
         .first();
       const tankDeliveries = Number((delResult as any)?.total) || 0;
@@ -173,11 +153,12 @@ router.get('/daily', async (req, res) => {
       // Latest dip for this date
       const dip = await db('tank_dips')
         .where({ tank_id: tank.id, dip_date: date })
+        .whereNull('deleted_at')
         .orderBy('timestamp', 'desc')
         .first();
 
-      const currentStock = Number(tank.current_stock_litres) || 0;
-      const bookStock = currentStock; // current_stock_litres is the running book stock
+      // Computed book stock as-of this report date
+      const bookStock = await computeBookStock(tank.id, date);
       const dipReading = dip ? Number(dip.measured_litres) : null;
       const dipVariance = dipReading !== null ? bookStock - dipReading : null;
       const variancePct = dipReading !== null && bookStock > 0 ? (dipVariance! / bookStock) * 100 : null;
@@ -257,11 +238,9 @@ function readings_revenue_per_litre(shiftDetails: any[], fuelType: string): numb
 // ─── Monthly Report ────────────────────────────────────────────────────────────
 router.get('/monthly', async (req, res) => {
   try {
-    const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+    const month = (req.query.month as string) || getKenyaMonth();
     const startDate = month + '-01';
     const endDate = month + '-31';
-    const startTs = startDate + 'T00:00:00';
-    const endTs = endDate + 'T23:59:59';
 
     // Previous month for opening stock
     const [year, mon] = month.split('-').map(Number);
@@ -270,15 +249,15 @@ router.get('/monthly', async (req, res) => {
       : `${year}-${String(mon - 1).padStart(2, '0')}`;
     const prevEndDate = prevMonth + '-31';
 
-    // Weighted avg cost
-    const avgCosts = await getWeightedAvgCost();
+    // FIFO cost for the month
+    const fifoCosts = await getFIFOCostByFuelType(startDate, endDate);
 
     // Fuel sales grouped by type
     const fuelSales = await db('pump_readings')
       .join('shifts', 'pump_readings.shift_id', 'shifts.id')
       .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-      .where('shifts.start_time', '>=', startTs)
-      .where('shifts.start_time', '<=', endTs)
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
       .select('pumps.fuel_type')
       .sum('pump_readings.litres_sold as total_litres')
       .sum('pump_readings.amount_sold as total_sales')
@@ -286,6 +265,13 @@ router.get('/monthly', async (req, res) => {
 
     const totalSales = fuelSales.reduce((s: number, r: any) => s + (Number(r.total_sales) || 0), 0);
     const totalLitres = fuelSales.reduce((s: number, r: any) => s + (Number(r.total_litres) || 0), 0);
+
+    // Cost per litre from FIFO
+    const avgCosts: Record<string, number> = {};
+    for (const fs of fuelSales) {
+      const litres = Number(fs.total_litres) || 0;
+      if (litres > 0) avgCosts[fs.fuel_type] = (fifoCosts[fs.fuel_type] || 0) / litres;
+    }
 
     // Margin per litre
     const marginPerLitre: Record<string, number> = {};
@@ -300,28 +286,30 @@ router.get('/monthly', async (req, res) => {
     // Collections breakdown
     const collections = await db('shift_collections')
       .join('shifts', 'shift_collections.shift_id', 'shifts.id')
-      .where('shifts.start_time', '>=', startTs)
-      .where('shifts.start_time', '<=', endTs)
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
       .sum('cash_amount as total_cash')
       .sum('mpesa_amount as total_mpesa')
       .sum('credits_amount as total_credits')
       .first();
 
-    // Wages: actual paid per shift
+    // Wages: use stored wage_paid for closed shifts, daily_wage for open
     const allShifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
-      .where('shifts.start_time', '>=', startTs)
-      .where('shifts.start_time', '<=', endTs)
-      .select('shifts.id', 'employees.daily_wage');
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
+      .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
 
     let totalWagesPaid = 0;
     for (const shift of allShifts) {
-      const wd = await db('wage_deductions').where({ shift_id: shift.id }).first();
-      totalWagesPaid += wd ? Number(wd.final_wage) : Number(shift.daily_wage);
+      totalWagesPaid += shift.status === 'closed'
+        ? (Number(shift.wage_paid) || 0)
+        : (Number(shift.daily_wage) || 0);
     }
 
     // General expenses
     const generalExpenses = await db('expenses')
+      .whereNull('deleted_at')
       .where('date', '>=', startDate)
       .where('date', '<=', endDate)
       .sum('amount as total')
@@ -330,13 +318,15 @@ router.get('/monthly', async (req, res) => {
     // Shift expenses
     const shiftExpenses = await db('shift_expenses')
       .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
-      .where('shifts.start_time', '>=', startTs)
-      .where('shifts.start_time', '<=', endTs)
+      .whereNull('shift_expenses.deleted_at')
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
       .sum('shift_expenses.amount as total')
       .first();
 
     // Expense categories (merged from both general and shift expenses)
     const generalCats = await db('expenses')
+      .whereNull('deleted_at')
       .where('date', '>=', startDate)
       .where('date', '<=', endDate)
       .select('category')
@@ -345,8 +335,9 @@ router.get('/monthly', async (req, res) => {
 
     const shiftCats = await db('shift_expenses')
       .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
-      .where('shifts.start_time', '>=', startTs)
-      .where('shifts.start_time', '<=', endTs)
+      .whereNull('shift_expenses.deleted_at')
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
       .select('shift_expenses.category')
       .sum('shift_expenses.amount as total')
       .groupBy('shift_expenses.category');
@@ -359,46 +350,27 @@ router.get('/monthly', async (req, res) => {
       .map(([category, total]) => ({ category, total }))
       .sort((a, b) => b.total - a.total);
 
-    // ── COGS: Opening Stock + Purchases - Closing Stock ──
-    // Opening stock: last dip of previous month per tank, or earliest dip this month
-    const tanksData = await db('tanks').select('id', 'fuel_type', 'current_stock_litres');
+    // ── COGS: Use FIFO batch consumption for accurate costing ──
+    const tanksData = await db('tanks').select('id', 'fuel_type');
+
+    // Computed book stock for opening (end of prev month) and closing (end of this month)
+    const openingStocks = await computeAllTankStocks(prevEndDate);
+    const closingStocks = await computeAllTankStocks(endDate);
+
     const openingLitresMap: Record<string, number> = {};
     const closingLitresMap: Record<string, number> = {};
-
     for (const tank of tanksData) {
-      // Opening: last dip before this month, or earliest dip this month
-      const prevDip = await db('tank_dips')
-        .where('tank_id', tank.id)
-        .where('dip_date', '<=', prevEndDate)
-        .orderBy('dip_date', 'desc')
-        .first();
+      openingLitresMap[tank.fuel_type] = (openingLitresMap[tank.fuel_type] || 0) + (openingStocks[tank.id] || 0);
+      closingLitresMap[tank.fuel_type] = (closingLitresMap[tank.fuel_type] || 0) + (closingStocks[tank.id] || 0);
+    }
 
-      if (prevDip) {
-        openingLitresMap[tank.fuel_type] = (openingLitresMap[tank.fuel_type] || 0) + Number(prevDip.measured_litres);
-      } else {
-        // Fallback: use earliest dip in this month or 0
-        const firstDip = await db('tank_dips')
-          .where('tank_id', tank.id)
-          .where('dip_date', '>=', startDate)
-          .where('dip_date', '<=', endDate)
-          .orderBy('dip_date', 'asc')
-          .first();
-        openingLitresMap[tank.fuel_type] = (openingLitresMap[tank.fuel_type] || 0) + (firstDip ? Number(firstDip.measured_litres) : 0);
+    // Value stocks using FIFO cost per litre
+    function stockValue(litresMap: Record<string, number>, costs: Record<string, number>): number {
+      let total = 0;
+      for (const [fuelType, litres] of Object.entries(litresMap)) {
+        total += litres * (costs[fuelType] || 0);
       }
-
-      // Closing: last dip this month, or current book stock
-      const lastDip = await db('tank_dips')
-        .where('tank_id', tank.id)
-        .where('dip_date', '>=', startDate)
-        .where('dip_date', '<=', endDate)
-        .orderBy('dip_date', 'desc')
-        .first();
-
-      if (lastDip) {
-        closingLitresMap[tank.fuel_type] = (closingLitresMap[tank.fuel_type] || 0) + Number(lastDip.measured_litres);
-      } else {
-        closingLitresMap[tank.fuel_type] = (closingLitresMap[tank.fuel_type] || 0) + Number(tank.current_stock_litres);
-      }
+      return total;
     }
 
     const openingStockValue = stockValue(openingLitresMap, avgCosts);
@@ -406,22 +378,24 @@ router.get('/monthly', async (req, res) => {
 
     // Purchases this month
     const purchasesResult = await db('fuel_deliveries')
+      .whereNull('deleted_at')
       .where('date', '>=', startDate)
       .where('date', '<=', endDate)
       .sum('total_cost as total')
       .first();
     const purchases = Number((purchasesResult as any)?.total) || 0;
 
-    const cogs = openingStockValue + purchases - closingStockValue;
+    // Primary COGS from FIFO consumption; stock-based as secondary verification
+    const cogs = (fifoCosts['petrol'] || 0) + (fifoCosts['diesel'] || 0);
 
     // Receivables movement
     const openingReceivables = await db('credits')
-      .where('created_at', '<', startTs)
+      .where('created_at', '<', startDate + 'T00:00:00')
       .whereNot('status', 'paid')
       .sum('balance as total')
       .first();
     const closingReceivables = await db('credits')
-      .where('created_at', '<=', endTs)
+      .where('created_at', '<=', endDate + 'T23:59:59')
       .whereNot('status', 'paid')
       .sum('balance as total')
       .first();
@@ -434,8 +408,8 @@ router.get('/monthly', async (req, res) => {
     // Outstanding staff debts for the period
     const staffDebtResult = await db('staff_debts')
       .join('shifts', 'staff_debts.shift_id', 'shifts.id')
-      .where('shifts.start_time', '>=', startTs)
-      .where('shifts.start_time', '<=', endTs)
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
       .where('staff_debts.status', 'outstanding')
       .sum('staff_debts.balance as total')
       .first();
@@ -444,15 +418,15 @@ router.get('/monthly', async (req, res) => {
     // Daily breakdown
     const closedShifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
-      .where('shifts.start_time', '>=', startTs)
-      .where('shifts.start_time', '<=', endTs)
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
       .where('shifts.status', 'closed')
-      .select('shifts.id', 'shifts.start_time', 'employees.daily_wage');
+      .select('shifts.id', 'shifts.shift_date', 'shifts.start_time', 'shifts.wage_paid', 'employees.daily_wage');
 
     const dailyMap: Record<string, { sales: number; petrol_litres: number; diesel_litres: number; expenses: number; wages: number }> = {};
 
     for (const shift of closedShifts) {
-      const dayKey = (shift.start_time as string).split('T')[0];
+      const dayKey = shift.shift_date || (shift.start_time as string).split('T')[0];
       if (!dailyMap[dayKey]) {
         dailyMap[dayKey] = { sales: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
       }
@@ -468,15 +442,15 @@ router.get('/monthly', async (req, res) => {
         if (r.fuel_type === 'diesel') dailyMap[dayKey].diesel_litres += Number(r.litres_sold) || 0;
       }
 
-      const shiftExpResult = await db('shift_expenses').where({ shift_id: shift.id }).sum('amount as total').first();
+      const shiftExpResult = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at').sum('amount as total').first();
       dailyMap[dayKey].expenses += Number((shiftExpResult as any)?.total) || 0;
 
-      const wd = await db('wage_deductions').where({ shift_id: shift.id }).first();
-      dailyMap[dayKey].wages += wd ? Number(wd.final_wage) : Number(shift.daily_wage);
+      dailyMap[dayKey].wages += Number(shift.wage_paid) || 0;
     }
 
     // Add general expenses into daily map
     const allGeneralExpenses = await db('expenses')
+      .whereNull('deleted_at')
       .where('date', '>=', startDate)
       .where('date', '<=', endDate)
       .select('date', 'amount');
@@ -489,12 +463,18 @@ router.get('/monthly', async (req, res) => {
       dailyMap[key].expenses += Number(e.amount) || 0;
     }
 
+    // Get FIFO cost per day for daily breakdown
+    const dailyDates = Object.keys(dailyMap).sort();
+    const dailyFifoCosts: Record<string, number> = {};
+    for (const d of dailyDates) {
+      const dayCosts = await getFIFOCostByFuelType(d, d);
+      dailyFifoCosts[d] = (dayCosts['petrol'] || 0) + (dayCosts['diesel'] || 0);
+    }
+
     const dailyBreakdown = Object.entries(dailyMap)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, d]) => {
-        const dayCogs =
-          d.petrol_litres * (avgCosts['petrol'] || 0) +
-          d.diesel_litres * (avgCosts['diesel'] || 0);
+        const dayCogs = dailyFifoCosts[date] || 0;
         return {
           date,
           sales: d.sales,
@@ -555,36 +535,31 @@ router.get('/monthly', async (req, res) => {
 // ─── Stock Reconciliation Report ──────────────────────────────────────────────
 router.get('/stock-reconciliation', async (req, res) => {
   try {
-    const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
+    const date = (req.query.date as string) || getKenyaDate();
 
     // Previous date for opening stock
     const prevDate = new Date(date + 'T12:00:00');
     prevDate.setDate(prevDate.getDate() - 1);
     const prevDateStr = prevDate.toISOString().split('T')[0];
 
-    const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'current_stock_litres', 'capacity_litres');
+    const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'capacity_litres');
 
     // Get shifts for the date
     const dayShifts = await db('shifts')
-      .where('start_time', '>=', date + 'T00:00:00')
-      .where('start_time', '<=', date + 'T23:59:59')
+      .where('shift_date', date)
       .select('id');
     const shiftIds = dayShifts.map((s: any) => s.id);
 
     const reconciliation = [];
 
     for (const tank of tanks) {
-      // Opening stock: previous day's dip, or fallback to book stock calculation
-      const prevDip = await db('tank_dips')
-        .where('tank_id', tank.id)
-        .where('dip_date', '<=', prevDateStr)
-        .orderBy('dip_date', 'desc')
-        .first();
-      const openingStock = prevDip ? Number(prevDip.measured_litres) : null;
+      // Computed opening stock (as of previous day)
+      const openingStock = await computeBookStock(tank.id, prevDateStr);
 
       // Deliveries on this date
       const delResult = await db('fuel_deliveries')
         .where({ tank_id: tank.id, date })
+        .whereNull('deleted_at')
         .sum('litres as total')
         .first();
       const deliveries = Number((delResult as any)?.total) || 0;
@@ -601,22 +576,20 @@ router.get('/stock-reconciliation', async (req, res) => {
         sales = Number((salesResult as any)?.total) || 0;
       }
 
-      // Closing book stock
-      const closingBookStock = openingStock !== null
-        ? openingStock + deliveries - sales
-        : null;
+      // Closing book stock = opening + deliveries - sales
+      const closingBookStock = openingStock + deliveries - sales;
 
       // Dip reading for this date
       const dip = await db('tank_dips')
         .where({ tank_id: tank.id, dip_date: date })
+        .whereNull('deleted_at')
         .orderBy('timestamp', 'desc')
         .first();
       const dipReading = dip ? Number(dip.measured_litres) : null;
 
       // Variance
-      const variance = closingBookStock !== null && dipReading !== null
-        ? closingBookStock - dipReading : null;
-      const variancePct = closingBookStock !== null && dipReading !== null && closingBookStock > 0
+      const variance = dipReading !== null ? closingBookStock - dipReading : null;
+      const variancePct = dipReading !== null && closingBookStock > 0
         ? (variance! / closingBookStock) * 100 : null;
 
       reconciliation.push({
@@ -713,16 +686,14 @@ router.get('/debtor-aging', async (_req, res) => {
 // ─── Cash Flow Summary ────────────────────────────────────────────────────────
 router.get('/cash-flow', async (req, res) => {
   try {
-    const from = (req.query.from as string) || new Date().toISOString().slice(0, 7) + '-01';
-    const to = (req.query.to as string) || new Date().toISOString().split('T')[0];
-    const fromTs = from + 'T00:00:00';
-    const toTs = to + 'T23:59:59';
+    const from = (req.query.from as string) || getKenyaMonth() + '-01';
+    const to = (req.query.to as string) || getKenyaDate();
 
     // Cash Inflows
     const collResult = await db('shift_collections')
       .join('shifts', 'shift_collections.shift_id', 'shifts.id')
-      .where('shifts.start_time', '>=', fromTs)
-      .where('shifts.start_time', '<=', toTs)
+      .where('shifts.shift_date', '>=', from)
+      .where('shifts.shift_date', '<=', to)
       .sum('cash_amount as cash')
       .sum('mpesa_amount as mpesa')
       .sum('credits_amount as credits_on_account')
@@ -741,36 +712,40 @@ router.get('/cash-flow', async (req, res) => {
 
     // Cash Outflows
     const fuelPurchases = await db('fuel_deliveries')
+      .whereNull('deleted_at')
       .where('date', '>=', from)
       .where('date', '<=', to)
       .sum('total_cost as total')
       .first();
     const totalFuelPurchases = Number((fuelPurchases as any)?.total) || 0;
 
-    // Wages paid (actual: accounting for deductions)
+    // Wages paid: use stored wage_paid for closed shifts, daily_wage for open
     const periodShifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
-      .where('shifts.start_time', '>=', fromTs)
-      .where('shifts.start_time', '<=', toTs)
-      .select('shifts.id', 'employees.daily_wage');
+      .where('shifts.shift_date', '>=', from)
+      .where('shifts.shift_date', '<=', to)
+      .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
 
     let totalWagesPaid = 0;
     for (const shift of periodShifts) {
-      const wd = await db('wage_deductions').where({ shift_id: shift.id }).first();
-      totalWagesPaid += wd ? Number(wd.final_wage) : Number(shift.daily_wage);
+      totalWagesPaid += shift.status === 'closed'
+        ? (Number(shift.wage_paid) || 0)
+        : (Number(shift.daily_wage) || 0);
     }
 
     // Shift expenses
     const shiftExpResult = await db('shift_expenses')
       .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
-      .where('shifts.start_time', '>=', fromTs)
-      .where('shifts.start_time', '<=', toTs)
+      .whereNull('shift_expenses.deleted_at')
+      .where('shifts.shift_date', '>=', from)
+      .where('shifts.shift_date', '<=', to)
       .sum('shift_expenses.amount as total')
       .first();
     const totalShiftExpenses = Number((shiftExpResult as any)?.total) || 0;
 
     // General expenses
     const genExpResult = await db('expenses')
+      .whereNull('deleted_at')
       .where('date', '>=', from)
       .where('date', '<=', to)
       .sum('amount as total')
@@ -781,6 +756,7 @@ router.get('/cash-flow', async (req, res) => {
 
     // Outstanding receivables
     const outstandingReceivables = await db('credits')
+      .whereNull('deleted_at')
       .whereNot('status', 'paid')
       .where('balance', '>', 0)
       .sum('balance as total')
@@ -807,6 +783,80 @@ router.get('/cash-flow', async (req, res) => {
         outstanding_receivables: Number((outstandingReceivables as any)?.total) || 0,
       },
     });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET stock reconciliation broken down by shift
+router.get('/stock-reconciliation-by-shift', async (req, res) => {
+  try {
+    const date = (req.query.date as string) || getKenyaDate();
+
+    const tanks = await db('tanks').orderBy('label');
+
+    // Get all shifts for this date
+    const shifts = await db('shifts')
+      .join('employees', 'shifts.employee_id', 'employees.id')
+      .where('shifts.shift_date', date)
+      .select('shifts.id', 'shifts.status', 'shifts.start_time', 'shifts.end_time', 'employees.name as employee_name')
+      .orderBy('shifts.start_time');
+
+    const shiftIds = shifts.map((s: any) => s.id);
+
+    // Get all snapshots for these shifts
+    const snapshots = shiftIds.length > 0
+      ? await db('shift_tank_snapshots').whereIn('shift_id', shiftIds)
+      : [];
+
+    // Get dip readings for this date
+    const dips = await db('tank_dips')
+      .where('dip_date', date)
+      .whereNull('deleted_at')
+      .orderByRaw('timestamp DESC');
+
+    const result = tanks.map((tank: any) => {
+      const tankSnaps = snapshots.filter((s: any) => s.tank_id === tank.id);
+      const tankDip = dips.find((d: any) => d.tank_id === tank.id);
+
+      const shiftBreakdown = shifts.map((s: any) => {
+        const snap = tankSnaps.find((sn: any) => sn.shift_id === s.id);
+        return {
+          shift_id: s.id,
+          employee_name: s.employee_name,
+          status: s.status,
+          start_time: s.start_time,
+          end_time: s.end_time,
+          opening_stock: snap ? parseFloat(snap.opening_stock_litres) : null,
+          deliveries: snap ? parseFloat(snap.deliveries_litres) : null,
+          sales: snap ? parseFloat(snap.sales_litres) : null,
+          closing_stock: snap ? parseFloat(snap.closing_stock_litres) : null,
+        };
+      });
+
+      // Day totals from snapshots
+      const dayDeliveries = tankSnaps.reduce((s: number, sn: any) => s + (parseFloat(sn.deliveries_litres) || 0), 0);
+      const daySales = tankSnaps.reduce((s: number, sn: any) => s + (parseFloat(sn.sales_litres) || 0), 0);
+      const dayOpening = tankSnaps.length > 0 ? parseFloat(tankSnaps[0].opening_stock_litres) : null;
+      const dayClosingBook = dayOpening !== null ? dayOpening + dayDeliveries - daySales : null;
+      const dipReading = tankDip ? parseFloat(tankDip.measured_litres) : null;
+      const variance = dayClosingBook !== null && dipReading !== null ? dipReading - dayClosingBook : null;
+
+      return {
+        tank_id: tank.id,
+        label: tank.label,
+        fuel_type: tank.fuel_type,
+        shifts: shiftBreakdown,
+        day_opening: dayOpening,
+        day_deliveries: dayDeliveries,
+        day_sales: daySales,
+        day_closing_book: dayClosingBook,
+        dip_reading: dipReading,
+        variance,
+      };
+    });
+
+    res.json({ success: true, data: { date, tanks: result } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

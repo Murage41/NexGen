@@ -3,9 +3,9 @@ import {
   getTanks, createTank, updateTank, deleteTank,
   getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
   getTankDips, createTankDip, updateTankDip, deleteTankDip,
-  getCurrentShift,
+  getCurrentShift, getTankLedger,
 } from '../services/api';
-import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen } from 'lucide-react';
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -19,7 +19,9 @@ export default function TankStock() {
   const [dips, setDips] = useState<any[]>([]);
   const [hasOpenShift, setHasOpenShift] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips'>('tanks');
+  const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips' | 'ledger'>('tanks');
+  const [ledgerData, setLedgerData] = useState<any[]>([]);
+  const [ledgerTankId, setLedgerTankId] = useState<string>('');
 
   // Modal state
   const [tankModal, setTankModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
@@ -238,13 +240,13 @@ export default function TankStock() {
       {/* Tabs + Actions */}
       <div className="flex items-center justify-between border-b mb-4">
         <div className="flex gap-1">
-          {(['tanks', 'deliveries', 'dips'] as const).map(tab => (
+          {(['tanks', 'deliveries', 'dips', 'ledger'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition capitalize ${activeTab === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
-              {tab === 'dips' ? 'Tank Dips' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === 'dips' ? 'Tank Dips' : tab === 'ledger' ? 'Stock Ledger' : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </div>
@@ -259,7 +261,7 @@ export default function TankStock() {
               <Truck size={16} /> Record Delivery
             </button>
           )}
-          {activeTab === 'dips' && !hasOpenShift && (
+          {activeTab === 'dips' && (
             <button onClick={openAddDip} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm">
               <Droplets size={16} /> Record Dip
             </button>
@@ -352,34 +354,95 @@ export default function TankStock() {
       {/* Dips Tab */}
       {activeTab === 'dips' && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
+          {hasOpenShift && (
+            <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 flex items-center gap-1">
+              <AlertTriangle size={12} /> Book stock does not include current shift sales until the shift is closed.
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
                 <th className="text-left p-3 font-medium text-gray-600">Dip Date</th>
                 <th className="text-left p-3 font-medium text-gray-600">Tank</th>
                 <th className="text-right p-3 font-medium text-gray-600">Measured (L)</th>
+                <th className="text-right p-3 font-medium text-gray-600">Book Stock (L)</th>
+                <th className="text-right p-3 font-medium text-gray-600">Variance (L)</th>
                 <th className="text-left p-3 font-medium text-gray-600">Recorded At</th>
                 <th className="p-3 w-20"></th>
               </tr>
             </thead>
             <tbody>
-              {dips.map((d: any) => (
-                <tr key={d.id} className="border-t hover:bg-gray-50">
-                  <td className="p-3 font-medium">{fmtDate(d.dip_date)}</td>
-                  <td className="p-3">{d.tank_label || `Tank #${d.tank_id}`}</td>
-                  <td className="p-3 text-right font-medium">{fmt(d.measured_litres)}</td>
-                  <td className="p-3 text-gray-500 text-xs">{d.timestamp ? new Date(d.timestamp).toLocaleString('en-KE') : '—'}</td>
-                  <td className="p-3">
-                    {!hasOpenShift && (
+              {dips.map((d: any) => {
+                const v = d.variance_litres != null ? parseFloat(d.variance_litres) : null;
+                return (
+                  <tr key={d.id} className={`border-t hover:bg-gray-50 ${v !== null && Math.abs(v) > 0 ? (v < -50 ? 'bg-red-50' : '') : ''}`}>
+                    <td className="p-3 font-medium">{fmtDate(d.dip_date)}</td>
+                    <td className="p-3">{d.tank_label || `Tank #${d.tank_id}`}</td>
+                    <td className="p-3 text-right font-medium">{fmt(d.measured_litres)}</td>
+                    <td className="p-3 text-right text-gray-500">{d.book_stock_at_dip != null ? fmt(d.book_stock_at_dip) : '—'}</td>
+                    <td className={`p-3 text-right font-medium ${v !== null ? (v < 0 ? 'text-red-600' : v > 0 ? 'text-green-600' : 'text-gray-600') : ''}`}>
+                      {v !== null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)} L` : '—'}
+                    </td>
+                    <td className="p-3 text-gray-500 text-xs">{d.timestamp ? new Date(d.timestamp).toLocaleString('en-KE') : '—'}</td>
+                    <td className="p-3">
                       <div className="flex gap-1 justify-end">
                         <button onClick={() => openEditDip(d)} className="p-1 text-gray-400 hover:text-blue-600 rounded"><Pencil size={14} /></button>
                         <button onClick={() => setDeleteConfirm({ type: 'dip', item: d })} className="p-1 text-gray-400 hover:text-red-500 rounded"><Trash2 size={14} /></button>
                       </div>
-                    )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {dips.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-gray-400">No dip readings recorded.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Ledger Tab */}
+      {activeTab === 'ledger' && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="p-4 border-b flex items-center gap-3">
+            <select value={ledgerTankId} onChange={async (e) => {
+              setLedgerTankId(e.target.value);
+              if (e.target.value) {
+                try { const res = await getTankLedger(parseInt(e.target.value)); setLedgerData(res.data.data || []); }
+                catch { setLedgerData([]); }
+              } else { setLedgerData([]); }
+            }} className="border border-gray-300 rounded-lg p-2 text-sm">
+              <option value="">Select a tank...</option>
+              {tanks.map((t: any) => <option key={t.id} value={t.id}>{t.label} ({t.fuel_type})</option>)}
+            </select>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-3 font-medium text-gray-600">Date/Time</th>
+                <th className="text-left p-3 font-medium text-gray-600">Event</th>
+                <th className="text-right p-3 font-medium text-gray-600">Change (L)</th>
+                <th className="text-right p-3 font-medium text-gray-600">Balance (L)</th>
+                <th className="text-left p-3 font-medium text-gray-600">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ledgerData.map((entry: any) => (
+                <tr key={entry.id} className="border-t hover:bg-gray-50">
+                  <td className="p-3 text-xs text-gray-500">{new Date(entry.created_at).toLocaleString('en-KE')}</td>
+                  <td className="p-3">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      entry.event_type === 'delivery' ? 'bg-green-100 text-green-700' :
+                      entry.event_type === 'shift_sale' ? 'bg-red-100 text-red-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>{entry.event_type.replace('_', ' ')}</span>
                   </td>
+                  <td className={`p-3 text-right font-medium ${parseFloat(entry.litres_change) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {parseFloat(entry.litres_change) >= 0 ? '+' : ''}{parseFloat(entry.litres_change).toFixed(1)}
+                  </td>
+                  <td className="p-3 text-right font-medium">{parseFloat(entry.balance_after).toFixed(1)}</td>
+                  <td className="p-3 text-xs text-gray-500">{entry.notes || '—'}</td>
                 </tr>
               ))}
-              {dips.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-gray-400">No dip readings recorded.</td></tr>}
+              {ledgerData.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-gray-400">{ledgerTankId ? 'No ledger entries yet.' : 'Select a tank to view its stock ledger.'}</td></tr>}
             </tbody>
           </table>
         </div>

@@ -27,7 +27,7 @@ router.get('/', async (req, res) => {
         CASE ca.type
           WHEN 'customer' THEN COALESCE((
             SELECT SUM(c.balance) FROM credits c
-            WHERE c.account_id = ca.id AND c.status != 'paid'
+            WHERE c.account_id = ca.id AND c.status != 'paid' AND c.deleted_at IS NULL
           ), 0)
           WHEN 'employee' THEN COALESCE((
             SELECT SUM(sd.balance) FROM staff_debts sd
@@ -58,8 +58,8 @@ router.get('/:id', async (req, res) => {
     let debts: any[] = [];
 
     if (account.type === 'customer') {
-      credits = await db('credits').where({ account_id: account.id }).orderBy('created_at', 'desc');
-      payments = await db('credit_payments').where({ account_id: account.id }).orderBy('date', 'desc');
+      credits = await db('credits').where({ account_id: account.id }).whereNull('deleted_at').orderBy('created_at', 'desc');
+      payments = await db('credit_payments').where({ account_id: account.id }).whereNull('deleted_at').orderBy('date', 'desc');
     } else if (account.type === 'employee') {
       debts = await db('staff_debts').where({ employee_id: account.employee_id }).orderBy('created_at', 'desc');
     }
@@ -69,6 +69,7 @@ router.get('/:id', async (req, res) => {
     if (account.type === 'customer') {
       const result = await db('credits')
         .where({ account_id: account.id })
+        .whereNull('deleted_at')
         .whereNot('status', 'paid')
         .sum('balance as total')
         .first();
@@ -146,6 +147,7 @@ router.get('/:id/statement', async (req, res) => {
       // Debits: credits added (money owed increases)
       const credits = await db('credits')
         .where({ account_id: account.id })
+        .whereNull('deleted_at')
         .select('created_at as date', 'description', 'amount')
         .orderBy('created_at', 'asc');
 
@@ -161,6 +163,7 @@ router.get('/:id/statement', async (req, res) => {
       // Credits: payments made (money owed decreases)
       const payments = await db('credit_payments')
         .where({ account_id: account.id })
+        .whereNull('deleted_at')
         .select('date', 'notes', 'amount', 'payment_method')
         .orderBy('date', 'asc');
 

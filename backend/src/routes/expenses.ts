@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import db from '../database';
+import { validate } from '../middleware/validate';
+import { createExpenseSchema, updateExpenseSchema } from '../schemas';
+import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
 
@@ -13,7 +16,7 @@ const EXPENSE_CATEGORIES = [
 router.get('/', async (req, res) => {
   try {
     const { from, to, date_from, date_to, category } = req.query;
-    let query = db('expenses').orderBy('date', 'desc');
+    let query = db('expenses').whereNull('deleted_at').orderBy('date', 'desc');
     // Support both param naming conventions
     const startDate = (from || date_from) as string | undefined;
     const endDate = (to || date_to) as string | undefined;
@@ -27,7 +30,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', validate(createExpenseSchema), async (req, res) => {
   try {
     const { category, description, amount, date } = req.body;
     const [id] = await db('expenses').insert({ category, description, amount, date });
@@ -38,7 +41,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', validate(updateExpenseSchema), async (req, res) => {
   try {
     const { category, description, amount, date } = req.body;
     await db('expenses').where({ id: req.params.id }).update({ category, description, amount, date });
@@ -51,7 +54,7 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    await db('expenses').where({ id: req.params.id }).delete();
+    await db('expenses').where({ id: req.params.id }).update({ deleted_at: new Date().toISOString() });
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -61,7 +64,7 @@ router.delete('/:id', async (req, res) => {
 // GET categories (distinct used + predefined)
 router.get('/categories', async (_req, res) => {
   try {
-    const rows = await db('expenses').distinct('category').orderBy('category');
+    const rows = await db('expenses').whereNull('deleted_at').distinct('category').orderBy('category');
     const used = rows.map((r: any) => r.category).filter(Boolean);
     // Merge predefined with any user-created categories
     const all = [...new Set([...EXPENSE_CATEGORIES, ...used])].sort();
@@ -75,7 +78,7 @@ router.get('/categories', async (_req, res) => {
 router.get('/summary', async (req, res) => {
   try {
     const { from, to, date_from, date_to } = req.query;
-    const today = new Date().toISOString().split('T')[0];
+    const today = getKenyaDate();
     const monthStart = today.slice(0, 7) + '-01';
     const startDate = (from || date_from || monthStart) as string;
     const endDate = (to || date_to || today) as string;
@@ -84,6 +87,7 @@ router.get('/summary', async (req, res) => {
 
     // General expenses in period
     const generalExpenses = await db('expenses')
+      .whereNull('deleted_at')
       .where('date', '>=', startDate)
       .where('date', '<=', endDate)
       .select('id', 'category', 'description', 'amount', 'date', 'created_at');
@@ -92,6 +96,7 @@ router.get('/summary', async (req, res) => {
     const shiftExpenses = await db('shift_expenses')
       .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
       .join('employees', 'shifts.employee_id', 'employees.id')
+      .whereNull('shift_expenses.deleted_at')
       .where('shifts.start_time', '>=', startTs)
       .where('shifts.start_time', '<=', endTs)
       .select(
@@ -145,12 +150,14 @@ router.get('/summary', async (req, res) => {
     const prevEndTs = prevEndDate + 'T23:59:59';
 
     const prevGenResult = await db('expenses')
+      .whereNull('deleted_at')
       .where('date', '>=', prevStartDate)
       .where('date', '<=', prevEndDate)
       .sum('amount as total')
       .first();
     const prevShiftResult = await db('shift_expenses')
       .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
+      .whereNull('shift_expenses.deleted_at')
       .where('shifts.start_time', '>=', prevStartTs)
       .where('shifts.start_time', '<=', prevEndTs)
       .sum('shift_expenses.amount as total')

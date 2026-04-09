@@ -118,18 +118,16 @@ export default function TankDips() {
         title={`${tank.label} — Dips`}
         back
         right={
-          !hasOpenShift ? (
-            <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
-              <Plus size={20} />
-            </button>
-          ) : undefined
+          <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
+            <Plus size={20} />
+          </button>
         }
       />
 
       {hasOpenShift && (
         <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
           <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
-          <p className="text-xs text-amber-700">A shift is open. Close it before recording or editing dip entries.</p>
+          <p className="text-xs text-amber-700">A shift is open. Book stock does not include current shift sales until shift close.</p>
         </div>
       )}
 
@@ -184,28 +182,34 @@ export default function TankDips() {
         <div className="text-center py-10 bg-white rounded-xl shadow-sm">
           <Droplets size={36} className="mx-auto text-gray-300 mb-2" />
           <p className="text-gray-400 text-sm">No dip readings recorded yet</p>
-          {!hasOpenShift && (
-            <button onClick={openAdd} className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Record First Dip</button>
-          )}
+          <button onClick={openAdd} className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Record First Dip</button>
         </div>
       ) : (
         <div className="space-y-2">
-          {dips.map((dip: any, idx: number) => (
-            <div key={dip.id} className="bg-white rounded-xl shadow-sm p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <p className="font-semibold text-gray-800">
-                      {parseFloat(dip.measured_litres).toLocaleString('en-KE', { maximumFractionDigits: 0 })} L
-                    </p>
-                    {idx === 0 && (
-                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Latest</span>
+          {dips.map((dip: any, idx: number) => {
+            const v = dip.variance_litres != null ? parseFloat(dip.variance_litres) : null;
+            return (
+              <div key={dip.id} className="bg-white rounded-xl shadow-sm p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <p className="font-semibold text-gray-800">
+                        {parseFloat(dip.measured_litres).toLocaleString('en-KE', { maximumFractionDigits: 0 })} L
+                      </p>
+                      {idx === 0 && (
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Latest</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500">{formatDate(dip.dip_date)}</p>
+                    {dip.book_stock_at_dip != null && (
+                      <div className="mt-1 flex gap-3 text-xs">
+                        <span className="text-gray-400">Book: {parseFloat(dip.book_stock_at_dip).toFixed(1)} L</span>
+                        <span className={v !== null ? (v < 0 ? 'text-red-600 font-medium' : v > 0 ? 'text-green-600 font-medium' : 'text-gray-500') : ''}>
+                          Var: {v !== null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)} L` : '—'}
+                        </span>
+                      </div>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500">{formatDate(dip.dip_date)}</p>
-                  <p className="text-xs text-gray-400">Recorded: {new Date(dip.timestamp).toLocaleString('en-KE')}</p>
-                </div>
-                {!hasOpenShift && (
                   <div className="flex gap-1">
                     <button onClick={() => openEdit(dip)} className="p-2 text-gray-400 hover:text-blue-600 rounded-lg">
                       <Pencil size={15} />
@@ -214,10 +218,10 @@ export default function TankDips() {
                       <Trash2 size={15} />
                     </button>
                   </div>
-                )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

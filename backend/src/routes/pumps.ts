@@ -47,6 +47,18 @@ router.get('/:id', async (req, res) => {
 router.post('/', requireAdmin, async (req, res) => {
   try {
     const { label, nozzle_label, fuel_type, tank_id, initial_litres, initial_amount } = req.body;
+
+    // Validate pump fuel type matches tank fuel type
+    if (tank_id) {
+      const tank = await db('tanks').where({ id: tank_id }).select('fuel_type').first();
+      if (tank && tank.fuel_type !== fuel_type) {
+        return res.status(400).json({
+          success: false,
+          error: `Fuel type mismatch: pump is ${fuel_type} but tank is ${tank.fuel_type}`,
+        });
+      }
+    }
+
     const [id] = await db('pumps').insert({
       label, nozzle_label, fuel_type, tank_id,
       initial_litres: initial_litres || 0,
@@ -65,6 +77,18 @@ router.put('/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Cannot edit pumps while a shift is open. Close the shift first.' });
     }
     const { label, nozzle_label, fuel_type, tank_id, active, initial_litres, initial_amount } = req.body;
+
+    // Validate pump fuel type matches tank fuel type
+    if (tank_id && fuel_type) {
+      const tank = await db('tanks').where({ id: tank_id }).select('fuel_type').first();
+      if (tank && tank.fuel_type !== fuel_type) {
+        return res.status(400).json({
+          success: false,
+          error: `Fuel type mismatch: pump is ${fuel_type} but tank is ${tank.fuel_type}`,
+        });
+      }
+    }
+
     const updateData: any = { label, nozzle_label, fuel_type, tank_id, active };
     if (initial_litres !== undefined) updateData.initial_litres = initial_litres;
     if (initial_amount !== undefined) updateData.initial_amount = initial_amount;

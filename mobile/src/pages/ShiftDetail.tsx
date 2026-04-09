@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, closeShift, getStaffDebts, repayDebt } from '../services/api';
+import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard } from 'lucide-react';
+import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets } from 'lucide-react';
 
 export default function ShiftDetail() {
   const { id } = useParams();
@@ -22,6 +22,8 @@ export default function ShiftDetail() {
   const [showDebtModal, setShowDebtModal] = useState(false);
   const [repayAmount, setRepayAmount] = useState('');
   const [repaying, setRepaying] = useState(false);
+  const [tankSummary, setTankSummary] = useState<any[]>([]);
+  const [wagePaid, setWagePaid] = useState('');
 
   useEffect(() => { loadShift(); }, [id]);
 
@@ -30,6 +32,7 @@ export default function ShiftDetail() {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
       setShift(d);
+      setWagePaid(String(d.employee_wage || 0));
       // Use outstanding_debts from shift response, or fetch separately
       if (d.outstanding_debts) {
         setDebts(d.outstanding_debts);
@@ -39,6 +42,11 @@ export default function ShiftDetail() {
           setDebts(debtRes.data.data?.debts || []);
         } catch { setDebts([]); }
       }
+      // Load tank stock summary
+      try {
+        const tankRes = await getShiftTankSummary(parseInt(id!));
+        setTankSummary(tankRes.data.data?.tanks || []);
+      } catch { setTankSummary([]); }
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }
@@ -59,8 +67,11 @@ export default function ShiftDetail() {
           deduct_amount = 0;
         }
       }
-      await closeShift(parseInt(id!), { notes: closeNotes || undefined, deduct_amount });
+      const res = await closeShift(parseInt(id!), { notes: closeNotes || undefined, deduct_amount, wage_paid: parseFloat(wagePaid) || 0 });
       setShowCloseModal(false);
+      if (res.data?.warnings?.length) {
+        alert('Shift closed with warnings:\n\n' + res.data.warnings.join('\n'));
+      }
       await loadShift();
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to close shift');
@@ -105,7 +116,10 @@ export default function ShiftDetail() {
       <div className="flex items-center justify-between mb-3">
         <div>
           <p className="font-semibold text-gray-800">{shift.employee_name}</p>
-          <p className="text-xs text-gray-400">{new Date(shift.start_time).toLocaleString('en-KE')}</p>
+          <p className="text-xs text-gray-400">
+            {shift.shift_date || new Date(shift.start_time).toLocaleDateString('en-KE')}
+            {' · '}{new Date(shift.start_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
+          </p>
         </div>
         <span className={`px-2 py-1 rounded-full text-xs font-medium ${isOpen ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
           {isOpen ? 'Open' : 'Closed'}
@@ -180,6 +194,29 @@ export default function ShiftDetail() {
           </div>
         )}
       </div>
+
+      {/* Tank Stock Movement */}
+      {tankSummary.length > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
+          <p className="font-semibold text-gray-700 mb-2 flex items-center gap-1"><Droplets size={14} /> Tank Stock</p>
+          <div className="space-y-2">
+            {tankSummary.map((t: any) => (
+              <div key={t.tank_id} className="bg-gray-50 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-sm">{t.tank_label}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-xs ${t.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{t.fuel_type}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <div className="flex justify-between"><span className="text-gray-400">Opening</span><span>{Number(t.opening_stock_litres || 0).toFixed(1)} L</span></div>
+                  <div className="flex justify-between"><span className="text-gray-400">Sales</span><span className="text-red-600">-{Number(t.sales_litres || 0).toFixed(1)} L</span></div>
+                  <div className="flex justify-between"><span className="text-gray-400">Deliveries</span><span className="text-green-600">{Number(t.deliveries_litres || 0) > 0 ? `+${Number(t.deliveries_litres).toFixed(1)}` : '0.0'} L</span></div>
+                  <div className="flex justify-between"><span className="text-gray-400">Closing</span><span className="font-semibold">{Number(t.closing_stock_litres || 0).toFixed(1)} L</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Wage & Deduction */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
@@ -320,6 +357,15 @@ export default function ShiftDetail() {
               <button onClick={() => setShowCloseModal(false)} className="p-1 text-gray-400">
                 <X size={20} />
               </button>
+            </div>
+
+            {/* Wages paid input */}
+            <div className="mb-4">
+              <label className="text-sm font-medium text-gray-700 mb-1 block">Wages Paid This Shift (KES)</label>
+              <input type="number" step="0.01" min="0" value={wagePaid}
+                onChange={e => setWagePaid(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg p-3 text-base" />
+              <p className="text-xs text-gray-400 mt-1">Set to 0 if already paid in a previous shift today.</p>
             </div>
 
             {/* Summary in modal */}

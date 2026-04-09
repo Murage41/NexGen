@@ -1,17 +1,18 @@
 import { Router } from 'express';
 import db from '../database';
+import { getFIFOCostByFuelType } from '../services/stockCalculator';
+import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
 
 router.get('/', async (_req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getKenyaDate();
     const monthStart = today.slice(0, 7) + '-01';
 
     // ── Today's shifts ──
     const todayShifts = await db('shifts')
-      .where('start_time', '>=', today + 'T00:00:00')
-      .where('start_time', '<=', today + 'T23:59:59');
+      .where('shift_date', today);
     const shiftIds = todayShifts.map((s: any) => s.id);
 
     // Today's sales from pump readings
@@ -43,36 +44,27 @@ router.get('/', async (_req, res) => {
       }
     }
 
-    // Today's COGS (weighted avg cost)
-    const deliveries = await db('fuel_deliveries')
-      .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
-      .select('tanks.fuel_type')
-      .sum('fuel_deliveries.total_cost as total_cost')
-      .sum('fuel_deliveries.litres as total_litres')
-      .groupBy('tanks.fuel_type');
+    // Today's COGS from FIFO batch consumption
+    const todayFifoCosts = await getFIFOCostByFuelType(today, today);
+    const todayCogs = (todayFifoCosts['petrol'] || 0) + (todayFifoCosts['diesel'] || 0);
 
+    // Cost per litre from FIFO (for margin calculation)
     const avgCosts: Record<string, number> = {};
-    for (const d of deliveries) {
-      const litres = Number(d.total_litres) || 0;
-      const cost = Number(d.total_cost) || 0;
-      avgCosts[d.fuel_type] = litres > 0 ? cost / litres : 0;
-    }
+    if (todayLitresPetrol > 0) avgCosts['petrol'] = (todayFifoCosts['petrol'] || 0) / todayLitresPetrol;
+    if (todayLitresDiesel > 0) avgCosts['diesel'] = (todayFifoCosts['diesel'] || 0) / todayLitresDiesel;
 
-    const todayCogs =
-      todayLitresPetrol * (avgCosts['petrol'] || 0) +
-      todayLitresDiesel * (avgCosts['diesel'] || 0);
-
-    // Today's wages
+    // Today's wages — use stored wage_paid for closed shifts, daily_wage preview for open
     let todayWages = 0;
     if (shiftIds.length > 0) {
       const wageShifts = await db('shifts')
         .join('employees', 'shifts.employee_id', 'employees.id')
         .whereIn('shifts.id', shiftIds)
-        .select('shifts.id', 'employees.daily_wage');
+        .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
 
       for (const s of wageShifts) {
-        const wd = await db('wage_deductions').where({ shift_id: s.id }).first();
-        todayWages += wd ? Number(wd.final_wage) : Number(s.daily_wage);
+        todayWages += s.status === 'closed'
+          ? (Number(s.wage_paid) || 0)
+          : (Number(s.daily_wage) || 0);
       }
     }
 
@@ -81,12 +73,14 @@ router.get('/', async (_req, res) => {
     if (shiftIds.length > 0) {
       const seResult = await db('shift_expenses')
         .whereIn('shift_id', shiftIds)
+        .whereNull('deleted_at')
         .sum('amount as total')
         .first();
       todayShiftExpenses = Number((seResult as any)?.total) || 0;
     }
     const geResult = await db('expenses')
       .where('date', today)
+      .whereNull('deleted_at')
       .sum('amount as total')
       .first();
     const todayGeneralExpenses = Number((geResult as any)?.total) || 0;
@@ -102,8 +96,8 @@ router.get('/', async (_req, res) => {
 
     // ── Month-to-date figures ──
     const mtdShifts = await db('shifts')
-      .where('start_time', '>=', monthStart + 'T00:00:00')
-      .where('start_time', '<=', today + 'T23:59:59')
+      .where('shift_date', '>=', monthStart)
+      .where('shift_date', '<=', today)
       .select('id');
     const mtdShiftIds = mtdShifts.map((s: any) => s.id);
 
@@ -119,51 +113,42 @@ router.get('/', async (_req, res) => {
       mtdLitres = Number((mtdResult as any)?.litres) || 0;
     }
 
-    // MTD wages
+    // MTD wages — use stored wage_paid for closed shifts, daily_wage preview for open
     let mtdWages = 0;
     if (mtdShiftIds.length > 0) {
       const mtdWageShifts = await db('shifts')
         .join('employees', 'shifts.employee_id', 'employees.id')
         .whereIn('shifts.id', mtdShiftIds)
-        .select('shifts.id', 'employees.daily_wage');
+        .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
       for (const s of mtdWageShifts) {
-        const wd = await db('wage_deductions').where({ shift_id: s.id }).first();
-        mtdWages += wd ? Number(wd.final_wage) : Number(s.daily_wage);
+        mtdWages += s.status === 'closed'
+          ? (Number(s.wage_paid) || 0)
+          : (Number(s.daily_wage) || 0);
       }
     }
 
     // MTD expenses
     let mtdShiftExp = 0;
     if (mtdShiftIds.length > 0) {
-      const r = await db('shift_expenses').whereIn('shift_id', mtdShiftIds).sum('amount as total').first();
+      const r = await db('shift_expenses').whereIn('shift_id', mtdShiftIds).whereNull('deleted_at').sum('amount as total').first();
       mtdShiftExp = Number((r as any)?.total) || 0;
     }
     const mtdGenExp = await db('expenses')
+      .whereNull('deleted_at')
       .where('date', '>=', monthStart)
       .where('date', '<=', today)
       .sum('amount as total')
       .first();
     const mtdExpenses = mtdShiftExp + (Number((mtdGenExp as any)?.total) || 0);
 
-    // MTD COGS (litres sold x avg cost)
-    let mtdPetrolL = 0, mtdDieselL = 0;
-    if (mtdShiftIds.length > 0) {
-      const fuelResult = await db('pump_readings')
-        .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-        .whereIn('pump_readings.shift_id', mtdShiftIds)
-        .select('pumps.fuel_type')
-        .sum('pump_readings.litres_sold as litres')
-        .groupBy('pumps.fuel_type');
-      for (const f of fuelResult) {
-        if (f.fuel_type === 'petrol') mtdPetrolL = Number(f.litres) || 0;
-        else if (f.fuel_type === 'diesel') mtdDieselL = Number(f.litres) || 0;
-      }
-    }
-    const mtdCogs = mtdPetrolL * (avgCosts['petrol'] || 0) + mtdDieselL * (avgCosts['diesel'] || 0);
+    // MTD COGS from FIFO batch consumption
+    const mtdFifoCosts = await getFIFOCostByFuelType(monthStart, today);
+    const mtdCogs = (mtdFifoCosts['petrol'] || 0) + (mtdFifoCosts['diesel'] || 0);
     const mtdNetProfit = mtdSales - mtdCogs - mtdWages - mtdExpenses;
 
     // ── Outstanding credits (receivables) ──
     const creditsResult = await db('credits')
+      .whereNull('deleted_at')
       .whereNot('status', 'paid')
       .where('balance', '>', 0)
       .sum('balance as total')
@@ -189,6 +174,7 @@ router.get('/', async (_req, res) => {
       pct_full: Number(t.capacity_litres) > 0
         ? (Number(t.current_stock_litres) / Number(t.capacity_litres)) * 100
         : 0,
+      negative_stock: Number(t.current_stock_litres) < 0,
     }));
 
     // Margin per litre
@@ -237,8 +223,7 @@ router.get('/', async (_req, res) => {
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
       const dayShifts = await db('shifts')
-        .where('start_time', '>=', dateStr + 'T00:00:00')
-        .where('start_time', '<=', dateStr + 'T23:59:59')
+        .where('shift_date', dateStr)
         .select('id');
       const dayShiftIds = dayShifts.map((s: any) => s.id);
 

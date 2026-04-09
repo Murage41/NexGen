@@ -15,8 +15,9 @@
     "cors": "^2.8.5",
     "express": "^4.21.1",
     "knex": "^3.1.0",
+    "shared": "*",
     "sqlite3": "^5.1.7",
-    "shared": "*"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

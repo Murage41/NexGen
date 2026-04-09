@@ -126,7 +126,7 @@ export default function Pumps() {
                 <select
                   className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                   value={form.fuel_type}
-                  onChange={e => setForm({ ...form, fuel_type: e.target.value })}
+                  onChange={e => setForm({ ...form, fuel_type: e.target.value, tank_id: '' })}
                 >
                   <option value="petrol">Petrol</option>
                   <option value="diesel">Diesel</option>
@@ -139,7 +139,10 @@ export default function Pumps() {
                   value={form.tank_id}
                   onChange={e => setForm({ ...form, tank_id: e.target.value })}
                 >
-                  {tanks.map((t: any) => (
+                  <option value="">-- Select Tank --</option>
+                  {tanks
+                    .filter((t: any) => t.fuel_type === form.fuel_type)
+                    .map((t: any) => (
                     <option key={t.id} value={t.id}>{t.label} ({t.fuel_type})</option>
                   ))}
                 </select>
