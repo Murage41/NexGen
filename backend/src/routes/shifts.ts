@@ -646,6 +646,20 @@ router.put('/:id/close', async (req, res) => {
           cogs,
         });
 
+      }
+
+      // *** Mark shift closed BEFORE recomputeCache so that computeBookStock
+      // sees this shift's status = 'closed' and includes its sales in the total ***
+      await trx('shifts').where({ id: req.params.id }).update({
+        status: 'closed',
+        end_time: new Date().toISOString(),
+        notes: notes || null,
+        wage_paid: employee_wage,
+      });
+
+      // Now recompute tank cache — the shift is closed so its sales are included
+      for (const t of allTanks) {
+        const sales = tankDeductions[t.id] || 0;
         if (sales > 0) {
           const newStock = await recomputeCache(t.id, trx);
           await trx('tank_stock_ledger').insert({
@@ -658,13 +672,6 @@ router.put('/:id/close', async (req, res) => {
           });
         }
       }
-
-      await trx('shifts').where({ id: req.params.id }).update({
-        status: 'closed',
-        end_time: new Date().toISOString(),
-        notes: notes || null,
-        wage_paid: employee_wage,
-      });
     });
 
     res.json({ success: true, ...(warnings.length > 0 ? { warnings } : {}) });
