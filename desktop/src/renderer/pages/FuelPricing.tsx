@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { getFuelPrices, getCurrentPrices, updateFuelPrice } from '../services/api';
 import { DollarSign, Pencil, Check, X } from 'lucide-react';
+import { getKenyaDate } from '../utils/timezone';
 
 export default function FuelPricing() {
   const [prices, setPrices] = useState<any[]>([]);
   const [currentPrices, setCurrentPrices] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ price_per_litre: '', effective_date: '' });
+  const [editForm, setEditForm] = useState({ price_per_litre: '', effective_date: '', epra_max_price: '' });
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -30,25 +32,40 @@ export default function FuelPricing() {
     const current = currentPrices[fuelType];
     setEditForm({
       price_per_litre: current?.price_per_litre?.toString() || '',
-      effective_date: new Date().toISOString().split('T')[0],
+      effective_date: getKenyaDate(),
+      epra_max_price: current?.epra_max_price?.toString() || '',
     });
+    setErrorMsg(null);
     setEditing(fuelType);
   }
 
   async function handleSave(fuelType: string) {
     setSaving(true);
+    setErrorMsg(null);
     try {
-      await updateFuelPrice(fuelType, {
+      const payload: any = {
         price_per_litre: parseFloat(editForm.price_per_litre),
         effective_date: editForm.effective_date,
-      });
+      };
+      if (editForm.epra_max_price) {
+        payload.epra_max_price = parseFloat(editForm.epra_max_price);
+        payload.epra_effective_date = editForm.effective_date;
+      }
+      await updateFuelPrice(fuelType, payload);
       setEditing(null);
       loadData();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to update price');
+      setErrorMsg(err.response?.data?.error || 'Failed to update price');
     } finally {
       setSaving(false);
     }
+  }
+
+  function ceilingStatus(price: number, max: number | null | undefined): { color: string; label: string } | null {
+    if (!max) return null;
+    if (price > max) return { color: 'bg-red-100 text-red-700 border-red-300', label: `Over ceiling (KES ${max})` };
+    if (price >= max * 0.95) return { color: 'bg-amber-100 text-amber-700 border-amber-300', label: `Within 5% of ceiling (KES ${max})` };
+    return { color: 'bg-green-100 text-green-700 border-green-300', label: `Ceiling KES ${max}` };
   }
 
   const formatKES = (n: number) => `KES ${Number(n).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
@@ -89,14 +106,25 @@ export default function FuelPricing() {
                       className="w-full border border-gray-300 rounded-lg p-2 text-lg font-bold" />
                   </div>
                   <div>
+                    <label className="block text-xs text-gray-500 mb-1">EPRA Ceiling (KES, optional)</label>
+                    <input type="number" step="0.01" min="0"
+                      value={editForm.epra_max_price}
+                      onChange={e => setEditForm({ ...editForm, epra_max_price: e.target.value })}
+                      placeholder="e.g. 195.50"
+                      className="w-full border border-gray-300 rounded-lg p-2" />
+                  </div>
+                  <div>
                     <label className="block text-xs text-gray-500 mb-1">Effective Date</label>
                     <input type="date" required
                       value={editForm.effective_date}
                       onChange={e => setEditForm({ ...editForm, effective_date: e.target.value })}
                       className="w-full border border-gray-300 rounded-lg p-2" />
                   </div>
+                  {errorMsg && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{errorMsg}</p>
+                  )}
                   <div className="flex gap-2 justify-end">
-                    <button onClick={() => setEditing(null)} className="p-1.5 text-gray-400 hover:text-gray-600 rounded">
+                    <button onClick={() => { setEditing(null); setErrorMsg(null); }} className="p-1.5 text-gray-400 hover:text-gray-600 rounded">
                       <X size={18} />
                     </button>
                     <button onClick={() => handleSave(ft)} disabled={saving || !editForm.price_per_litre}
@@ -113,6 +141,15 @@ export default function FuelPricing() {
                       per litre — effective {new Date(current.effective_date).toLocaleDateString('en-KE')}
                     </p>
                   )}
+                  {current && (() => {
+                    const status = ceilingStatus(Number(current.price_per_litre), current.epra_max_price);
+                    if (!status) return null;
+                    return (
+                      <span className={`inline-block mt-2 text-xs px-2 py-1 rounded border ${status.color}`}>
+                        {status.label}
+                      </span>
+                    );
+                  })()}
                 </>
               )}
             </div>

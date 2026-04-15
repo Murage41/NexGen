@@ -12,8 +12,9 @@ router.get('/', async (req, res) => {
     const { from, to, tank_id } = req.query;
     let query = db('fuel_deliveries')
       .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
+      .leftJoin('suppliers', 'fuel_deliveries.supplier_id', 'suppliers.id')
       .whereNull('fuel_deliveries.deleted_at')
-      .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type')
+      .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type', 'suppliers.name as supplier_name')
       .orderBy('fuel_deliveries.date', 'desc');
     if (from) query = query.where('fuel_deliveries.date', '>=', from);
     if (to) query = query.where('fuel_deliveries.date', '<=', to);
@@ -27,11 +28,14 @@ router.get('/', async (req, res) => {
 
 router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) => {
   try {
-    const { tank_id, supplier, litres, cost_per_litre, date } = req.body;
+    const { tank_id, supplier, supplier_id, litres, cost_per_litre, date } = req.body;
     const total_cost = litres * cost_per_litre;
 
     const delivery = await db.transaction(async (trx) => {
-      const [id] = await trx('fuel_deliveries').insert({ tank_id, supplier, litres, cost_per_litre, total_cost, date });
+      const [id] = await trx('fuel_deliveries').insert({
+        tank_id, supplier, supplier_id: supplier_id || null,
+        litres, cost_per_litre, total_cost, date,
+      });
 
       // Create FIFO batch
       const tank = await trx('tanks').where({ id: tank_id }).select('fuel_type').first();
@@ -58,9 +62,27 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
         notes: `Delivery from ${supplier || 'supplier'}: ${parseFloat(litres).toFixed(1)} L (date: ${date})`,
       });
 
+      // Auto-create supplier invoice if supplier_id provided
+      if (supplier_id) {
+        const supplierRow = await trx('suppliers').where({ id: supplier_id }).first();
+        const dueDays = supplierRow?.payment_terms_days || 0;
+        const dueDate = new Date(date);
+        dueDate.setDate(dueDate.getDate() + dueDays);
+
+        await trx('supplier_invoices').insert({
+          supplier_id,
+          delivery_id: id,
+          amount: total_cost,
+          balance: total_cost,
+          status: 'unpaid',
+          due_date: dueDate.toISOString().split('T')[0],
+        });
+      }
+
       return trx('fuel_deliveries')
         .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
-        .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type')
+        .leftJoin('suppliers', 'fuel_deliveries.supplier_id', 'suppliers.id')
+        .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type', 'suppliers.name as supplier_name')
         .where('fuel_deliveries.id', id)
         .first();
     });
@@ -76,16 +98,34 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     const existing = await db('fuel_deliveries').where({ id: req.params.id }).first();
     if (!existing) return res.status(404).json({ success: false, error: 'Delivery not found' });
 
-    const { tank_id, supplier, litres, cost_per_litre, date } = req.body;
+    const { tank_id, supplier, supplier_id: reqSupplierId, litres, cost_per_litre, date } = req.body;
     const newLitres = parseFloat(litres);
     const oldLitres = parseFloat(existing.litres);
     const oldTankId = existing.tank_id;
     const newTankId = parseInt(tank_id);
     const total_cost = newLitres * parseFloat(cost_per_litre);
 
+    // ── Guard: block litres/cost/tank changes if fuel from this batch has been sold ──
+    const batch = await db('delivery_batches').where({ delivery_id: parseInt(req.params.id as string) }).first();
+    if (batch) {
+      const consumed = parseFloat(batch.original_litres) - parseFloat(batch.remaining_litres);
+      if (consumed > 0) {
+        const litresChanged = newLitres !== oldLitres;
+        const costChanged = parseFloat(cost_per_litre) !== parseFloat(existing.cost_per_litre);
+        const tankChanged = newTankId !== oldTankId;
+        if (litresChanged || costChanged || tankChanged) {
+          return res.status(400).json({
+            success: false,
+            error: `Cannot change litres, cost, or tank — ${consumed.toFixed(1)} L from this delivery have already been sold through closed shifts. You can still edit the supplier, date, and notes. For cost corrections, use the COGS recalculation endpoint.`,
+          });
+        }
+      }
+    }
+
     const delivery = await db.transaction(async (trx) => {
       await trx('fuel_deliveries').where({ id: req.params.id }).update({
-        tank_id: newTankId, supplier, litres: newLitres, cost_per_litre, total_cost, date,
+        tank_id: newTankId, supplier, supplier_id: reqSupplierId || existing.supplier_id,
+        litres: newLitres, cost_per_litre, total_cost, date,
       });
 
       // Update FIFO batch — handle tank change and/or litres change independently (fixes Issue 4)
@@ -139,7 +179,8 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
 
       return trx('fuel_deliveries')
         .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
-        .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type')
+        .leftJoin('suppliers', 'fuel_deliveries.supplier_id', 'suppliers.id')
+        .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type', 'suppliers.name as supplier_name')
         .where('fuel_deliveries.id', req.params.id)
         .first();
     });

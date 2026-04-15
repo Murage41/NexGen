@@ -3,6 +3,7 @@ import db from '../database';
 import { validate } from '../middleware/validate';
 import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema } from '../schemas';
 import { computeBookStock, recomputeCache, consumeBatchesFIFO } from '../services/stockCalculator';
+import { computeMpesaFee } from '../services/mpesaFees';
 import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
@@ -116,6 +117,15 @@ router.get('/:id', async (req, res) => {
     const shiftCredits = await db('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
 
+    // Credit receipts collected during this shift (old-debt payments received)
+    const creditReceipts = await db('credit_payments')
+      .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
+      .where('credit_payments.shift_id', shift.id)
+      .whereNull('credit_payments.deleted_at')
+      .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone')
+      .orderBy('credit_payments.date', 'asc');
+    const total_credit_receipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
+
     // Get employee's outstanding debt
     const outstandingDebts = await db('staff_debts')
       .where({ employee_id: shift.employee_id, status: 'outstanding' })
@@ -143,6 +153,7 @@ router.get('/:id', async (req, res) => {
         collections: collections || null,
         expenses,
         shift_credits: shiftCredits,
+        credit_receipts: creditReceipts,
         wage_deduction: wageDeduction || null,
         outstanding_debts: outstandingDebts,
         total_outstanding_debt,
@@ -150,6 +161,7 @@ router.get('/:id', async (req, res) => {
         total_cash,
         total_mpesa,
         total_credits,
+        total_credit_receipts,
         total_expenses,
         employee_wage,
         total_accounted,
@@ -299,14 +311,17 @@ router.put('/:id/collections', async (req, res) => {
     const { cash_amount, mpesa_amount, credits_amount } = req.body;
     const total_collected = (cash_amount || 0) + (mpesa_amount || 0) + (credits_amount || 0);
 
+    // Auto-compute Lipa na M-Pesa Buy Goods fee + net (Phase 1A)
+    const { fee: mpesa_fee, net: mpesa_net } = await computeMpesaFee(Number(mpesa_amount) || 0);
+
     const existing = await db('shift_collections').where({ shift_id: req.params.id }).first();
     if (existing) {
       await db('shift_collections').where({ shift_id: req.params.id }).update({
-        cash_amount, mpesa_amount, credits_amount, total_collected,
+        cash_amount, mpesa_amount, credits_amount, total_collected, mpesa_fee, mpesa_net,
       });
     } else {
       await db('shift_collections').insert({
-        shift_id: req.params.id, cash_amount, mpesa_amount, credits_amount, total_collected,
+        shift_id: req.params.id, cash_amount, mpesa_amount, credits_amount, total_collected, mpesa_fee, mpesa_net,
       });
     }
 
@@ -343,107 +358,263 @@ router.delete('/:id/expenses/:expenseId', async (req, res) => {
   }
 });
 
-// POST add shift credit — also creates entry in main credits ledger
+// POST add shift credit — creates shift_credit + credits line item, increments account balance
 router.post('/:id/credits', validate(createShiftCreditSchema), async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { customer_name, customer_phone, amount, description } = req.body;
     const shiftId = req.params.id;
 
-    // Look up or auto-create credit_account for this customer
-    let account = await db('credit_accounts')
-      .whereRaw('LOWER(name) = ?', [customer_name.toLowerCase()])
-      .first();
+    const shiftCredit = await db.transaction(async (trx) => {
+      // Look up or auto-create credit_account for this customer
+      let account = await trx('credit_accounts')
+        .whereRaw('LOWER(name) = ?', [customer_name.toLowerCase()])
+        .where({ type: 'customer' })
+        .first();
 
-    if (!account) {
-      const [accountId] = await db('credit_accounts').insert({
-        name: customer_name,
-        phone: customer_phone || null,
-        type: 'customer',
+      if (!account) {
+        const [accountId] = await trx('credit_accounts').insert({
+          name: customer_name,
+          phone: customer_phone || null,
+          type: 'customer',
+          balance: 0,
+        });
+        account = { id: accountId, balance: 0 };
+      }
+
+      // 1. Create credits line item (preserved for shift reporting / audit trail)
+      const [mainCreditId] = await trx('credits').insert({
+        customer_name,
+        customer_phone: customer_phone || null,
+        amount,
+        balance: amount,
+        shift_id: shiftId,
+        description: description || null,
+        status: 'outstanding',
+        account_id: account.id,
       });
-      account = { id: accountId };
-    }
 
-    // 1. Create record in main credits ledger (for long-term tracking & payments)
-    const [mainCreditId] = await db('credits').insert({
-      customer_name,
-      customer_phone: customer_phone || null,
-      amount,
-      balance: amount,
-      shift_id: shiftId,
-      description: description || null,
-      status: 'outstanding',
-      account_id: account.id,
+      // 2. Create shift_credits entry (for shift accountability)
+      const [shiftCreditId] = await trx('shift_credits').insert({
+        shift_id: shiftId,
+        customer_name,
+        customer_phone: customer_phone || null,
+        amount,
+        description: description || null,
+        credit_id: mainCreditId,
+      });
+
+      // 3. Increment the account balance — this is the authoritative running total
+      await trx('credit_accounts').where({ id: account.id }).increment('balance', amount);
+
+      // 4. Update credits_amount in shift_collections (auto-sum)
+      const totalCredits = await trx('shift_credits')
+        .where({ shift_id: shiftId })
+        .whereNull('deleted_at')
+        .sum('amount as total')
+        .first();
+      const existing = await trx('shift_collections').where({ shift_id: shiftId }).first();
+      const creditsTotal = Number((totalCredits as any)?.total || 0);
+      if (existing) {
+        await trx('shift_collections').where({ shift_id: shiftId }).update({
+          credits_amount: creditsTotal,
+          total_collected: existing.cash_amount + existing.mpesa_amount + creditsTotal,
+        });
+      } else {
+        await trx('shift_collections').insert({
+          shift_id: shiftId,
+          cash_amount: 0,
+          mpesa_amount: 0,
+          credits_amount: creditsTotal,
+          total_collected: creditsTotal,
+        });
+      }
+
+      return trx('shift_credits').where({ id: shiftCreditId }).first();
     });
 
-    // 2. Create shift credit entry (for shift accountability)
-    const [shiftCreditId] = await db('shift_credits').insert({
-      shift_id: shiftId,
-      customer_name,
-      customer_phone: customer_phone || null,
-      amount,
-      description: description || null,
-      credit_id: mainCreditId,
-    });
-
-    // 3. Update credits_amount in shift_collections (auto-sum)
-    const totalCredits = await db('shift_credits').where({ shift_id: shiftId }).whereNull('deleted_at').sum('amount as total').first();
-    const existing = await db('shift_collections').where({ shift_id: shiftId }).first();
-    if (existing) {
-      await db('shift_collections').where({ shift_id: shiftId }).update({
-        credits_amount: (totalCredits as any)?.total || 0,
-        total_collected: existing.cash_amount + existing.mpesa_amount + ((totalCredits as any)?.total || 0),
-      });
-    } else {
-      await db('shift_collections').insert({
-        shift_id: shiftId, cash_amount: 0, mpesa_amount: 0,
-        credits_amount: (totalCredits as any)?.total || 0,
-        total_collected: (totalCredits as any)?.total || 0,
-      });
-    }
-
-    const credit = await db('shift_credits').where({ id: shiftCreditId }).first();
-    res.status(201).json({ success: true, data: credit });
+    res.status(201).json({ success: true, data: shiftCredit });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// DELETE shift credit — also removes from main credits ledger (if no payments made)
+// DELETE shift credit — decrements account balance and voids the credits line item
 router.delete('/:id/credits/:creditId', async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const shiftId = req.params.id;
-    const shiftCredit = await db('shift_credits')
-      .where({ id: req.params.creditId, shift_id: shiftId })
-      .first();
 
-    if (shiftCredit) {
-      const now = new Date().toISOString();
-      // Soft-delete the shift credit
-      await db('shift_credits').where({ id: req.params.creditId }).update({ deleted_at: now });
+    await db.transaction(async (trx) => {
+      const shiftCredit = await trx('shift_credits')
+        .where({ id: req.params.creditId, shift_id: shiftId })
+        .whereNull('deleted_at')
+        .first();
 
-      // Soft-delete and cancel the main credit (if no payments made)
-      if (shiftCredit.credit_id) {
-        const payments = await db('credit_payments')
-          .where({ credit_id: shiftCredit.credit_id })
-          .whereNull('deleted_at');
-        if (payments.length === 0) {
-          await db('credits').where({ id: shiftCredit.credit_id }).update({ deleted_at: now, status: 'cancelled' });
+      if (shiftCredit) {
+        const now = new Date().toISOString();
+
+        // Soft-delete the shift credit
+        await trx('shift_credits').where({ id: req.params.creditId }).update({ deleted_at: now });
+
+        // Soft-delete the main credits line item (only if no payments have been applied to it)
+        if (shiftCredit.credit_id) {
+          const credit = await trx('credits').where({ id: shiftCredit.credit_id }).first();
+          const payments = await trx('credit_payments')
+            .where({ credit_id: shiftCredit.credit_id })
+            .whereNull('deleted_at');
+
+          if (credit && payments.length === 0) {
+            await trx('credits')
+              .where({ id: shiftCredit.credit_id })
+              .update({ deleted_at: now, status: 'cancelled' });
+
+            // Decrement account balance by the credit amount
+            if (credit.account_id) {
+              await trx('credit_accounts')
+                .where({ id: credit.account_id })
+                .decrement('balance', credit.amount);
+            }
+          }
+          // If payments exist, we don't touch the credit or balance — the payment
+          // has already modified the account state, so removing the credit would
+          // create an inconsistency. Manager must resolve manually.
         }
       }
+
+      // Update credits_amount total
+      const totalCredits = await trx('shift_credits')
+        .where({ shift_id: shiftId })
+        .whereNull('deleted_at')
+        .sum('amount as total')
+        .first();
+      const existing = await trx('shift_collections').where({ shift_id: shiftId }).first();
+      const creditsTotal = Number((totalCredits as any)?.total || 0);
+      if (existing) {
+        await trx('shift_collections').where({ shift_id: shiftId }).update({
+          credits_amount: creditsTotal,
+          total_collected: existing.cash_amount + existing.mpesa_amount + creditsTotal,
+        });
+      }
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /shifts/:id/credit-receipts
+ *
+ * Record a debt payment received DURING an open shift.
+ * The cash (or M-Pesa) goes straight into the shift drawer.
+ *
+ * Accounting treatment:
+ *   - Reduces credit_accounts.balance (receivable decreases)
+ *   - Increases shift_collections.cash_amount or mpesa_amount (cash in drawer increases)
+ *   - Records credit_payments row linked to this shift_id
+ *   - Does NOT touch revenue / pump_readings — no double-counting
+ *   - The shift may show a positive variance (cash > today's sales) which is correct
+ *     because old debt was collected; the UI labels this as "debt collected"
+ */
+router.post('/:id/credit-receipts', async (req, res) => {
+  if (!(await requireOpenShift(req, res))) return;
+  try {
+    const shiftId = parseInt(req.params.id as string);
+    const { account_id, amount, payment_method, notes } = req.body;
+
+    if (!account_id || !amount || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'account_id and a positive amount are required' });
     }
 
-    // Update credits_amount total
-    const totalCredits = await db('shift_credits').where({ shift_id: shiftId }).whereNull('deleted_at').sum('amount as total').first();
-    const existing = await db('shift_collections').where({ shift_id: shiftId }).first();
-    if (existing) {
-      await db('shift_collections').where({ shift_id: shiftId }).update({
-        credits_amount: (totalCredits as any)?.total || 0,
-        total_collected: existing.cash_amount + existing.mpesa_amount + ((totalCredits as any)?.total || 0),
+    const account = await db('credit_accounts')
+      .where({ id: account_id })
+      .whereNull('deleted_at')
+      .first();
+    if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
+
+    const balance = Number(account.balance);
+    const pay = Math.round(Number(amount) * 100) / 100;
+    if (pay > balance) {
+      return res.status(400).json({
+        success: false,
+        error: `Payment KES ${pay} exceeds account balance KES ${balance}`,
       });
     }
-    res.json({ success: true });
+
+    const method = payment_method || 'cash';
+    const today = getKenyaDate();
+
+    const receipt = await db.transaction(async (trx) => {
+      // 1. Record credit payment linked to this shift
+      const [paymentId] = await trx('credit_payments').insert({
+        account_id,
+        credit_id: null,
+        payment_type: 'account',
+        payment_method: method,
+        amount: pay,
+        date: today,
+        notes: notes || null,
+        shift_id: shiftId,
+      });
+
+      // 2. Decrement account balance
+      await trx('credit_accounts').where({ id: account_id }).decrement('balance', pay);
+
+      // 3. FIFO settle oldest individual credit line items
+      let remaining = pay;
+      const openCredits = await trx('credits')
+        .where({ account_id })
+        .whereNull('deleted_at')
+        .whereNot('status', 'paid')
+        .where('balance', '>', 0)
+        .orderBy('created_at', 'asc');
+      for (const credit of openCredits) {
+        if (remaining <= 0) break;
+        const apply = Math.min(remaining, Number(credit.balance));
+        const newBal = Math.round((Number(credit.balance) - apply) * 100) / 100;
+        await trx('credits').where({ id: credit.id }).update({
+          balance: newBal,
+          status: newBal <= 0 ? 'paid' : 'partial',
+        });
+        remaining = Math.round((remaining - apply) * 100) / 100;
+      }
+
+      // 4. Add to shift collections (cash or mpesa)
+      let collections = await trx('shift_collections').where({ shift_id: shiftId }).first();
+      if (!collections) {
+        await trx('shift_collections').insert({ shift_id: shiftId, cash_amount: 0, mpesa_amount: 0, credits_amount: 0, total_collected: 0 });
+        collections = await trx('shift_collections').where({ shift_id: shiftId }).first();
+      }
+
+      if (method === 'mpesa') {
+        const { fee, net } = await computeMpesaFee(pay, today);
+        const newMpesa = Math.round((Number(collections.mpesa_amount) + pay) * 100) / 100;
+        const newFee = Math.round(((Number(collections.mpesa_fee) || 0) + fee) * 100) / 100;
+        const newNet = Math.round(((Number(collections.mpesa_net) || 0) + net) * 100) / 100;
+        await trx('shift_collections').where({ shift_id: shiftId }).update({
+          mpesa_amount: newMpesa,
+          mpesa_fee: newFee,
+          mpesa_net: newNet,
+          total_collected: Number(collections.cash_amount) + newMpesa + Number(collections.credits_amount),
+        });
+      } else {
+        const newCash = Math.round((Number(collections.cash_amount) + pay) * 100) / 100;
+        await trx('shift_collections').where({ shift_id: shiftId }).update({
+          cash_amount: newCash,
+          total_collected: newCash + Number(collections.mpesa_amount) + Number(collections.credits_amount),
+        });
+      }
+
+      return trx('credit_payments')
+        .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
+        .where('credit_payments.id', paymentId)
+        .select('credit_payments.*', 'credit_accounts.name as account_name')
+        .first();
+    });
+
+    res.status(201).json({ success: true, data: receipt });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -724,8 +895,21 @@ router.put('/:id/repay-debt', async (req, res) => {
       remaining -= payment;
     }
 
-    // Create/update wage deduction for this debt repayment
+    // Sync credit_accounts.balance for this employee
     const deductionAmount = amount - remaining; // actual amount applied
+    if (deductionAmount > 0) {
+      const empAccount = await db('credit_accounts')
+        .where({ employee_id: shift.emp_id, type: 'employee' })
+        .first();
+      if (empAccount) {
+        const newBalance = Math.max(0, Number(empAccount.balance) - deductionAmount);
+        await db('credit_accounts')
+          .where({ id: empAccount.id })
+          .update({ balance: newBalance });
+      }
+    }
+
+    // Create/update wage deduction for this debt repayment
     if (deductionAmount > 0) {
       const existing = await db('wage_deductions').where({ shift_id: shift.id }).first();
       const totalDeduction = (existing?.deduction_amount || 0) + deductionAmount;

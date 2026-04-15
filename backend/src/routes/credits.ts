@@ -32,17 +32,41 @@ router.get('/:id', async (req, res) => {
 router.post('/', validate(createCreditSchema), async (req, res) => {
   try {
     const { customer_name, customer_phone, amount, shift_id, description } = req.body;
-    const [id] = await db('credits').insert({
-      customer_name, customer_phone, amount, balance: amount, shift_id, description, status: 'outstanding',
+
+    const credit = await db.transaction(async (trx) => {
+      // 1. Create credit row
+      const [id] = await trx('credits').insert({
+        customer_name, customer_phone, amount, balance: amount, shift_id, description, status: 'outstanding',
+      });
+
+      // 2. Find or create credit_account and sync balance
+      let account = await trx('credit_accounts')
+        .where({ name: customer_name, type: 'customer' })
+        .first();
+      if (!account) {
+        const [accountId] = await trx('credit_accounts').insert({
+          name: customer_name, phone: customer_phone || null,
+          type: 'customer', balance: 0,
+        });
+        account = { id: accountId };
+      }
+
+      // 3. Link credit to account + increment balance
+      await trx('credits').where({ id }).update({ account_id: account.id });
+      await trx('credit_accounts').where({ id: account.id }).increment('balance', amount);
+
+      return trx('credits').where({ id }).first();
     });
-    const credit = await db('credits').where({ id }).first();
+
     res.status(201).json({ success: true, data: credit });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST payment against a credit
+// POST payment against a credit (LEGACY — prefer POST /credit-accounts/:id/payments)
+// Kept for backwards compatibility. Internally also decrements the account balance
+// so both paths produce consistent state.
 router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => {
   try {
     const { amount, payment_method, date, payment_date, notes } = req.body;
@@ -61,13 +85,23 @@ router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => 
 
     const updated = await db.transaction(async (trx) => {
       await trx('credit_payments').insert({
-        credit_id: credit.id, amount, payment_method: resolvedMethod, date: resolvedDate, notes,
+        credit_id: credit.id,
+        amount,
+        payment_method: resolvedMethod,
+        payment_type: 'credit',
+        date: resolvedDate,
+        notes,
         ...(credit.account_id ? { account_id: credit.account_id } : {}),
       });
 
       const newBalance = credit.balance - amount;
       const status = newBalance <= 0 ? 'paid' : 'partial';
       await trx('credits').where({ id: credit.id }).update({ balance: Math.max(0, newBalance), status });
+
+      // Keep credit_accounts.balance in sync with the individual credit payment
+      if (credit.account_id) {
+        await trx('credit_accounts').where({ id: credit.account_id }).decrement('balance', amount);
+      }
 
       return trx('credits').where({ id: credit.id }).first();
     });

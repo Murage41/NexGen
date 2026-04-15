@@ -61,6 +61,8 @@ export const getStaffDebts = (employeeId: number) =>
   api.get(`/shifts/staff-debts/${employeeId}`);
 export const repayDebt = (shiftId: number, amount: number) =>
   api.put(`/shifts/${shiftId}/repay-debt`, { amount });
+export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }) =>
+  api.post(`/shifts/${shiftId}/credit-receipts`, data);
 
 // ============ Fuel Prices ============
 export const getFuelPrices = () => api.get('/fuel-prices');
@@ -90,6 +92,8 @@ export const getCreditAccounts = (params?: any) => api.get('/credit-accounts', {
 export const getCreditAccount = (id: number) => api.get(`/credit-accounts/${id}`);
 export const deleteCreditAccount = (id: number) => api.delete(`/credit-accounts/${id}`);
 export const getCreditAccountStatement = (id: number) => api.get(`/credit-accounts/${id}/statement`);
+export const addAccountPayment = (accountId: number, data: any) =>
+  api.post(`/credit-accounts/${accountId}/payments`, data);
 
 // ============ Fuel Deliveries ============
 export const getFuelDeliveries = (params?: any) => api.get('/fuel-deliveries', { params });
@@ -119,6 +123,23 @@ export const getStockReconciliation = (date?: string) => api.get('/reports/stock
 export const getStockReconciliationByShift = (date?: string) => api.get('/reports/stock-reconciliation-by-shift', { params: { date } });
 export const getDebtorAging = () => api.get('/reports/debtor-aging');
 export const getCashFlow = (params?: { from?: string; to?: string }) => api.get('/reports/cash-flow', { params });
+
+// ============ Suppliers ============
+export const getSuppliers = () => api.get('/suppliers');
+export const getSupplier = (id: number) => api.get(`/suppliers/${id}`);
+export const createSupplier = (data: any) => api.post('/suppliers', data);
+export const updateSupplier = (id: number, data: any) => api.put(`/suppliers/${id}`, data);
+export const deleteSupplier = (id: number) => api.delete(`/suppliers/${id}`);
+
+// ============ Supplier Invoices ============
+export const getSupplierInvoices = (params?: any) => api.get('/supplier-invoices', { params });
+export const getSupplierInvoice = (id: number) => api.get(`/supplier-invoices/${id}`);
+export const createSupplierInvoice = (data: any) => api.post('/supplier-invoices', data);
+
+// ============ Supplier Payments ============
+export const getSupplierPayments = (params?: any) => api.get('/supplier-payments', { params });
+export const createSupplierPayment = (data: any) => api.post('/supplier-payments', data);
+export const deleteSupplierPayment = (id: number) => api.delete(`/supplier-payments/${id}`);
 
 // ============ Tank Accountability ============
 export const getShiftTankSummary = (shiftId: number) => api.get(`/shifts/${shiftId}/tank-summary`);

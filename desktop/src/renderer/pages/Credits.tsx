@@ -1,16 +1,14 @@
 import { useState, useEffect } from 'react';
-import { getCredits, createCredit, getCredit, addCreditPayment } from '../services/api';
-import { Plus, CreditCard, X, Eye, Banknote } from 'lucide-react';
+import { getCredits, createCredit, getCredit } from '../services/api';
+import { Plus, CreditCard, X, Eye } from 'lucide-react';
 
 export default function Credits() {
   const [credits, setCredits] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedCredit, setSelectedCredit] = useState<any>(null);
   const [form, setForm] = useState({ customer_name: '', customer_phone: '', amount: '', description: '' });
-  const [paymentForm, setPaymentForm] = useState({ amount: '', payment_method: 'cash', payment_date: '', notes: '' });
 
   useEffect(() => {
     loadCredits();
@@ -60,36 +58,6 @@ export default function Credits() {
     }
   }
 
-  function openPayment(credit: any) {
-    setSelectedCredit(credit);
-    setPaymentForm({
-      amount: '',
-      payment_method: 'cash',
-      payment_date: new Date().toISOString().split('T')[0],
-      notes: '',
-    });
-    setShowPaymentModal(true);
-  }
-
-  async function handlePayment(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedCredit) return;
-    const payload = {
-      amount: parseFloat(paymentForm.amount),
-      payment_method: paymentForm.payment_method,
-      date: paymentForm.payment_date,
-      notes: paymentForm.notes || null,
-    };
-    try {
-      await addCreditPayment(selectedCredit.id, payload);
-      setShowPaymentModal(false);
-      loadCredits();
-    } catch (err: any) {
-      console.error('Failed to add payment:', err);
-      alert(err.response?.data?.error || 'Failed to add payment');
-    }
-  }
-
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
 
   function statusBadge(status: string) {
@@ -109,7 +77,7 @@ export default function Credits() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
           <CreditCard size={24} /> Credits
         </h1>
@@ -119,6 +87,9 @@ export default function Credits() {
         >
           <Plus size={18} /> New Credit
         </button>
+      </div>
+      <div className="bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg p-3 mb-4">
+        Payments are now recorded against the customer's <strong>account balance</strong>, not individual credit line items. Go to <strong>Credit Accounts</strong> to record payments.
       </div>
 
       {/* Create Modal */}
@@ -259,85 +230,6 @@ export default function Credits() {
         </div>
       )}
 
-      {/* Payment Modal */}
-      {showPaymentModal && selectedCredit && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Record Payment</h2>
-              <button onClick={() => setShowPaymentModal(false)} className="text-gray-400 hover:text-gray-600">
-                <X size={20} />
-              </button>
-            </div>
-            <p className="text-sm text-gray-500 mb-4">
-              {selectedCredit.customer_name} - Balance: {formatKES(selectedCredit.balance || selectedCredit.amount)}
-            </p>
-            <form onSubmit={handlePayment} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Amount (KES) *</label>
-                <input
-                  type="number"
-                  required
-                  step="0.01"
-                  min="0.01"
-                  max={selectedCredit?.balance || selectedCredit?.amount || undefined}
-                  value={paymentForm.amount}
-                  onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2"
-                  placeholder="0.00"
-                />
-                <p className="text-xs text-gray-500 mt-1">Max payable: {formatKES(selectedCredit?.balance || selectedCredit?.amount || 0)}</p>
-                {paymentForm.amount && parseFloat(paymentForm.amount) > (selectedCredit?.balance || selectedCredit?.amount || 0) && (
-                  <p className="text-xs text-red-600 mt-1">Amount exceeds outstanding balance</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method *</label>
-                <select
-                  required
-                  value={paymentForm.payment_method}
-                  onChange={e => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2"
-                >
-                  <option value="cash">Cash</option>
-                  <option value="mpesa">M-Pesa</option>
-                  <option value="bank_transfer">Bank Transfer</option>
-                  <option value="cheque">Cheque</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
-                <input
-                  type="date"
-                  required
-                  value={paymentForm.payment_date}
-                  onChange={e => setPaymentForm({ ...paymentForm, payment_date: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <input
-                  type="text"
-                  value={paymentForm.notes}
-                  onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2"
-                  placeholder="Optional notes"
-                />
-              </div>
-              <div className="flex gap-2 justify-end pt-2">
-                <button type="button" onClick={() => setShowPaymentModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-                  Cancel
-                </button>
-                <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-                  Record Payment
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <table className="w-full text-sm">
@@ -368,11 +260,6 @@ export default function Credits() {
                     <button onClick={() => viewDetail(credit.id)} className="text-blue-600 hover:text-blue-800" title="View Details">
                       <Eye size={16} />
                     </button>
-                    {credit.status !== 'paid' && (
-                      <button onClick={() => openPayment(credit)} className="text-green-600 hover:text-green-800" title="Record Payment">
-                        <Banknote size={16} />
-                      </button>
-                    )}
                   </div>
                 </td>
               </tr>

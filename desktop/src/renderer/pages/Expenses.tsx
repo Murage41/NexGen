@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getExpenseSummary, getExpenseCategories, createExpense, updateExpense, deleteExpense } from '../services/api';
 import { Plus, Pencil, Trash2, Receipt, X, Filter, TrendingUp, TrendingDown } from 'lucide-react';
+import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 const PREDEFINED_CATEGORIES = [
   'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
@@ -15,8 +16,8 @@ export default function Expenses() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ category: '', description: '', amount: '', date: '' });
-  const [dateFrom, setDateFrom] = useState(new Date().toISOString().slice(0, 7) + '-01');
-  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+  const [dateFrom, setDateFrom] = useState(getKenyaMonth() + '-01');
+  const [dateTo, setDateTo] = useState(getKenyaDate());
   const [categoryFilter, setCategoryFilter] = useState('');
   const [categories, setCategories] = useState<string[]>(PREDEFINED_CATEGORIES);
 
@@ -54,15 +55,15 @@ export default function Expenses() {
 
   function applyFilter() { loadData(); }
   function clearFilter() {
-    setDateFrom(new Date().toISOString().slice(0, 7) + '-01');
-    setDateTo(new Date().toISOString().split('T')[0]);
+    setDateFrom(getKenyaMonth() + '-01');
+    setDateTo(getKenyaDate());
     setCategoryFilter('');
     setTimeout(() => loadData(), 0);
   }
 
   function openCreate() {
     setEditing(null);
-    setForm({ category: '', description: '', amount: '', date: new Date().toISOString().split('T')[0] });
+    setForm({ category: '', description: '', amount: '', date: getKenyaDate() });
     setShowModal(true);
   }
 

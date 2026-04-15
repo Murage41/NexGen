@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Plus, Trash2, Receipt, TrendingUp, TrendingDown } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { getExpenseSummary, getExpenseCategories, createExpense, deleteExpense } from '../services/api';
+import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
+import { useAuth } from '../context/AuthContext';
 
 const PREDEFINED_CATEGORIES = [
   'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
@@ -10,12 +12,13 @@ const PREDEFINED_CATEGORIES = [
 ];
 
 export default function Expenses() {
+  const { isAdmin } = useAuth();
   const [expenses, setExpenses] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState({ category: '', description: '', amount: '', date: new Date().toISOString().split('T')[0] });
+  const [form, setForm] = useState({ category: '', description: '', amount: '', date: getKenyaDate() });
   const [categories, setCategories] = useState<string[]>(PREDEFINED_CATEGORIES);
   const [filterCat, setFilterCat] = useState('');
 
@@ -25,8 +28,8 @@ export default function Expenses() {
 
   async function loadData() {
     try {
-      const monthStart = new Date().toISOString().slice(0, 7) + '-01';
-      const today = new Date().toISOString().split('T')[0];
+      const monthStart = getKenyaMonth() + '-01';
+      const today = getKenyaDate();
       const res = await getExpenseSummary({ from: monthStart, to: today });
       const data = res.data.data;
       setSummary(data);
@@ -53,7 +56,7 @@ export default function Expenses() {
     try {
       await createExpense({ ...form, amount: parseFloat(form.amount) });
       setShowAdd(false);
-      setForm({ category: '', description: '', amount: '', date: new Date().toISOString().split('T')[0] });
+      setForm({ category: '', description: '', amount: '', date: getKenyaDate() });
       loadData();
     } catch (err) {
       console.error(err);
@@ -86,9 +89,11 @@ export default function Expenses() {
     <div className="pb-6">
       <PageHeader title="Expenses" back
         right={
-          <button onClick={() => setShowAdd(true)} className="p-2 bg-blue-600 text-white rounded-xl">
-            <Plus size={20} />
-          </button>
+          isAdmin ? (
+            <button onClick={() => setShowAdd(true)} className="p-2 bg-blue-600 text-white rounded-xl">
+              <Plus size={20} />
+            </button>
+          ) : undefined
         }
       />
 
@@ -174,7 +179,7 @@ export default function Expenses() {
               </div>
               <div className="flex items-center gap-3 ml-3">
                 <span className="text-base font-bold text-gray-800">{fmt(e.amount)}</span>
-                {e.source === 'general' && (
+                {e.source === 'general' && isAdmin && (
                   <button onClick={() => handleDelete(e)} className="p-2 text-gray-400 hover:text-red-500">
                     <Trash2 size={18} />
                   </button>

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Phone, ChevronRight, ChevronLeft, Trash2, Users, Briefcase, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { CreditCard, Phone, ChevronRight, Trash2, Users, Briefcase, ArrowDownCircle, ArrowUpCircle, Banknote } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addCreditPayment } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment } from '../services/api';
+import { getKenyaDate } from '../utils/timezone';
 
 type FilterTab = 'all' | 'customer' | 'employee';
 
@@ -14,7 +15,7 @@ export default function Credits() {
   const [selectedAccount, setSelectedAccount] = useState<any>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
-  const [paymentCredit, setPaymentCredit] = useState<any>(null);
+  const [paymentAccount, setPaymentAccount] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', payment_method: 'cash', notes: '' });
 
@@ -45,35 +46,34 @@ export default function Credits() {
     }
   }
 
-  function openCreditPayment(credit: any) {
-    setPaymentCredit(credit);
+  function openAccountPayment(account: any) {
+    setPaymentAccount(account);
     setPaymentForm({ amount: '', payment_method: 'cash', notes: '' });
     setShowPayment(true);
   }
 
   async function handlePayment() {
-    if (!paymentForm.amount || !paymentCredit) return;
+    if (!paymentForm.amount || !paymentAccount) return;
     setSubmitting(true);
     try {
-      await addCreditPayment(paymentCredit.id, {
+      await addAccountPayment(paymentAccount.id, {
         amount: parseFloat(paymentForm.amount),
         payment_method: paymentForm.payment_method,
-        date: new Date().toISOString().split('T')[0],
+        date: getKenyaDate(),
         notes: paymentForm.notes || undefined,
       });
       setShowPayment(false);
-      setPaymentCredit(null);
+      setPaymentAccount(null);
       setPaymentForm({ amount: '', payment_method: 'cash', notes: '' });
-      // Reload account detail and list
       try {
         await openAccount(selectedAccount);
       } catch {
-        // Account may have been auto-deleted after full payment
         setSelectedAccount(null);
       }
       loadAccounts();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(err.response?.data?.error || 'Failed to record payment');
     } finally {
       setSubmitting(false);
     }
@@ -134,6 +134,14 @@ export default function Credits() {
             </p>
           </div>
           <div className="flex gap-2 mt-2">
+            {isAdmin && isCustomer && Number(acct.outstanding_balance) > 0 && (
+              <button
+                onClick={() => openAccountPayment(acct)}
+                className="flex-1 bg-green-600 text-white py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1"
+              >
+                <Banknote size={14} /> Record Payment
+              </button>
+            )}
             {isAdmin && isCustomer && Number(acct.outstanding_balance) === 0 && (
               <button
                 onClick={() => handleRemoveAccount(acct)}
@@ -175,16 +183,8 @@ export default function Credits() {
                       </div>
                     </div>
                     {c.balance > 0 && (
-                      <div className="flex items-center justify-between mt-2 ml-5">
+                      <div className="mt-2 ml-5">
                         <p className="text-xs text-gray-500">Balance: {fmt(c.balance)}</p>
-                        {isAdmin && (
-                          <button
-                            onClick={() => openCreditPayment(c)}
-                            className="text-xs bg-green-600 text-white px-3 py-1 rounded-lg font-medium"
-                          >
-                            Pay
-                          </button>
-                        )}
                       </div>
                     )}
                   </div>
@@ -249,16 +249,15 @@ export default function Credits() {
         )}
 
         {/* Record Payment Modal */}
-        {showPayment && paymentCredit && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => { setShowPayment(false); setPaymentCredit(null); }}>
+        {showPayment && paymentAccount && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => { setShowPayment(false); setPaymentAccount(null); }}>
             <div className="bg-white w-full rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
               <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
               <h2 className="text-lg font-bold text-gray-800 mb-1">Record Payment</h2>
               <p className="text-sm text-gray-500 mb-4">
-                Credit #{paymentCredit.id}
-                {paymentCredit.description ? ` - ${paymentCredit.description}` : ''}
-                {paymentCredit.shift_id ? ` from Shift #${paymentCredit.shift_id}` : ''}
-                {' \u2014 '}Balance: {fmt(paymentCredit.balance)}
+                <span className="font-medium text-gray-700">{paymentAccount.name}</span>
+                {paymentAccount.phone ? ` (${paymentAccount.phone})` : ''}
+                {' \u2014 '}Balance: <span className="font-medium text-red-600">{fmt(Number(paymentAccount.outstanding_balance) || 0)}</span>
               </p>
               <div className="space-y-3">
                 <div>
@@ -267,12 +266,12 @@ export default function Credits() {
                     type="number"
                     className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="0"
-                    max={paymentCredit?.balance || paymentCredit?.amount || undefined}
+                    max={Number(paymentAccount?.outstanding_balance) || undefined}
                     value={paymentForm.amount}
                     onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
                   />
-                  <p className="text-xs text-gray-500 mt-1">Max payable: {fmt(paymentCredit?.balance || paymentCredit?.amount || 0)}</p>
-                  {paymentForm.amount && parseFloat(paymentForm.amount) > (paymentCredit?.balance || paymentCredit?.amount || 0) && (
+                  <p className="text-xs text-gray-500 mt-1">Max payable: {fmt(Number(paymentAccount?.outstanding_balance) || 0)}</p>
+                  {paymentForm.amount && parseFloat(paymentForm.amount) > (Number(paymentAccount?.outstanding_balance) || 0) && (
                     <p className="text-xs text-red-600 mt-1">Amount exceeds outstanding balance</p>
                   )}
                 </div>

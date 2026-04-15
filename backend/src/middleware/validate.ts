@@ -13,7 +13,17 @@ export function validate(schema: ZodSchema) {
         field: i.path.join('.'),
         message: i.message,
       }));
-      return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+      // Flatten into the top-level `error` string so clients that only read
+      // `error` (most of our UIs) still see the real reason instead of a
+      // useless generic "Validation failed".
+      const summary = errors
+        .map((e) => (e.field ? `${e.field}: ${e.message}` : e.message))
+        .join('; ');
+      return res.status(400).json({
+        success: false,
+        error: summary || 'Validation failed',
+        details: errors,
+      });
     }
     req.body = result.data;
     next();

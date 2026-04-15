@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getShifts, getActiveEmployees, openShift } from '../services/api';
 import { Plus, Eye, Clock, CheckCircle } from 'lucide-react';
+import { getKenyaDate } from '../utils/timezone';
 
 export default function Shifts() {
   const [shifts, setShifts] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
-  const [shiftDate, setShiftDate] = useState(new Date().toISOString().split('T')[0]);
+  const [shiftDate, setShiftDate] = useState(getKenyaDate());
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -77,7 +78,7 @@ export default function Shifts() {
             <input
               type="date"
               value={shiftDate}
-              max={new Date().toISOString().split('T')[0]}
+              max={getKenyaDate()}
               onChange={e => setShiftDate(e.target.value)}
               className="w-full border border-gray-300 rounded-lg p-2 mb-4"
             />

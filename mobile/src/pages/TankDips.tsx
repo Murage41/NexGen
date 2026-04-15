@@ -3,11 +3,34 @@ import { useParams } from 'react-router-dom';
 import { Plus, Pencil, Trash2, AlertTriangle, Droplets } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { getTank, getTankStockSummary, createTankDip, updateTankDip, deleteTankDip, getCurrentShift } from '../services/api';
+import { getKenyaDate } from '../utils/timezone';
+import { useAuth } from '../context/AuthContext';
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => getKenyaDate();
+
+const VARIANCE_CATEGORIES = [
+  { value: 'unclassified', label: 'Unclassified' },
+  { value: 'natural_loss', label: 'Natural Loss' },
+  { value: 'operational_loss', label: 'Operational Loss' },
+  { value: 'meter_drift', label: 'Meter Drift' },
+  { value: 'delivery_variance', label: 'Delivery Variance' },
+];
+
+const variancePillClass = (cat: string) => {
+  switch (cat) {
+    case 'natural_loss': return 'bg-blue-100 text-blue-700';
+    case 'operational_loss': return 'bg-amber-100 text-amber-700';
+    case 'meter_drift': return 'bg-purple-100 text-purple-700';
+    case 'delivery_variance': return 'bg-cyan-100 text-cyan-700';
+    default: return 'bg-gray-100 text-gray-600';
+  }
+};
+
+const varianceCategoryLabel = (cat: string) => VARIANCE_CATEGORIES.find(c => c.value === cat)?.label || cat;
 
 export default function TankDips() {
   const { id } = useParams<{ id: string }>();
+  const { isAdmin } = useAuth();
   const [tank, setTank] = useState<any>(null);
   const [summary, setSummary] = useState<any>(null);
   const [hasOpenShift, setHasOpenShift] = useState(false);
@@ -15,7 +38,8 @@ export default function TankDips() {
   const [showAdd, setShowAdd] = useState(false);
   const [editDip, setEditDip] = useState<any | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
-  const [form, setForm] = useState({ measured_litres: '', dip_date: today() });
+  const [form, setForm] = useState({ measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' });
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,37 +63,48 @@ export default function TankDips() {
   }
 
   function openAdd() {
-    setForm({ measured_litres: '', dip_date: today() });
+    setForm({ measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' });
     setError('');
+    setWarnings([]);
     setShowAdd(true);
   }
 
   function openEdit(dip: any) {
-    setForm({ measured_litres: String(dip.measured_litres), dip_date: dip.dip_date || today() });
+    setForm({
+      measured_litres: String(dip.measured_litres),
+      dip_date: dip.dip_date || today(),
+      variance_category: dip.variance_category || 'unclassified',
+      variance_notes: dip.variance_notes || '',
+    });
     setEditDip(dip);
     setError('');
+    setWarnings([]);
   }
 
   async function handleSave() {
     if (!form.measured_litres || !form.dip_date) return;
     setSubmitting(true);
     setError('');
+    setWarnings([]);
     try {
-      if (editDip) {
-        await updateTankDip(editDip.id, {
-          measured_litres: parseFloat(form.measured_litres),
-          dip_date: form.dip_date,
-        });
-        setEditDip(null);
+      const basePayload = {
+        measured_litres: parseFloat(form.measured_litres),
+        dip_date: form.dip_date,
+        variance_category: form.variance_category,
+        variance_notes: form.variance_notes || null,
+      };
+      const res = editDip
+        ? await updateTankDip(editDip.id, basePayload)
+        : await createTankDip({ ...basePayload, tank_id: parseInt(id!) });
+      const respWarnings: string[] = res?.data?.warnings || [];
+      if (respWarnings.length > 0) {
+        setWarnings(respWarnings);
+        await loadData();
       } else {
-        await createTankDip({
-          tank_id: parseInt(id!),
-          measured_litres: parseFloat(form.measured_litres),
-          dip_date: form.dip_date,
-        });
+        setEditDip(null);
         setShowAdd(false);
+        await loadData();
       }
-      await loadData();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save dip');
     } finally {
@@ -118,9 +153,11 @@ export default function TankDips() {
         title={`${tank.label} — Dips`}
         back
         right={
-          <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
-            <Plus size={20} />
-          </button>
+          isAdmin ? (
+            <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
+              <Plus size={20} />
+            </button>
+          ) : undefined
         }
       />
 
@@ -182,7 +219,9 @@ export default function TankDips() {
         <div className="text-center py-10 bg-white rounded-xl shadow-sm">
           <Droplets size={36} className="mx-auto text-gray-300 mb-2" />
           <p className="text-gray-400 text-sm">No dip readings recorded yet</p>
-          <button onClick={openAdd} className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Record First Dip</button>
+          {isAdmin && (
+            <button onClick={openAdd} className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Record First Dip</button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -209,15 +248,25 @@ export default function TankDips() {
                         </span>
                       </div>
                     )}
+                    {(v !== null && Math.abs(v) >= 1) && (
+                      <div className="mt-1.5">
+                        <span className={`inline-block text-[11px] px-2 py-0.5 rounded-full font-medium ${variancePillClass(dip.variance_category || 'unclassified')}`}>
+                          {varianceCategoryLabel(dip.variance_category || 'unclassified')}
+                        </span>
+                        {dip.variance_notes && <p className="text-[11px] text-gray-400 mt-1 italic">{dip.variance_notes}</p>}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => openEdit(dip)} className="p-2 text-gray-400 hover:text-blue-600 rounded-lg">
-                      <Pencil size={15} />
-                    </button>
-                    <button onClick={() => setDeleteTarget(dip)} className="p-2 text-gray-400 hover:text-red-500 rounded-lg">
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
+                  {isAdmin && (
+                    <div className="flex gap-1">
+                      <button onClick={() => openEdit(dip)} className="p-2 text-gray-400 hover:text-blue-600 rounded-lg">
+                        <Pencil size={15} />
+                      </button>
+                      <button onClick={() => setDeleteTarget(dip)} className="p-2 text-gray-400 hover:text-red-500 rounded-lg">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -255,13 +304,53 @@ export default function TankDips() {
                 />
                 <p className="text-xs text-gray-400 mt-1">Enter the physical measurement from the dip stick</p>
               </div>
-              <button
-                onClick={handleSave}
-                disabled={submitting || !form.measured_litres || !form.dip_date}
-                className="w-full bg-blue-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50 mt-2"
-              >
-                {submitting ? 'Saving...' : editDip ? 'Save Changes' : 'Record Dip'}
-              </button>
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Variance Category</label>
+                <select
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={form.variance_category}
+                  onChange={e => setForm({ ...form, variance_category: e.target.value })}
+                >
+                  {VARIANCE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Classify any difference between book and physical stock.</p>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Notes (optional)</label>
+                <textarea
+                  rows={2}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Context (incident, weather, calibration...)"
+                  value={form.variance_notes}
+                  onChange={e => setForm({ ...form, variance_notes: e.target.value })}
+                />
+              </div>
+              {warnings.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div className="text-xs text-amber-800 space-y-1">
+                      {warnings.map((w, i) => <p key={i}>{w}</p>)}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {warnings.length > 0 ? (
+                <button
+                  onClick={() => { setWarnings([]); setShowAdd(false); setEditDip(null); }}
+                  className="w-full bg-gray-100 text-gray-700 py-3 rounded-xl text-base font-medium mt-2"
+                >
+                  Close
+                </button>
+              ) : (
+                <button
+                  onClick={handleSave}
+                  disabled={submitting || !form.measured_litres || !form.dip_date}
+                  className="w-full bg-blue-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50 mt-2"
+                >
+                  {submitting ? 'Saving...' : editDip ? 'Save Changes' : 'Record Dip'}
+                </button>
+              )}
             </div>
           </div>
         </div>

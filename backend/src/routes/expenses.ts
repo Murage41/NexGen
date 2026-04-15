@@ -3,6 +3,7 @@ import db from '../database';
 import { validate } from '../middleware/validate';
 import { createExpenseSchema, updateExpenseSchema } from '../schemas';
 import { getKenyaDate } from '../utils/timezone';
+import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
 
@@ -30,7 +31,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', validate(createExpenseSchema), async (req, res) => {
+router.post('/', requireAdmin, validate(createExpenseSchema), async (req, res) => {
   try {
     const { category, description, amount, date } = req.body;
     const [id] = await db('expenses').insert({ category, description, amount, date });
@@ -41,7 +42,7 @@ router.post('/', validate(createExpenseSchema), async (req, res) => {
   }
 });
 
-router.put('/:id', validate(updateExpenseSchema), async (req, res) => {
+router.put('/:id', requireAdmin, validate(updateExpenseSchema), async (req, res) => {
   try {
     const { category, description, amount, date } = req.body;
     await db('expenses').where({ id: req.params.id }).update({ category, description, amount, date });
@@ -52,7 +53,7 @@ router.put('/:id', validate(updateExpenseSchema), async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     await db('expenses').where({ id: req.params.id }).update({ deleted_at: new Date().toISOString() });
     res.json({ success: true });

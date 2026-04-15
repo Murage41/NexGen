@@ -1,7 +1,7 @@
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import {
   LayoutDashboard, Gauge, Users, Fuel, DollarSign,
-  CreditCard, FileText, Receipt, BarChart3, Settings, Droplets,
+  CreditCard, FileText, Receipt, BarChart3, Settings, Droplets, Truck,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
@@ -15,6 +15,7 @@ import CreditAccounts from './pages/CreditAccounts';
 import Invoices from './pages/Invoices';
 import TankStock from './pages/TankStock';
 import Reports from './pages/Reports';
+import Suppliers from './pages/Suppliers';
 import SettingsPage from './pages/Settings';
 
 const navItems = [
@@ -26,6 +27,7 @@ const navItems = [
   { to: '/expenses', icon: Receipt, label: 'Expenses' },
   { to: '/credit-accounts', icon: CreditCard, label: 'Credit Accounts' },
   { to: '/invoices', icon: FileText, label: 'Invoices' },
+  { to: '/suppliers', icon: Truck, label: 'Suppliers' },
   { to: '/tank-stock', icon: Droplets, label: 'Tank & Stock' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
   { to: '/settings', icon: Settings, label: 'Settings' },
@@ -80,6 +82,7 @@ export default function App() {
             <Route path="/credit-accounts" element={<CreditAccounts />} />
             <Route path="/credits" element={<Navigate to="/credit-accounts" replace />} />
             <Route path="/invoices" element={<Invoices />} />
+            <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/tank-stock" element={<TankStock />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<SettingsPage />} />

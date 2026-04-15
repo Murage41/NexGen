@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { Plus, Truck, Pencil, Trash2 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery, getTanks } from '../services/api';
+import { getKenyaDate } from '../utils/timezone';
+import { useAuth } from '../context/AuthContext';
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => getKenyaDate();
 
 const emptyForm = {
   tank_id: '',
@@ -14,6 +16,7 @@ const emptyForm = {
 };
 
 export default function FuelDeliveries() {
+  const { isAdmin } = useAuth();
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [tanks, setTanks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,9 +122,11 @@ export default function FuelDeliveries() {
         title="Fuel Deliveries"
         back
         right={
-          <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
-            <Plus size={20} />
-          </button>
+          isAdmin ? (
+            <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
+              <Plus size={20} />
+            </button>
+          ) : undefined
         }
       />
 
@@ -135,7 +140,9 @@ export default function FuelDeliveries() {
         <div className="text-center mt-20">
           <Truck size={48} className="mx-auto text-gray-300 mb-3" />
           <p className="text-gray-400">No deliveries recorded</p>
-          <button onClick={openAdd} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Record First Delivery</button>
+          {isAdmin && (
+            <button onClick={openAdd} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Record First Delivery</button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -160,14 +167,16 @@ export default function FuelDeliveries() {
                     Total: KES {totalCost(d).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                   </p>
                 </div>
-                <div className="flex gap-1 ml-2">
-                  <button onClick={() => openEdit(d)} className="p-2 text-gray-400 hover:text-blue-600 rounded-lg">
-                    <Pencil size={15} />
-                  </button>
-                  <button onClick={() => setDeleteTarget(d)} className="p-2 text-gray-400 hover:text-red-500 rounded-lg">
-                    <Trash2 size={15} />
-                  </button>
-                </div>
+                {isAdmin && (
+                  <div className="flex gap-1 ml-2">
+                    <button onClick={() => openEdit(d)} className="p-2 text-gray-400 hover:text-blue-600 rounded-lg">
+                      <Pencil size={15} />
+                    </button>
+                    <button onClick={() => setDeleteTarget(d)} className="p-2 text-gray-400 hover:text-red-500 rounded-lg">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}

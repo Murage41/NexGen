@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import db from '../database';
-import { computeBookStock, computeAllTankStocks, getFIFOCostByFuelType } from '../services/stockCalculator';
+import { computeBookStock, computeAllTankStocks, getFIFOCostByFuelType, reverseBatchConsumption, consumeBatchesFIFO, recomputeCache } from '../services/stockCalculator';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
+import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
 
@@ -28,6 +29,8 @@ router.get('/daily', async (req, res) => {
     let totalCredits = 0;
     let totalWagesPaid = 0;
     let totalShiftExpenses = 0;
+    let totalMpesaFee = 0;
+    let totalMpesaNet = 0;
 
     for (const shift of shifts) {
       const readings = await db('pump_readings')
@@ -55,6 +58,8 @@ router.get('/daily', async (req, res) => {
       const cash = Number(collections?.cash_amount) || 0;
       const mpesa = Number(collections?.mpesa_amount) || 0;
       const credits = Number(collections?.credits_amount) || 0;
+      const mpesaFee = Number(collections?.mpesa_fee) || 0;
+      const mpesaNet = Number(collections?.mpesa_net) || 0;
       const totalCollections = cash + mpesa + credits;
 
       totalSales += shiftSales;
@@ -65,6 +70,8 @@ router.get('/daily', async (req, res) => {
       totalCredits += credits;
       totalWagesPaid += actualWagePaid;
       totalShiftExpenses += shiftExpensesTotal;
+      totalMpesaFee += mpesaFee;
+      totalMpesaNet += mpesaNet;
 
       shiftDetails.push({
         id: shift.id,
@@ -182,6 +189,20 @@ router.get('/daily', async (req, res) => {
     const grossProfit = totalSales - cogs;
     const netProfit = grossProfit - totalWagesPaid - totalExpenses;
 
+    // Debt collected during today's shifts (credit_payments with shift_id)
+    let totalCreditReceipts = 0;
+    if (shiftIds.length > 0 && await db.schema.hasTable('credit_payments')) {
+      const hasShiftId = await db.schema.hasColumn('credit_payments', 'shift_id');
+      if (hasShiftId) {
+        const receiptsResult = await db('credit_payments')
+          .whereIn('shift_id', shiftIds)
+          .whereNull('deleted_at')
+          .sum('amount as total')
+          .first();
+        totalCreditReceipts = Number((receiptsResult as any)?.total) || 0;
+      }
+    }
+
     res.json({
       success: true,
       data: {
@@ -196,7 +217,10 @@ router.get('/daily', async (req, res) => {
         // Collections
         total_cash: totalCash,
         total_mpesa: totalMpesa,
+        total_mpesa_fee: totalMpesaFee,
+        total_mpesa_net: totalMpesaNet,
         total_credits: totalCredits,
+        total_credit_receipts: totalCreditReceipts,
         collection_rate: collectionRate,
         // Costs
         total_wages_paid: totalWagesPaid,
@@ -857,6 +881,84 @@ router.get('/stock-reconciliation-by-shift', async (req, res) => {
     });
 
     res.json({ success: true, data: { date, tanks: result } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Admin: Recalculate COGS for a shift ──────────────────────────────────────
+// Reverses batch consumption for the given shift, then re-consumes using
+// current delivery_batches.cost_per_litre values. Use after correcting a
+// delivery price or when batch_consumption has drifted.
+router.post('/recalculate-cogs', requireAdmin, async (req, res) => {
+  try {
+    const { shift_id } = req.body;
+    if (!shift_id) return res.status(400).json({ success: false, error: 'shift_id is required' });
+
+    const shift = await db('shifts').where({ id: shift_id }).first();
+    if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
+    if (shift.status !== 'closed') {
+      return res.status(400).json({ success: false, error: 'Only closed shifts can be recalculated' });
+    }
+
+    // Get pump readings per tank for this shift
+    const readings = await db('pump_readings')
+      .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+      .where('pump_readings.shift_id', shift_id)
+      .select('pumps.tank_id', db.raw('SUM(pump_readings.litres_sold) as litres'))
+      .groupBy('pumps.tank_id');
+
+    const results: any[] = [];
+    await db.transaction(async (trx) => {
+      for (const reading of readings) {
+        const tankId = reading.tank_id;
+        const litresSold = Number(reading.litres) || 0;
+        if (litresSold <= 0) continue;
+
+        // Get old cost
+        const oldCostResult = await trx('batch_consumption')
+          .where({ shift_id, tank_id: tankId })
+          .sum('total_cost as total')
+          .first();
+        const oldCost = Number((oldCostResult as any)?.total || 0);
+
+        // Reverse existing consumption
+        await reverseBatchConsumption(shift_id, tankId, trx);
+
+        // Re-consume with current batch prices
+        const { totalCost: newCost } = await consumeBatchesFIFO(tankId, litresSold, shift_id, trx);
+
+        // Update shift_tank_snapshots.cogs
+        await trx('shift_tank_snapshots')
+          .where({ shift_id, tank_id: tankId })
+          .update({ cogs: newCost });
+
+        // Recompute cache
+        await recomputeCache(tankId, trx);
+
+        results.push({
+          tank_id: tankId,
+          litres_sold: litresSold,
+          old_cogs: oldCost,
+          new_cogs: newCost,
+          delta: Math.round((newCost - oldCost) * 100) / 100,
+        });
+      }
+    });
+
+    const totalOld = results.reduce((s, r) => s + r.old_cogs, 0);
+    const totalNew = results.reduce((s, r) => s + r.new_cogs, 0);
+
+    res.json({
+      success: true,
+      data: {
+        shift_id,
+        tanks: results,
+        total_old_cogs: totalOld,
+        total_new_cogs: totalNew,
+        total_delta: Math.round((totalNew - totalOld) * 100) / 100,
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

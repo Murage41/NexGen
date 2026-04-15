@@ -7,6 +7,7 @@ import {
   BarChart3, Calendar, TrendingUp, TrendingDown, Minus,
   Droplets, AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle,
 } from 'lucide-react';
+import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow';
 
@@ -15,15 +16,15 @@ export default function Reports() {
   const [loading, setLoading] = useState(false);
 
   // Daily
-  const [dailyDate, setDailyDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dailyDate, setDailyDate] = useState(getKenyaDate());
   const [dailyData, setDailyData] = useState<any>(null);
 
   // Monthly
-  const [monthlyMonth, setMonthlyMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [monthlyMonth, setMonthlyMonth] = useState(getKenyaMonth());
   const [monthlyData, setMonthlyData] = useState<any>(null);
 
   // Stock Reconciliation
-  const [stockDate, setStockDate] = useState(new Date().toISOString().split('T')[0]);
+  const [stockDate, setStockDate] = useState(getKenyaDate());
   const [stockData, setStockData] = useState<any>(null);
   const [stockByShift, setStockByShift] = useState<any>(null);
   const [expandedTank, setExpandedTank] = useState<number | null>(null);
@@ -32,8 +33,8 @@ export default function Reports() {
   const [debtorData, setDebtorData] = useState<any>(null);
 
   // Cash Flow
-  const [cfFrom, setCfFrom] = useState(new Date().toISOString().slice(0, 7) + '-01');
-  const [cfTo, setCfTo] = useState(new Date().toISOString().split('T')[0]);
+  const [cfFrom, setCfFrom] = useState(getKenyaMonth() + '-01');
+  const [cfTo, setCfTo] = useState(getKenyaDate());
   const [cfData, setCfData] = useState<any>(null);
 
   async function loadDailyReport() {

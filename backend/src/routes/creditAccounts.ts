@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import db from '../database';
+import { getKenyaDate } from '../utils/timezone';
+import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
 
@@ -8,37 +10,19 @@ router.get('/', async (req, res) => {
   try {
     const type = req.query.type as string;
 
-    let query = db('credit_accounts as ca')
-      .select(
-        'ca.id',
-        'ca.name',
-        'ca.phone',
-        'ca.type',
-        'ca.employee_id',
-        'ca.created_at',
-      );
+    let query = db('credit_accounts as ca').select(
+      'ca.id',
+      'ca.name',
+      'ca.phone',
+      'ca.type',
+      'ca.employee_id',
+      'ca.balance as outstanding_balance',
+      'ca.created_at',
+    );
 
     if (type) query = query.where('ca.type', type);
 
-    // For customer accounts: outstanding = SUM(credits.balance) where status != 'paid'
-    // For employee accounts: outstanding = SUM(staff_debts.balance) where status = 'outstanding'
-    query = query.select(
-      db.raw(`
-        CASE ca.type
-          WHEN 'customer' THEN COALESCE((
-            SELECT SUM(c.balance) FROM credits c
-            WHERE c.account_id = ca.id AND c.status != 'paid' AND c.deleted_at IS NULL
-          ), 0)
-          WHEN 'employee' THEN COALESCE((
-            SELECT SUM(sd.balance) FROM staff_debts sd
-            WHERE sd.employee_id = ca.employee_id AND sd.status = 'outstanding'
-          ), 0)
-          ELSE 0
-        END as outstanding_balance
-      `)
-    );
-
-    query = query.orderBy('outstanding_balance', 'desc');
+    query = query.orderBy('ca.balance', 'desc');
 
     const accounts = await query;
     res.json({ success: true, data: accounts });
@@ -58,35 +42,25 @@ router.get('/:id', async (req, res) => {
     let debts: any[] = [];
 
     if (account.type === 'customer') {
-      credits = await db('credits').where({ account_id: account.id }).whereNull('deleted_at').orderBy('created_at', 'desc');
-      payments = await db('credit_payments').where({ account_id: account.id }).whereNull('deleted_at').orderBy('date', 'desc');
-    } else if (account.type === 'employee') {
-      debts = await db('staff_debts').where({ employee_id: account.employee_id }).orderBy('created_at', 'desc');
-    }
-
-    // Compute outstanding balance
-    let outstanding_balance = 0;
-    if (account.type === 'customer') {
-      const result = await db('credits')
+      credits = await db('credits')
         .where({ account_id: account.id })
         .whereNull('deleted_at')
-        .whereNot('status', 'paid')
-        .sum('balance as total')
-        .first();
-      outstanding_balance = result?.total || 0;
+        .orderBy('created_at', 'desc');
+      payments = await db('credit_payments')
+        .where({ account_id: account.id })
+        .whereNull('deleted_at')
+        .orderBy('date', 'desc');
     } else if (account.type === 'employee') {
-      const result = await db('staff_debts')
-        .where({ employee_id: account.employee_id, status: 'outstanding' })
-        .sum('balance as total')
-        .first();
-      outstanding_balance = result?.total || 0;
+      debts = await db('staff_debts')
+        .where({ employee_id: account.employee_id })
+        .orderBy('created_at', 'desc');
     }
 
     res.json({
       success: true,
       data: {
         ...account,
-        outstanding_balance,
+        outstanding_balance: Number(account.balance || 0),
         ...(account.type === 'customer' ? { credits, payments } : { debts }),
       },
     });
@@ -95,8 +69,94 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// POST /:id/payments - Record a payment against the account balance
+// Auto-settles outstanding credits FIFO (oldest first) for audit continuity.
+router.post('/:id/payments', requireAdmin, async (req, res) => {
+  try {
+    const account = await db('credit_accounts').where({ id: req.params.id }).first();
+    if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
+
+    if (account.type !== 'customer') {
+      return res.status(400).json({
+        success: false,
+        error: 'Payments can only be recorded against customer accounts',
+      });
+    }
+
+    const amount = Number(req.body.amount);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Amount must be positive' });
+    }
+
+    const currentBalance = Number(account.balance || 0);
+    if (amount > currentBalance) {
+      return res.status(400).json({
+        success: false,
+        error: `Payment amount (${amount}) exceeds account balance (${currentBalance}). Maximum payable: ${currentBalance}`,
+      });
+    }
+
+    const paymentMethod = req.body.payment_method || 'cash';
+    const paymentDate = req.body.date || req.body.payment_date || getKenyaDate();
+    const notes = req.body.notes || null;
+
+    const result = await db.transaction(async (trx) => {
+      // 1. Record the payment against the account (credit_id is null — it's an account-level payment)
+      const [paymentId] = await trx('credit_payments').insert({
+        credit_id: null,
+        account_id: account.id,
+        amount,
+        payment_method: paymentMethod,
+        payment_type: 'account',
+        date: paymentDate,
+        notes,
+      });
+
+      // 2. Decrement the account balance
+      await trx('credit_accounts').where({ id: account.id }).decrement('balance', amount);
+
+      // 3. Auto-settle outstanding credits FIFO so individual rows stay consistent
+      //    with the account balance. This is pure bookkeeping — the source of
+      //    truth is credit_accounts.balance.
+      let remaining = amount;
+      const openCredits = await trx('credits')
+        .where({ account_id: account.id })
+        .whereNull('deleted_at')
+        .whereNot('status', 'paid')
+        .orderBy('created_at', 'asc');
+
+      for (const credit of openCredits) {
+        if (remaining <= 0) break;
+        const creditBalance = Number(credit.balance);
+        const apply = Math.min(remaining, creditBalance);
+        const newBalance = creditBalance - apply;
+        await trx('credits').where({ id: credit.id }).update({
+          balance: Math.max(0, newBalance),
+          status: newBalance <= 0 ? 'paid' : 'partial',
+        });
+        remaining -= apply;
+      }
+
+      const updatedAccount = await trx('credit_accounts').where({ id: account.id }).first();
+      const payment = await trx('credit_payments').where({ id: paymentId }).first();
+      return { account: updatedAccount, payment };
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        ...result.account,
+        outstanding_balance: Number(result.account.balance || 0),
+        last_payment: result.payment,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // DELETE /:id - Remove a customer account (only if balance = 0 and type = 'customer')
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const account = await db('credit_accounts').where({ id: req.params.id }).first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
@@ -105,19 +165,10 @@ router.delete('/:id', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Cannot delete employee credit accounts' });
     }
 
-    // Check outstanding balance
-    const result = await db('credits')
-      .where({ account_id: account.id })
-      .whereNot('status', 'paid')
-      .sum('balance as total')
-      .first();
-    const outstanding = result?.total || 0;
-
-    if (outstanding > 0) {
+    if (Number(account.balance || 0) > 0) {
       return res.status(400).json({ success: false, error: 'Cannot delete account with outstanding balance' });
     }
 
-    // Delete associated records then the account
     await db.transaction(async (trx) => {
       await trx('credit_payments').where({ account_id: account.id }).del();
       await trx('credits').where({ account_id: account.id, balance: 0 }).del();
@@ -164,13 +215,14 @@ router.get('/:id/statement', async (req, res) => {
       const payments = await db('credit_payments')
         .where({ account_id: account.id })
         .whereNull('deleted_at')
-        .select('date', 'notes', 'amount', 'payment_method')
+        .select('date', 'notes', 'amount', 'payment_method', 'payment_type')
         .orderBy('date', 'asc');
 
       for (const p of payments) {
+        const label = p.payment_type === 'account' ? 'Account payment' : 'Credit payment';
         entries.push({
           date: p.date,
-          description: p.notes || `Payment (${p.payment_method})`,
+          description: p.notes || `${label} (${p.payment_method})`,
           debit_amount: 0,
           credit_amount: Number(p.amount),
         });
@@ -183,7 +235,6 @@ router.get('/:id/statement', async (req, res) => {
         .orderBy('created_at', 'asc');
 
       for (const d of debts) {
-        // Debit: the carried_forward amount (added to running debt)
         if (Number(d.carried_forward) > 0) {
           entries.push({
             date: d.date,
@@ -192,7 +243,6 @@ router.get('/:id/statement', async (req, res) => {
             credit_amount: 0,
           });
         }
-        // Credit: the deducted_from_wage amount (reduced from debt)
         if (Number(d.deducted_from_wage) > 0) {
           entries.push({
             date: d.date,

@@ -8,13 +8,14 @@ import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
   getStockReconciliationByShift, getDebtorAging, getCashFlow,
 } from '../services/api';
+import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow';
 
 export default function Reports() {
   const [tab, setTab] = useState<Tab>('daily');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [date, setDate] = useState(getKenyaDate());
+  const [month, setMonth] = useState(getKenyaMonth());
   const [report, setReport] = useState<any>(null);
   const [stockByShift, setStockByShift] = useState<any>(null);
   const [expandedMobileTank, setExpandedMobileTank] = useState<number | null>(null);

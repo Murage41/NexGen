@@ -16,6 +16,10 @@ import dashboardRouter from './routes/dashboard';
 import reportsRouter from './routes/reports';
 import authRouter from './routes/auth';
 import creditAccountsRouter from './routes/creditAccounts';
+import mpesaConfigRouter from './routes/mpesaConfig';
+import suppliersRouter from './routes/suppliers';
+import supplierInvoicesRouter from './routes/supplierInvoices';
+import supplierPaymentsRouter from './routes/supplierPayments';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -38,6 +42,10 @@ app.use('/api/invoices', invoicesRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/credit-accounts', creditAccountsRouter);
+app.use('/api/mpesa-config', mpesaConfigRouter);
+app.use('/api/suppliers', suppliersRouter);
+app.use('/api/supplier-invoices', supplierInvoicesRouter);
+app.use('/api/supplier-payments', supplierPaymentsRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {

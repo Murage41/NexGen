@@ -3,20 +3,42 @@ import {
   getTanks, createTank, updateTank, deleteTank,
   getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
   getTankDips, createTankDip, updateTankDip, deleteTankDip,
-  getCurrentShift, getTankLedger,
+  getCurrentShift, getTankLedger, getSuppliers,
 } from '../services/api';
 import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen } from 'lucide-react';
+import { getKenyaDate } from '../utils/timezone';
 
-const today = () => new Date().toISOString().split('T')[0];
+const today = () => getKenyaDate();
 
 const emptyTankForm = { label: '', fuel_type: 'petrol', capacity_litres: '' };
-const emptyDeliveryForm = { tank_id: '', supplier: '', litres: '', cost_per_litre: '', date: today() };
-const emptyDipForm = { tank_id: '', measured_litres: '', dip_date: today() };
+const emptyDeliveryForm = { tank_id: '', supplier: '', supplier_id: '', litres: '', cost_per_litre: '', date: today() };
+const emptyDipForm = { tank_id: '', measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' };
+
+const VARIANCE_CATEGORIES = [
+  { value: 'unclassified', label: 'Unclassified' },
+  { value: 'natural_loss', label: 'Natural Loss (evaporation/temperature)' },
+  { value: 'operational_loss', label: 'Operational Loss (spillage/calibration)' },
+  { value: 'meter_drift', label: 'Meter Drift' },
+  { value: 'delivery_variance', label: 'Delivery Variance' },
+];
+
+const variancePillClass = (cat: string) => {
+  switch (cat) {
+    case 'natural_loss': return 'bg-blue-100 text-blue-700';
+    case 'operational_loss': return 'bg-amber-100 text-amber-700';
+    case 'meter_drift': return 'bg-purple-100 text-purple-700';
+    case 'delivery_variance': return 'bg-cyan-100 text-cyan-700';
+    default: return 'bg-gray-100 text-gray-600';
+  }
+};
+
+const varianceLabel = (cat: string) => VARIANCE_CATEGORIES.find(c => c.value === cat)?.label.split(' (')[0] || cat;
 
 export default function TankStock() {
   const [tanks, setTanks] = useState<any[]>([]);
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [dips, setDips] = useState<any[]>([]);
+  const [suppliersList, setSuppliersList] = useState<any[]>([]);
   const [hasOpenShift, setHasOpenShift] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips' | 'ledger'>('tanks');
@@ -32,6 +54,7 @@ export default function TankStock() {
   const [tankForm, setTankForm] = useState(emptyTankForm);
   const [deliveryForm, setDeliveryForm] = useState(emptyDeliveryForm);
   const [dipForm, setDipForm] = useState(emptyDipForm);
+  const [dipWarnings, setDipWarnings] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,16 +62,18 @@ export default function TankStock() {
 
   async function loadData() {
     try {
-      const [tanksRes, deliveriesRes, dipsRes, shiftRes] = await Promise.all([
+      const [tanksRes, deliveriesRes, dipsRes, shiftRes, suppliersRes] = await Promise.all([
         getTanks(),
         getFuelDeliveries(),
         getTankDips(),
         getCurrentShift(),
+        getSuppliers(),
       ]);
       setTanks(tanksRes.data.data || []);
       setDeliveries(deliveriesRes.data.data || []);
       setDips(dipsRes.data.data || []);
       setHasOpenShift(!!(shiftRes.data.data));
+      setSuppliersList(suppliersRes.data.data || []);
     } catch (err) {
       console.error('Failed to load tank data:', err);
     } finally {
@@ -94,6 +119,7 @@ export default function TankStock() {
     setDeliveryForm({
       tank_id: String(d.tank_id),
       supplier: d.supplier || '',
+      supplier_id: d.supplier_id ? String(d.supplier_id) : '',
       litres: String(d.litres),
       cost_per_litre: String(d.cost_per_litre),
       date: d.date,
@@ -105,13 +131,14 @@ export default function TankStock() {
     e.preventDefault();
     setSaving(true); setError('');
     try {
-      const payload = {
+      const payload: any = {
         tank_id: parseInt(deliveryForm.tank_id),
         supplier: deliveryForm.supplier || null,
         litres: parseFloat(deliveryForm.litres),
         cost_per_litre: parseFloat(deliveryForm.cost_per_litre),
         date: deliveryForm.date,
       };
+      if (deliveryForm.supplier_id) payload.supplier_id = parseInt(deliveryForm.supplier_id);
       if (deliveryModal.editing) {
         await updateFuelDelivery(deliveryModal.editing.id, payload);
       } else {
@@ -128,6 +155,7 @@ export default function TankStock() {
   function openAddDip() {
     setDipForm({ ...emptyDipForm, tank_id: tanks.length > 0 ? String(tanks[0].id) : '', dip_date: today() });
     setError('');
+    setDipWarnings([]);
     setDipModal({ open: true, editing: null });
   }
   function openEditDip(d: any) {
@@ -135,26 +163,35 @@ export default function TankStock() {
       tank_id: String(d.tank_id),
       measured_litres: String(d.measured_litres),
       dip_date: d.dip_date || today(),
+      variance_category: d.variance_category || 'unclassified',
+      variance_notes: d.variance_notes || '',
     });
     setError('');
+    setDipWarnings([]);
     setDipModal({ open: true, editing: d });
   }
   async function handleSaveDip(e: React.FormEvent) {
     e.preventDefault();
-    setSaving(true); setError('');
+    setSaving(true); setError(''); setDipWarnings([]);
     try {
       const payload = {
         tank_id: parseInt(dipForm.tank_id),
         measured_litres: parseFloat(dipForm.measured_litres),
         dip_date: dipForm.dip_date,
+        variance_category: dipForm.variance_category,
+        variance_notes: dipForm.variance_notes || null,
       };
-      if (dipModal.editing) {
-        await updateTankDip(dipModal.editing.id, payload);
+      const res = dipModal.editing
+        ? await updateTankDip(dipModal.editing.id, payload)
+        : await createTankDip(payload);
+      const warnings: string[] = res?.data?.warnings || [];
+      if (warnings.length > 0) {
+        setDipWarnings(warnings);
+        loadData();
       } else {
-        await createTankDip(payload);
+        setDipModal({ open: false, editing: null });
+        loadData();
       }
-      setDipModal({ open: false, editing: null });
-      loadData();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save dip');
     } finally { setSaving(false); }
@@ -336,7 +373,7 @@ export default function TankStock() {
                   <td className="p-3 text-right">{fmt(d.litres)}</td>
                   <td className="p-3 text-right">{formatKES(d.cost_per_litre)}</td>
                   <td className="p-3 text-right font-medium">{formatKES(d.total_cost)}</td>
-                  <td className="p-3 text-gray-600">{d.supplier || '—'}</td>
+                  <td className="p-3 text-gray-600">{d.supplier_name || d.supplier || '—'}</td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-end">
                       <button onClick={() => openEditDelivery(d)} className="p-1 text-gray-400 hover:text-blue-600 rounded"><Pencil size={14} /></button>
@@ -367,6 +404,7 @@ export default function TankStock() {
                 <th className="text-right p-3 font-medium text-gray-600">Measured (L)</th>
                 <th className="text-right p-3 font-medium text-gray-600">Book Stock (L)</th>
                 <th className="text-right p-3 font-medium text-gray-600">Variance (L)</th>
+                <th className="text-left p-3 font-medium text-gray-600">Category</th>
                 <th className="text-left p-3 font-medium text-gray-600">Recorded At</th>
                 <th className="p-3 w-20"></th>
               </tr>
@@ -374,6 +412,7 @@ export default function TankStock() {
             <tbody>
               {dips.map((d: any) => {
                 const v = d.variance_litres != null ? parseFloat(d.variance_litres) : null;
+                const cat = d.variance_category || 'unclassified';
                 return (
                   <tr key={d.id} className={`border-t hover:bg-gray-50 ${v !== null && Math.abs(v) > 0 ? (v < -50 ? 'bg-red-50' : '') : ''}`}>
                     <td className="p-3 font-medium">{fmtDate(d.dip_date)}</td>
@@ -382,6 +421,10 @@ export default function TankStock() {
                     <td className="p-3 text-right text-gray-500">{d.book_stock_at_dip != null ? fmt(d.book_stock_at_dip) : '—'}</td>
                     <td className={`p-3 text-right font-medium ${v !== null ? (v < 0 ? 'text-red-600' : v > 0 ? 'text-green-600' : 'text-gray-600') : ''}`}>
                       {v !== null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)} L` : '—'}
+                    </td>
+                    <td className="p-3">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${variancePillClass(cat)}`}>{varianceLabel(cat)}</span>
+                      {d.variance_notes && <p className="text-xs text-gray-400 mt-1 truncate max-w-[180px]" title={d.variance_notes}>{d.variance_notes}</p>}
                     </td>
                     <td className="p-3 text-gray-500 text-xs">{d.timestamp ? new Date(d.timestamp).toLocaleString('en-KE') : '—'}</td>
                     <td className="p-3">
@@ -393,7 +436,7 @@ export default function TankStock() {
                   </tr>
                 );
               })}
-              {dips.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-gray-400">No dip readings recorded.</td></tr>}
+              {dips.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">No dip readings recorded.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -529,8 +572,22 @@ export default function TankStock() {
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
-                <input type="text" value={deliveryForm.supplier} onChange={e => setDeliveryForm({ ...deliveryForm, supplier: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. Total Kenya" />
+                {suppliersList.length > 0 ? (
+                  <select value={deliveryForm.supplier_id}
+                    onChange={e => {
+                      const sid = e.target.value;
+                      const s = suppliersList.find((s: any) => String(s.id) === sid);
+                      setDeliveryForm({ ...deliveryForm, supplier_id: sid, supplier: s?.name || '' });
+                    }}
+                    className="w-full border border-gray-300 rounded-lg p-2">
+                    <option value="">— Select Supplier —</option>
+                    {suppliersList.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                ) : (
+                  <input type="text" value={deliveryForm.supplier} onChange={e => setDeliveryForm({ ...deliveryForm, supplier: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. Total Kenya" />
+                )}
+                <p className="text-xs text-gray-400 mt-1">Selecting a supplier auto-creates an AP invoice.</p>
               </div>
               {deliveryModal.editing && (
                 <p className="text-xs text-amber-600 bg-amber-50 rounded p-2">⚠️ Editing will adjust the tank's stock balance accordingly.</p>
@@ -575,11 +632,36 @@ export default function TankStock() {
                   className="w-full border border-gray-300 rounded-lg p-2" placeholder="0.00" />
                 <p className="text-xs text-gray-400 mt-1">Enter the physical dip stick measurement</p>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Variance Category</label>
+                <select value={dipForm.variance_category} onChange={e => setDipForm({ ...dipForm, variance_category: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2">
+                  {VARIANCE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Classify any difference between book and physical stock for tracking shrinkage.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                <textarea rows={2} value={dipForm.variance_notes} onChange={e => setDipForm({ ...dipForm, variance_notes: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" placeholder="Optional context (incident, weather, calibration date...)" />
+              </div>
+              {dipWarnings.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div className="text-xs text-amber-800 space-y-1">
+                      {dipWarnings.map((w, i) => <p key={i}>{w}</p>)}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-2 justify-end pt-2">
-                <button type="button" onClick={() => setDipModal({ open: false, editing: null })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-                  {saving ? 'Saving...' : dipModal.editing ? 'Save Changes' : 'Record'}
-                </button>
+                <button type="button" onClick={() => { setDipModal({ open: false, editing: null }); setDipWarnings([]); }} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">{dipWarnings.length > 0 ? 'Close' : 'Cancel'}</button>
+                {dipWarnings.length === 0 && (
+                  <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                    {saving ? 'Saving...' : dipModal.editing ? 'Save Changes' : 'Record'}
+                  </button>
+                )}
               </div>
             </form>
           </div>

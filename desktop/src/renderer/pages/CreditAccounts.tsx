@@ -1,6 +1,7 @@
 import { useState, useEffect, Fragment } from 'react';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addCreditPayment } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment } from '../services/api';
 import { Users, X, Banknote, Trash2, ChevronDown, ChevronUp, Search } from 'lucide-react';
+import { getKenyaDate } from '../utils/timezone';
 
 type FilterTab = 'all' | 'customer' | 'employee';
 
@@ -17,7 +18,7 @@ export default function CreditAccounts() {
   const [paymentForm, setPaymentForm] = useState({
     amount: '',
     payment_method: 'cash',
-    payment_date: new Date().toISOString().split('T')[0],
+    payment_date: getKenyaDate(),
     notes: '',
   });
 
@@ -54,12 +55,12 @@ export default function CreditAccounts() {
     }
   }
 
-  function openPayment(credit: any) {
-    setPaymentTarget(credit);
+  function openPayment(account: any) {
+    setPaymentTarget(account);
     setPaymentForm({
       amount: '',
       payment_method: 'cash',
-      payment_date: new Date().toISOString().split('T')[0],
+      payment_date: getKenyaDate(),
       notes: '',
     });
     setShowPaymentModal(true);
@@ -75,7 +76,7 @@ export default function CreditAccounts() {
       notes: paymentForm.notes || null,
     };
     try {
-      await addCreditPayment(paymentTarget.id, payload);
+      await addAccountPayment(paymentTarget.id, payload);
       setShowPaymentModal(false);
       await loadAccounts();
       // Refresh expanded detail if this account is expanded
@@ -84,7 +85,6 @@ export default function CreditAccounts() {
           const res = await getCreditAccount(expandedId);
           setExpandedAccount(res.data.data || res.data);
         } catch {
-          // Account may have been auto-deleted after full payment
           setExpandedId(null);
           setExpandedAccount(null);
         }
@@ -226,6 +226,15 @@ export default function CreditAccounts() {
                     </td>
                     <td className="p-3">
                       <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                        {account.type === 'customer' && balance > 0 && (
+                          <button
+                            onClick={() => openPayment(account)}
+                            className="text-green-600 hover:text-green-800 flex items-center gap-1 text-xs font-medium"
+                            title="Record Payment"
+                          >
+                            <Banknote size={14} /> Pay
+                          </button>
+                        )}
                         {account.type === 'customer' && balance === 0 && (
                           <button
                             onClick={() => handleDelete(account)}
@@ -260,7 +269,6 @@ export default function CreditAccounts() {
                                         <th className="text-right p-2 text-gray-600 font-medium">Paid</th>
                                         <th className="text-right p-2 text-gray-600 font-medium">Balance</th>
                                         <th className="text-left p-2 text-gray-600 font-medium">Status</th>
-                                        <th className="p-2 text-gray-600 font-medium">Action</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -278,17 +286,6 @@ export default function CreditAccounts() {
                                               <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium">Partial</span>
                                             ) : (
                                               <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium">Outstanding</span>
-                                            )}
-                                          </td>
-                                          <td className="p-2">
-                                            {c.balance > 0 && (
-                                              <button
-                                                onClick={() => openPayment(c)}
-                                                className="text-green-600 hover:text-green-800 flex items-center gap-1 text-xs font-medium"
-                                                title="Record Payment"
-                                              >
-                                                <Banknote size={14} /> Pay
-                                              </button>
                                             )}
                                           </td>
                                         </tr>
@@ -316,7 +313,7 @@ export default function CreditAccounts() {
                                     <tbody>
                                       {expandedAccount.payments.map((p: any, i: number) => (
                                         <tr key={i} className="border-t">
-                                          <td className="p-2 text-gray-500">{new Date(p.payment_date || p.created_at).toLocaleDateString('en-KE')}</td>
+                                          <td className="p-2 text-gray-500">{new Date(p.date || p.payment_date || p.created_at).toLocaleDateString('en-KE')}</td>
                                           <td className="p-2 text-right font-medium text-green-600">{formatKES(p.amount)}</td>
                                           <td className="p-2">
                                             <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">
@@ -368,10 +365,9 @@ export default function CreditAccounts() {
               </button>
             </div>
             <p className="text-sm text-gray-500 mb-4">
-              Credit #{paymentTarget.id}
-              {paymentTarget.description ? ` - ${paymentTarget.description}` : ''}
-              {paymentTarget.shift_id ? ` from Shift #${paymentTarget.shift_id}` : ''}
-              {' — '}Balance: {formatKES(parseFloat(paymentTarget.balance) || 0)}
+              Account: <span className="font-medium text-gray-700">{paymentTarget.name}</span>
+              {paymentTarget.phone ? ` (${paymentTarget.phone})` : ''}
+              {' — '}Balance: <span className="font-medium text-red-600">{formatKES(parseFloat(paymentTarget.outstanding_balance) || 0)}</span>
             </p>
             <form onSubmit={handlePayment} className="space-y-4">
               <div>

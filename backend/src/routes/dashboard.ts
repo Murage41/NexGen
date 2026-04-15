@@ -34,13 +34,15 @@ router.get('/', async (_req, res) => {
     }
 
     // Today's collections
-    let todayCash = 0, todayMpesa = 0, todayCreditsOnAccount = 0;
+    let todayCash = 0, todayMpesa = 0, todayCreditsOnAccount = 0, todayMpesaFee = 0, todayMpesaNet = 0;
     if (shiftIds.length > 0) {
       const collections = await db('shift_collections').whereIn('shift_id', shiftIds);
       for (const c of collections) {
         todayCash += Number(c.cash_amount) || 0;
         todayMpesa += Number(c.mpesa_amount) || 0;
         todayCreditsOnAccount += Number(c.credits_amount) || 0;
+        todayMpesaFee += Number(c.mpesa_fee) || 0;
+        todayMpesaNet += Number(c.mpesa_net) || 0;
       }
     }
 
@@ -146,6 +148,30 @@ router.get('/', async (_req, res) => {
     const mtdCogs = (mtdFifoCosts['petrol'] || 0) + (mtdFifoCosts['diesel'] || 0);
     const mtdNetProfit = mtdSales - mtdCogs - mtdWages - mtdExpenses;
 
+    // ── Phase 1A: MTD M-Pesa fees ──
+    let mtdMpesaFees = 0;
+    let mtdMpesaGross = 0;
+    if (mtdShiftIds.length > 0) {
+      const mpesaResult = await db('shift_collections')
+        .whereIn('shift_id', mtdShiftIds)
+        .select(db.raw('SUM(mpesa_fee) as fees'), db.raw('SUM(mpesa_amount) as gross'))
+        .first();
+      mtdMpesaFees = Number((mpesaResult as any)?.fees) || 0;
+      mtdMpesaGross = Number((mpesaResult as any)?.gross) || 0;
+    }
+
+    // ── Supplier payables (AP) ──
+    let totalSupplierPayables = 0;
+    const hasSupplierInvoices = await db.schema.hasTable('supplier_invoices');
+    if (hasSupplierInvoices) {
+      const apResult = await db('supplier_invoices')
+        .whereNull('deleted_at')
+        .whereNot('status', 'paid')
+        .sum('balance as total')
+        .first();
+      totalSupplierPayables = Number((apResult as any)?.total || 0);
+    }
+
     // ── Outstanding credits (receivables) ──
     const creditsResult = await db('credits')
       .whereNull('deleted_at')
@@ -163,8 +189,77 @@ router.get('/', async (_req, res) => {
       .first();
     const totalOutstandingStaffDebts = Number((staffDebtResult as any)?.total) || 0;
 
+    // ── Phase 1B: EPRA compliance ──
+    const epraAlerts: any[] = [];
+    for (const fuelType of ['petrol', 'diesel']) {
+      const latestPrice = await db('fuel_prices')
+        .where('fuel_type', fuelType)
+        .where('effective_date', '<=', today)
+        .orderBy('effective_date', 'desc')
+        .orderBy('id', 'desc')
+        .first();
+      const latestCeiling = await db('fuel_prices')
+        .where('fuel_type', fuelType)
+        .whereNotNull('epra_max_price')
+        .where(function () {
+          this.whereNull('epra_effective_date').orWhere('epra_effective_date', '<=', today);
+        })
+        .orderBy('effective_date', 'desc')
+        .orderBy('id', 'desc')
+        .first();
+      if (latestPrice && latestCeiling && latestCeiling.epra_max_price) {
+        const ppl = Number(latestPrice.price_per_litre);
+        const max = Number(latestCeiling.epra_max_price);
+        let status: 'ok' | 'near_ceiling' | 'over_ceiling' = 'ok';
+        if (ppl > max) status = 'over_ceiling';
+        else if (ppl >= max * 0.95) status = 'near_ceiling';
+        epraAlerts.push({
+          fuel_type: fuelType,
+          price_per_litre: ppl,
+          epra_max_price: max,
+          headroom: Math.round((max - ppl) * 100) / 100,
+          status,
+        });
+      }
+    }
+
+    // ── Phase 1C: Stock health (cumulative variance % per tank for current month) ──
+    const monthKey = today.slice(0, 7);
+    const stockHealth: any[] = [];
+
     // ── Tank stock levels ──
     const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'current_stock_litres', 'capacity_litres');
+
+    for (const tank of tanks) {
+      // Reuse the same arithmetic as the tankDips trends endpoint:
+      //   (sum |variance| this month) / (sum litres sold this month)
+      const dipResult = await db('tank_dips')
+        .where('tank_id', tank.id)
+        .whereNull('deleted_at')
+        .where('dip_date', '>=', monthStart)
+        .where('dip_date', '<=', today)
+        .select(db.raw('SUM(ABS(variance_litres)) as total'))
+        .first();
+      const totalVariance = Number((dipResult as any)?.total || 0);
+
+      const salesResult = await db('pump_readings')
+        .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+        .join('shifts', 'pump_readings.shift_id', 'shifts.id')
+        .where('pumps.tank_id', tank.id)
+        .where('shifts.shift_date', '>=', monthStart)
+        .where('shifts.shift_date', '<=', today)
+        .sum('pump_readings.litres_sold as total')
+        .first();
+      const totalSales = Number((salesResult as any)?.total || 0);
+      const pct = totalSales > 0 ? (totalVariance / totalSales) * 100 : 0;
+      stockHealth.push({
+        tank_id: tank.id,
+        tank_label: tank.label,
+        fuel_type: tank.fuel_type,
+        cumulative_variance_pct: Number(pct.toFixed(4)),
+        status: pct > 0.1 ? 'over_threshold' : 'ok',
+      });
+    }
     const tankStockSummary = tanks.map((t: any) => ({
       id: t.id,
       label: t.label,
@@ -255,6 +350,8 @@ router.get('/', async (_req, res) => {
         today_collections: {
           cash: todayCash,
           mpesa: todayMpesa,
+          mpesa_fee: todayMpesaFee,
+          mpesa_net: todayMpesaNet,
           credits: todayCreditsOnAccount,
         },
         // Month-to-date
@@ -262,11 +359,18 @@ router.get('/', async (_req, res) => {
         mtd_litres: mtdLitres,
         mtd_expenses: mtdExpenses,
         mtd_net_profit: mtdNetProfit,
+        mtd_mpesa_fees: mtdMpesaFees,
+        mtd_mpesa_gross: mtdMpesaGross,
         // Business health
         total_outstanding_credits: totalOutstandingCredits,
         total_outstanding_staff_debts: totalOutstandingStaffDebts,
         tank_stock_summary: tankStockSummary,
         margin_per_litre: marginPerLitre,
+        // Supplier payables (AP)
+        total_supplier_payables: totalSupplierPayables,
+        // Phase 1 quick wins
+        epra_alerts: epraAlerts,
+        stock_health: stockHealth,
         // Existing
         current_shift: currentShift || null,
         weekly_sales: weeklySales,

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
-  repayDebt, getCreditAccounts, getShiftTankSummary,
+  repayDebt, getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
 } from '../services/api';
 import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets } from 'lucide-react';
 
@@ -13,6 +13,8 @@ export default function ShiftDetail() {
   const [shift, setShift] = useState<any>(null);
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
+  const [mpesaFee, setMpesaFee] = useState(0);
+  const [mpesaNet, setMpesaNet] = useState(0);
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [wageDeduction, setWageDeduction] = useState<any>(null);
@@ -34,6 +36,12 @@ export default function ShiftDetail() {
   const [debtRepayAmount, setDebtRepayAmount] = useState('');
   const [tankSummary, setTankSummary] = useState<any[]>([]);
   const [wagePaid, setWagePaid] = useState('');
+  const [creditReceipts, setCreditReceipts] = useState<any[]>([]);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [receiptForm, setReceiptForm] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
+  const [receiptAccountSearch, setReceiptAccountSearch] = useState('');
+  const [showReceiptAccountDropdown, setShowReceiptAccountDropdown] = useState(false);
+  const [collectingReceipt, setCollectingReceipt] = useState(false);
 
   useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
 
@@ -54,12 +62,15 @@ export default function ShiftDetail() {
       setReadings(d.readings);
       if (d.collections) {
         setCollections({ cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount });
+        setMpesaFee(Number(d.collections.mpesa_fee) || 0);
+        setMpesaNet(Number(d.collections.mpesa_net) || 0);
       }
       setShiftCredits(d.shift_credits || []);
       setExpenses(d.expenses);
       setWageDeduction(d.wage_deduction || null);
       setOutstandingDebts(d.outstanding_debts || []);
       setTotalOutstandingDebt(d.total_outstanding_debt || 0);
+      setCreditReceipts(d.credit_receipts || []);
       setNotes(d.notes || '');
       setWagePaid(String(d.employee_wage || 0));
       // Load tank stock summary
@@ -167,6 +178,28 @@ export default function ShiftDetail() {
     } catch (err) { console.error(err); }
   }
 
+  async function handleCollectReceipt() {
+    const amount = parseFloat(receiptForm.amount);
+    if (!receiptForm.account_id || !amount || amount <= 0) return;
+    setCollectingReceipt(true);
+    try {
+      await addShiftCreditReceipt(parseInt(id!), {
+        account_id: parseInt(receiptForm.account_id),
+        amount,
+        payment_method: receiptForm.payment_method,
+        notes: receiptForm.notes || undefined,
+      });
+      setShowReceiptModal(false);
+      setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
+      setReceiptAccountSearch('');
+      await loadShift();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to record payment');
+    } finally {
+      setCollectingReceipt(false);
+    }
+  }
+
   function updateReading(index: number, field: string, value: string) {
     const updated = [...readings];
     updated[index] = { ...updated[index], [field]: value };
@@ -193,6 +226,7 @@ export default function ShiftDetail() {
   const employeeWage = shift.employee_wage || 0;
   const totalAccounted = totalCash + totalMpesa + totalCredits + totalExpenses + employeeWage;
   const variance = totalAccounted - expectedSales;
+  const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
@@ -250,6 +284,18 @@ export default function ShiftDetail() {
             <span className="text-gray-500">M-Pesa</span>
             <span className="font-medium">{formatKES(totalMpesa)}</span>
           </div>
+          {totalMpesa > 0 && mpesaFee > 0 && (
+            <div className="flex justify-between text-xs text-gray-400 -mt-1">
+              <span className="pl-3">↳ fee {formatKES(mpesaFee)} · net {formatKES(mpesaNet)}</span>
+              <span></span>
+            </div>
+          )}
+          {totalCreditReceipts > 0 && (
+            <div className="flex justify-between text-xs text-green-600 -mt-1">
+              <span className="pl-3">↳ incl. {formatKES(totalCreditReceipts)} debt collected</span>
+              <span></span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-gray-500">Credits</span>
             <span className="font-medium">{formatKES(totalCredits)}</span>
@@ -641,6 +687,51 @@ export default function ShiftDetail() {
         )}
       </div>
 
+      {/* Debt Collections */}
+      <div className="bg-white rounded-lg shadow p-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-700">Debt Collections</h2>
+          {isOpen && (
+            <button onClick={() => setShowReceiptModal(true)}
+              className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700">
+              <Plus size={14} /> Collect Payment
+            </button>
+          )}
+        </div>
+        {creditReceipts.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 font-medium text-gray-600">Customer</th>
+                <th className="text-left p-2 font-medium text-gray-600">Method</th>
+                <th className="text-right p-2 font-medium text-gray-600">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {creditReceipts.map((r: any) => (
+                <tr key={r.id} className="border-t">
+                  <td className="p-2 font-medium">{r.account_name}</td>
+                  <td className="p-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.payment_method === 'mpesa' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {r.payment_method}
+                    </span>
+                  </td>
+                  <td className="p-2 text-right font-medium">{formatKES(Number(r.amount))}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-gray-50 font-bold">
+              <tr>
+                <td colSpan={2} className="p-2 text-right">Total Collected:</td>
+                <td className="p-2 text-right">{formatKES(totalCreditReceipts)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        ) : (
+          <p className="text-sm text-gray-400">No debt collections recorded for this shift</p>
+        )}
+      </div>
+
       {/* Close Shift */}
       {isOpen && (
         <div className="bg-white rounded-lg shadow p-4">
@@ -736,6 +827,86 @@ export default function ShiftDetail() {
               </button>
               <button onClick={handleCloseShift} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
                 Close Shift
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Collect Receipt Modal */}
+      {showReceiptModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-lg font-semibold mb-4">Collect Debt Payment</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Record cash or M-Pesa received from a customer settling an outstanding balance.
+            </p>
+
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Customer Account</label>
+              <div className="relative">
+                <input
+                  value={receiptAccountSearch}
+                  onChange={e => { setReceiptAccountSearch(e.target.value); setShowReceiptAccountDropdown(true); }}
+                  onFocus={() => setShowReceiptAccountDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowReceiptAccountDropdown(false), 200)}
+                  placeholder="Search accounts..."
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm"
+                />
+                {showReceiptAccountDropdown && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {creditAccounts
+                      .filter(a => !receiptAccountSearch || a.name?.toLowerCase().includes(receiptAccountSearch.toLowerCase()))
+                      .map((a: any) => (
+                        <button key={a.id} type="button"
+                          className="w-full text-left px-3 py-2 hover:bg-gray-100 text-sm flex justify-between items-center"
+                          onMouseDown={e => {
+                            e.preventDefault();
+                            setReceiptForm({ ...receiptForm, account_id: String(a.id) });
+                            setReceiptAccountSearch(a.name);
+                            setShowReceiptAccountDropdown(false);
+                          }}>
+                          <span className="font-medium">{a.name}</span>
+                          <span className="text-xs text-gray-400">Bal: {formatKES(Number(a.balance))}</span>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (KES)</label>
+                <input type="number" step="0.01" value={receiptForm.amount}
+                  onChange={e => setReceiptForm({ ...receiptForm, amount: e.target.value })}
+                  placeholder="0.00" className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                <select value={receiptForm.payment_method}
+                  onChange={e => setReceiptForm({ ...receiptForm, payment_method: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm">
+                  <option value="cash">Cash</option>
+                  <option value="mpesa">M-Pesa</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+              <input value={receiptForm.notes}
+                onChange={e => setReceiptForm({ ...receiptForm, notes: e.target.value })}
+                placeholder="e.g. Partial payment on account"
+                className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { setShowReceiptModal(false); setReceiptAccountSearch(''); setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' }); }}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={handleCollectReceipt} disabled={collectingReceipt || !receiptForm.account_id || !receiptForm.amount}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
+                {collectingReceipt ? 'Recording...' : 'Record Payment'}
               </button>
             </div>
           </div>

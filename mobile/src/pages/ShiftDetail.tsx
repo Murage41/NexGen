@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary } from '../services/api';
+import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets } from 'lucide-react';
+import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus } from 'lucide-react';
 
 export default function ShiftDetail() {
   const { id } = useParams();
@@ -24,14 +24,28 @@ export default function ShiftDetail() {
   const [repaying, setRepaying] = useState(false);
   const [tankSummary, setTankSummary] = useState<any[]>([]);
   const [wagePaid, setWagePaid] = useState('');
+  // Credit receipt state
+  const [creditReceipts, setCreditReceipts] = useState<any[]>([]);
+  const [creditAccounts, setCreditAccounts] = useState<any[]>([]);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [receiptForm, setReceiptForm] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
+  const [collectingReceipt, setCollectingReceipt] = useState(false);
 
-  useEffect(() => { loadShift(); }, [id]);
+  useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
+
+  async function loadCreditAccounts() {
+    try {
+      const res = await getCreditAccounts();
+      setCreditAccounts(res.data.data || res.data || []);
+    } catch { setCreditAccounts([]); }
+  }
 
   async function loadShift() {
     try {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
       setShift(d);
+      setCreditReceipts(d.credit_receipts || []);
       setWagePaid(String(d.employee_wage || 0));
       // Use outstanding_debts from shift response, or fetch separately
       if (d.outstanding_debts) {
@@ -92,6 +106,27 @@ export default function ShiftDetail() {
     } finally { setRepaying(false); }
   }
 
+  async function handleCollectReceipt() {
+    const amount = parseFloat(receiptForm.amount);
+    if (!receiptForm.account_id || !amount || amount <= 0) return;
+    setCollectingReceipt(true);
+    try {
+      await addShiftCreditReceipt(parseInt(id!), {
+        account_id: parseInt(receiptForm.account_id),
+        amount,
+        payment_method: receiptForm.payment_method,
+        notes: receiptForm.notes || undefined,
+      });
+      setShowReceiptModal(false);
+      setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
+      await loadShift();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to record payment');
+    } finally {
+      setCollectingReceipt(false);
+    }
+  }
+
   if (loading) return <div className="text-center text-gray-400 mt-20">Loading...</div>;
   if (!shift) return <div className="text-center text-red-500 mt-20">Shift not found</div>;
 
@@ -107,6 +142,7 @@ export default function ShiftDetail() {
   const variance = totalAccounted - expected;
 
   const totalDebt = debts.reduce((s: number, d: any) => s + (d.balance || 0), 0);
+  const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
 
   return (
     <div className="pb-6">
@@ -162,6 +198,18 @@ export default function ShiftDetail() {
             <span className="text-gray-400">M-Pesa</span>
             <span>{fmt(totalMpesa)}</span>
           </div>
+          {shift.collections && Number(shift.collections.mpesa_fee) > 0 && (
+            <div className="flex justify-between text-xs text-gray-400 -mt-0.5">
+              <span className="pl-3">↳ fee {fmt(Number(shift.collections.mpesa_fee))} · net {fmt(Number(shift.collections.mpesa_net))}</span>
+              <span></span>
+            </div>
+          )}
+          {totalCreditReceipts > 0 && (
+            <div className="flex justify-between text-xs text-green-600 -mt-0.5">
+              <span className="pl-3">↳ incl. {fmt(totalCreditReceipts)} debt collected</span>
+              <span></span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-gray-400">Credits</span>
             <span>{fmt(totalCredits)}</span>
@@ -263,6 +311,12 @@ export default function ShiftDetail() {
           <div className="space-y-1 text-sm">
             <div className="flex justify-between"><span className="text-gray-500">Cash</span><span>{fmt(shift.collections.cash_amount)}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">M-Pesa</span><span>{fmt(shift.collections.mpesa_amount)}</span></div>
+            {Number(shift.collections.mpesa_fee) > 0 && (
+              <div className="flex justify-between text-xs text-gray-400">
+                <span className="pl-3">↳ fee {fmt(Number(shift.collections.mpesa_fee))} · net {fmt(Number(shift.collections.mpesa_net))}</span>
+                <span></span>
+              </div>
+            )}
           </div>
         ) : <p className="text-sm text-gray-400">Not recorded yet</p>}
       </div>
@@ -331,6 +385,40 @@ export default function ShiftDetail() {
           ))}
         </div>
       )}
+
+      {/* Debt Collections */}
+      <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="font-semibold text-gray-700">Debt Collections</p>
+          {isOpen && (
+            <button onClick={() => setShowReceiptModal(true)}
+              className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium">
+              <Plus size={13} /> Collect
+            </button>
+          )}
+        </div>
+        {creditReceipts.length > 0 ? (
+          <div className="space-y-2">
+            {creditReceipts.map((r: any) => (
+              <div key={r.id} className="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">{r.account_name}</p>
+                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${r.payment_method === 'mpesa' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                    {r.payment_method}
+                  </span>
+                </div>
+                <p className="font-semibold text-sm">{fmt(Number(r.amount))}</p>
+              </div>
+            ))}
+            <div className="flex justify-between pt-1 text-sm font-bold border-t">
+              <span>Total</span>
+              <span className="text-green-700">{fmt(totalCreditReceipts)}</span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">No debt collections this shift</p>
+        )}
+      </div>
 
       {/* Actions */}
       {isOpen && (
@@ -454,6 +542,68 @@ export default function ShiftDetail() {
             <button onClick={handleClose} disabled={closing}
               className="w-full bg-red-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50">
               {closing ? 'Closing...' : 'Confirm Close & Lock'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Collect Receipt Modal */}
+      {showReceiptModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+          <div className="bg-white w-full max-w-lg rounded-t-2xl p-5 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">Collect Debt Payment</h3>
+              <button onClick={() => { setShowReceiptModal(false); setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' }); }}
+                className="p-1 text-gray-400"><X size={20} /></button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">Record cash or M-Pesa received for an outstanding balance.</p>
+
+            <div className="mb-3">
+              <label className="text-sm font-medium text-gray-700 mb-1 block">Customer Account</label>
+              <select value={receiptForm.account_id}
+                onChange={e => setReceiptForm({ ...receiptForm, account_id: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-3 text-base bg-white">
+                <option value="">Select account...</option>
+                {creditAccounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} (Bal: KES {Number(a.balance).toLocaleString('en-KE', { minimumFractionDigits: 2 })})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mb-3">
+              <label className="text-sm font-medium text-gray-700 mb-1 block">Amount (KES)</label>
+              <input type="number" step="0.01" value={receiptForm.amount}
+                onChange={e => setReceiptForm({ ...receiptForm, amount: e.target.value })}
+                placeholder="0.00" className="w-full border border-gray-300 rounded-lg p-3 text-base" />
+            </div>
+
+            <div className="mb-3">
+              <label className="text-sm font-medium text-gray-700 mb-1 block">Payment Method</label>
+              <div className="grid grid-cols-2 gap-2">
+                {['cash', 'mpesa'].map(m => (
+                  <button key={m} type="button"
+                    onClick={() => setReceiptForm({ ...receiptForm, payment_method: m })}
+                    className={`py-2.5 rounded-lg text-sm font-medium capitalize border ${receiptForm.payment_method === m ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-300'}`}>
+                    {m === 'mpesa' ? 'M-Pesa' : 'Cash'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-5">
+              <label className="text-sm text-gray-600 mb-1 block">Notes (optional)</label>
+              <input value={receiptForm.notes}
+                onChange={e => setReceiptForm({ ...receiptForm, notes: e.target.value })}
+                placeholder="e.g. Partial settlement"
+                className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
+            </div>
+
+            <button onClick={handleCollectReceipt}
+              disabled={collectingReceipt || !receiptForm.account_id || !receiptForm.amount}
+              className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50">
+              {collectingReceipt ? 'Recording...' : 'Record Payment'}
             </button>
           </div>
         </div>
