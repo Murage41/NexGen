@@ -27,6 +27,20 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// ── Request logger — prints every API call + status + duration ──────────────
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const level = res.statusCode >= 400 ? 'ERROR' : 'INFO';
+    console.log(`[API:${level}] ${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`);
+    if (res.statusCode >= 400 && req.body && Object.keys(req.body).length) {
+      console.log(`[API:BODY]`, JSON.stringify(req.body));
+    }
+  });
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRouter);
 app.use('/api/employees', employeesRouter);

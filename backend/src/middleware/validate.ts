@@ -9,6 +9,9 @@ export function validate(schema: ZodSchema) {
   return (req: Request, res: Response, next: NextFunction) => {
     const result = schema.safeParse(req.body);
     if (!result.success) {
+      // Log incoming body + errors so server console shows exactly what failed
+      console.error('[validate] BODY:', JSON.stringify(req.body));
+      console.error('[validate] ERRORS:', JSON.stringify((result.error as ZodError).issues));
       const errors = (result.error as ZodError).issues.map((i) => ({
         field: i.path.join('.'),
         message: i.message,
