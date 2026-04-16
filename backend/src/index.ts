@@ -123,6 +123,29 @@ app.get('/api/health/drift-check', async (_req, res) => {
   }
 });
 
+// Phase 16 — On-demand DB backup. Copies nexgen.db to
+//   backend/data/backups/nexgen-YYYYMMDD-HHMMSS.db
+// Returns the filename. Intended to be called nightly by Windows Task
+// Scheduler (see docs/phases/PHASE14-17-OPERATIONS.md) and on-demand
+// before dangerous operations (migrations, bulk imports).
+app.post('/api/health/backup', async (_req, res) => {
+  try {
+    const fs = await import('fs');
+    const src = path.join(__dirname, '..', 'data', 'nexgen.db');
+    const dir = path.join(__dirname, '..', 'data', 'backups');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Africa/Nairobi' })
+      .replace(/[-: ]/g, '').slice(0, 14); // YYYYMMDDHHMMSS in EAT
+    const dest = path.join(dir, `nexgen-${now}.db`);
+    fs.copyFileSync(src, dest);
+    const { size } = fs.statSync(dest);
+    res.json({ success: true, file: path.basename(dest), size_bytes: size });
+  } catch (err: any) {
+    console.error('[health:backup] ERROR', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // One-time backfill — Phase 1. Recomputes all dips' book_stock_at_dip and
 // all credit_accounts.balance from source rows. Idempotent: safe to run
 // multiple times. Use after the Phase 1 wire-in to clear historical drift.
