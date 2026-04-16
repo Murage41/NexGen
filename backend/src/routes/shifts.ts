@@ -187,53 +187,64 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Shift date cannot be in the future.' });
     }
 
-    // Check for existing open shift
-    const openShift = await db('shifts').where({ status: 'open' }).first();
-    if (openShift) {
-      return res.status(400).json({ success: false, error: 'There is already an open shift. Close it first.' });
-    }
+    // Phase 12: wrap the "at most one open shift" check + insert in a single
+    // SQLite transaction so a near-simultaneous second POST cannot win the
+    // race and produce two open shifts. SQLite serializes transactions, so
+    // the second one sees the first's inserted row when it reaches the check.
+    const shift = await db.transaction(async (trx) => {
+      const openShift = await trx('shifts').where({ status: 'open' }).first();
+      if (openShift) {
+        const err: any = new Error('There is already an open shift. Close it first.');
+        err.httpStatus = 400;
+        throw err;
+      }
 
-    const [id] = await db('shifts').insert({
-      employee_id,
-      start_time: new Date().toISOString(),
-      shift_date: resolvedDate,
-      status: 'open',
-    });
-
-    // Auto-populate opening readings from last closed shift (or pump's initial readings)
-    const pumps = await db('pumps').where({ active: true });
-    for (const pump of pumps) {
-      const lastReading = await db('pump_readings')
-        .join('shifts', 'pump_readings.shift_id', 'shifts.id')
-        .where('pump_readings.pump_id', pump.id)
-        .where('shifts.status', 'closed')
-        .orderBy('shifts.end_time', 'desc')
-        .select('pump_readings.closing_litres', 'pump_readings.closing_amount')
-        .first();
-
-      const openLitres = lastReading ? lastReading.closing_litres : (pump.initial_litres || 0);
-      const openAmount = lastReading ? lastReading.closing_amount : (pump.initial_amount || 0);
-
-      await db('pump_readings').insert({
-        shift_id: id,
-        pump_id: pump.id,
-        opening_litres: openLitres,
-        opening_amount: openAmount,
-        closing_litres: openLitres,
-        closing_amount: openAmount,
-        litres_sold: 0,
-        amount_sold: 0,
+      const [id] = await trx('shifts').insert({
+        employee_id,
+        start_time: new Date().toISOString(),
+        shift_date: resolvedDate,
+        status: 'open',
       });
-    }
 
-    const shift = await db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .select('shifts.*', 'employees.name as employee_name')
-      .where('shifts.id', id)
-      .first();
+      // Auto-populate opening readings from last closed shift (or pump's initial readings)
+      const pumps = await trx('pumps').where({ active: true });
+      for (const pump of pumps) {
+        const lastReading = await trx('pump_readings')
+          .join('shifts', 'pump_readings.shift_id', 'shifts.id')
+          .where('pump_readings.pump_id', pump.id)
+          .where('shifts.status', 'closed')
+          .orderBy('shifts.end_time', 'desc')
+          .select('pump_readings.closing_litres', 'pump_readings.closing_amount')
+          .first();
+
+        const openLitres = lastReading ? lastReading.closing_litres : (pump.initial_litres || 0);
+        const openAmount = lastReading ? lastReading.closing_amount : (pump.initial_amount || 0);
+
+        await trx('pump_readings').insert({
+          shift_id: id,
+          pump_id: pump.id,
+          opening_litres: openLitres,
+          opening_amount: openAmount,
+          closing_litres: openLitres,
+          closing_amount: openAmount,
+          litres_sold: 0,
+          amount_sold: 0,
+        });
+      }
+
+      return trx('shifts')
+        .join('employees', 'shifts.employee_id', 'employees.id')
+        .select('shifts.*', 'employees.name as employee_name')
+        .where('shifts.id', id)
+        .first();
+    });
 
     res.status(201).json({ success: true, data: shift });
   } catch (err: any) {
+    if (err.httpStatus === 400) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    console.error('[shifts:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -243,6 +254,34 @@ router.put('/:id/opening-readings', async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { readings } = req.body; // Array of { pump_id, opening_litres, opening_amount }
+
+    // Phase 12: reject opening readings greater than existing closing — same
+    // monotonic-meter reasoning as the closing-readings handler.
+    const invalid: string[] = [];
+    for (const r of readings) {
+      const existing = await db('pump_readings')
+        .where({ shift_id: req.params.id, pump_id: r.pump_id })
+        .first();
+      if (existing) {
+        if (Number(r.opening_litres) > Number(existing.closing_litres)) {
+          invalid.push(
+            `Pump ${r.pump_id}: opening litres ${r.opening_litres} is above closing ${existing.closing_litres}.`
+          );
+        }
+        if (Number(r.opening_amount) > Number(existing.closing_amount)) {
+          invalid.push(
+            `Pump ${r.pump_id}: opening amount ${r.opening_amount} is above closing ${existing.closing_amount}.`
+          );
+        }
+      }
+    }
+    if (invalid.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Opening readings cannot exceed closing readings: ${invalid.join(' ')}`,
+      });
+    }
+
     for (const r of readings) {
       const existing = await db('pump_readings')
         .where({ shift_id: req.params.id, pump_id: r.pump_id })
@@ -266,6 +305,7 @@ router.put('/:id/opening-readings', async (req, res) => {
       .where('pump_readings.shift_id', req.params.id);
     res.json({ success: true, data: updatedReadings });
   } catch (err: any) {
+    console.error('[shifts:opening-readings] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -275,6 +315,35 @@ router.put('/:id/readings', validate(updateReadingsSchema), async (req, res) => 
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { readings } = req.body; // Array of { pump_id, closing_litres, closing_amount }
+
+    // Phase 12: reject any closing reading that is below its opening.
+    // Meter readings are monotonic — a closing below opening means either a
+    // typo or a meter reset, both of which need explicit admin intervention
+    // rather than a silently-negative litres_sold.
+    const invalid: string[] = [];
+    for (const r of readings) {
+      const existing = await db('pump_readings')
+        .where({ shift_id: req.params.id, pump_id: r.pump_id })
+        .first();
+      if (existing) {
+        if (Number(r.closing_litres) < Number(existing.opening_litres)) {
+          invalid.push(
+            `Pump ${r.pump_id}: closing litres ${r.closing_litres} is below opening ${existing.opening_litres}.`
+          );
+        }
+        if (Number(r.closing_amount) < Number(existing.opening_amount)) {
+          invalid.push(
+            `Pump ${r.pump_id}: closing amount ${r.closing_amount} is below opening ${existing.opening_amount}.`
+          );
+        }
+      }
+    }
+    if (invalid.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Closing readings must be at least opening readings: ${invalid.join(' ')}`,
+      });
+    }
 
     for (const r of readings) {
       const existing = await db('pump_readings')
