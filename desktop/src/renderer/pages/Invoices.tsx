@@ -31,7 +31,9 @@ export default function Invoices() {
   function openCreate() {
     setForm({
       credit_id: '',
-      due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      // Phase 13 parity: default due_date uses Kenya timezone so the picker
+      // matches the owner's local calendar (was UTC → up to 3 hours skew).
+      due_date: new Date(Date.now() + 30 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' }),
       notes: '',
     });
     setShowCreateModal(true);

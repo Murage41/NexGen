@@ -9,6 +9,7 @@ export default function ShiftRecord() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
+  const [shiftStatus, setShiftStatus] = useState<string>('open');
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
@@ -38,6 +39,7 @@ export default function ShiftRecord() {
     try {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
+      setShiftStatus(d.status || 'open');
       setReadings(d.readings || []);
       if (d.collections) setCollections({ cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount });
       setShiftCredits(d.shift_credits || []);
@@ -53,7 +55,13 @@ export default function ShiftRecord() {
       const res = await updateReadings(parseInt(id!), payload);
       setReadings(res.data.data);
       alert('Readings saved');
-    } catch (err) { console.error(err); }
+    } catch (err: any) {
+      // Phase 13: surface backend validation (e.g. Phase 12 monotonic guard)
+      // instead of silently swallowing it.
+      const msg = err?.response?.data?.error || err?.message || 'Failed to save readings';
+      alert(msg);
+      console.error(err);
+    }
     finally { setSaving(false); }
   }
 
@@ -67,7 +75,11 @@ export default function ShiftRecord() {
         credits_amount: creditsTotal,
       });
       alert('Collections saved');
-    } catch (err) { console.error(err); }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to save collections';
+      alert(msg);
+      console.error(err);
+    }
     finally { setSaving(false); }
   }
 
@@ -138,6 +150,28 @@ export default function ShiftRecord() {
   const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
 
   if (loading) return <div className="text-center text-gray-400 mt-20">Loading...</div>;
+
+  // Phase 13: if the shift is already closed, editing paths would be rejected
+  // by the backend (requireOpenShift guard). Rather than surface confusing
+  // 400 errors, short-circuit here and push the user back to the read-only
+  // view. Desktop ShiftDetail uses the same status gate.
+  if (shiftStatus !== 'open') {
+    return (
+      <div className="pb-6">
+        <PageHeader title="Record Shift" back />
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+          <p className="font-semibold mb-1">Shift is closed</p>
+          <p>This shift has already been closed and can no longer be edited.</p>
+          <button
+            onClick={() => navigate(`/shifts/${id}`)}
+            className="mt-3 w-full bg-white border border-amber-300 py-2 rounded-lg text-sm font-medium text-amber-800"
+          >
+            View details
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const tabs = [
     { key: 'readings', label: 'Readings' },
