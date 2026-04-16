@@ -5,6 +5,7 @@ import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema
 import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
 import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
+import { requireAdmin } from '../middleware/requireAdmin';
 import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
@@ -667,7 +668,8 @@ router.delete('/:id/wage-deduction', async (req, res) => {
 });
 
 // PUT close shift — with deduction options and debt carry-forward
-router.put('/:id/close', async (req, res) => {
+// Phase 5: shift close is an owner-only operation (finalizes financials)
+router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
   try {
     const { notes, deduct_amount, wage_paid: submittedWage } = req.body;
     // deduct_amount: number | null
@@ -886,7 +888,8 @@ router.get('/staff-debts/:employeeId', async (req, res) => {
 
 // PUT repay staff debt from wage (used when opening/during a shift to clear past debts)
 // Phase 3 fix: wrapped in transaction — writes staff_debts + credit_accounts + wage_deductions
-router.put('/:id/repay-debt', async (req, res) => {
+// Phase 5: require admin — adjusts financial records
+router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
   try {
     const { amount } = req.body;
     const shift = await db('shifts')

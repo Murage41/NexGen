@@ -79,7 +79,8 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
           amount: total_cost,
           balance: total_cost,
           status: 'unpaid',
-          due_date: dueDate.toISOString().split('T')[0],
+          // Phase 8 fix: use Kenya timezone (was UTC)
+          due_date: dueDate.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' }),
         });
       }
 

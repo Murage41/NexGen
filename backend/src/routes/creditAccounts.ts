@@ -169,13 +169,15 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Cannot delete account with outstanding balance' });
     }
 
+    // Phase 7 fix: soft-delete to preserve audit trail (was hard-delete)
+    const now = new Date().toISOString();
     await db.transaction(async (trx) => {
-      await trx('credit_payments').where({ account_id: account.id }).del();
-      await trx('credits').where({ account_id: account.id, balance: 0 }).del();
-      await trx('credit_accounts').where({ id: account.id }).del();
+      await trx('credit_payments').where({ account_id: account.id }).update({ deleted_at: now });
+      await trx('credits').where({ account_id: account.id }).update({ deleted_at: now, status: 'cancelled' });
+      await trx('credit_accounts').where({ id: account.id }).update({ deleted_at: now });
     });
 
-    res.json({ success: true, message: 'Account deleted' });
+    res.json({ success: true, message: 'Account archived' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

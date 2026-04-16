@@ -566,7 +566,8 @@ router.get('/stock-reconciliation', async (req, res) => {
     // Previous date for opening stock
     const prevDate = new Date(date + 'T12:00:00');
     prevDate.setDate(prevDate.getDate() - 1);
-    const prevDateStr = prevDate.toISOString().split('T')[0];
+    // Phase 8 fix: use Kenya timezone (was UTC — wrong after 9 PM EAT)
+    const prevDateStr = prevDate.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
 
     const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'capacity_litres');
 

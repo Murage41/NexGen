@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../database';
 import { getKenyaDate } from '../utils/timezone';
+import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
 
@@ -33,7 +34,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+// Phase 5 fix: require admin for invoice creation
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const { credit_id, amount, date } = req.body;
     // Generate invoice number: INV-YYYYMMDD-XXX
@@ -54,7 +56,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+// Phase 5 fix: require admin for invoice status change
+router.put('/:id', requireAdmin, async (req, res) => {
   try {
     const { status } = req.body;
     await db('invoices').where({ id: req.params.id }).update({ status });

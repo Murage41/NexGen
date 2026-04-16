@@ -145,8 +145,9 @@ router.get('/summary', async (req, res) => {
     const periodMs = new Date(endDate).getTime() - new Date(startDate).getTime();
     const prevEnd = new Date(new Date(startDate).getTime() - 1);
     const prevStart = new Date(prevEnd.getTime() - periodMs);
-    const prevStartDate = prevStart.toISOString().split('T')[0];
-    const prevEndDate = prevEnd.toISOString().split('T')[0];
+    // Phase 8 fix: use Kenya timezone for date strings (was UTC — wrong after 9 PM EAT)
+    const prevStartDate = prevStart.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+    const prevEndDate = prevEnd.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
     const prevStartTs = prevStartDate + 'T00:00:00';
     const prevEndTs = prevEndDate + 'T23:59:59';
 
