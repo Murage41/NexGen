@@ -893,9 +893,9 @@ router.get('/stock-reconciliation-by-shift', async (req, res) => {
 // Reverses batch consumption for the given shift, then re-consumes using
 // current delivery_batches.cost_per_litre values. Use after correcting a
 // delivery price or when batch_consumption has drifted.
-router.post('/recalculate-cogs', requireAdmin, async (req, res) => {
+router.post('/recalculate-cogs', requireAdmin, async (req: any, res) => {
   try {
-    const { shift_id } = req.body;
+    const { shift_id, reason } = req.body;
     if (!shift_id) return res.status(400).json({ success: false, error: 'shift_id is required' });
 
     const shift = await db('shifts').where({ id: shift_id }).first();
@@ -911,7 +911,9 @@ router.post('/recalculate-cogs', requireAdmin, async (req, res) => {
       .select('pumps.tank_id', db.raw('SUM(pump_readings.litres_sold) as litres'))
       .groupBy('pumps.tank_id');
 
+    const correctedBy = Number(req.employee?.id ?? 0);
     const results: any[] = [];
+
     await db.transaction(async (trx) => {
       for (const reading of readings) {
         const tankId = reading.tank_id;
@@ -939,12 +941,26 @@ router.post('/recalculate-cogs', requireAdmin, async (req, res) => {
         // Recompute cache
         await recomputeCache(tankId, trx);
 
+        const delta = Math.round((newCost - oldCost) * 100) / 100;
+
+        // Phase 10: append-only audit row for this correction
+        await trx('cogs_corrections').insert({
+          shift_id,
+          tank_id: tankId,
+          litres_sold: litresSold,
+          old_cogs: oldCost,
+          new_cogs: newCost,
+          delta_kes: delta,
+          corrected_by: correctedBy,
+          reason: reason || null,
+        });
+
         results.push({
           tank_id: tankId,
           litres_sold: litresSold,
           old_cogs: oldCost,
           new_cogs: newCost,
-          delta: Math.round((newCost - oldCost) * 100) / 100,
+          delta,
         });
       }
     });
@@ -963,6 +979,32 @@ router.post('/recalculate-cogs', requireAdmin, async (req, res) => {
       },
     });
   } catch (err: any) {
+    console.error('[reports:recalculate-cogs] ERROR', err.message, err.stack);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Admin: List COGS corrections (audit trail) ───────────────────────────────
+router.get('/cogs-corrections', requireAdmin, async (req, res) => {
+  try {
+    const { shift_id, from, to } = req.query;
+    let query = db('cogs_corrections as c')
+      .join('tanks', 'c.tank_id', 'tanks.id')
+      .leftJoin('employees', 'c.corrected_by', 'employees.id')
+      .select(
+        'c.id', 'c.shift_id', 'c.tank_id', 'tanks.label as tank_label', 'tanks.fuel_type',
+        'c.litres_sold', 'c.old_cogs', 'c.new_cogs', 'c.delta_kes',
+        'c.corrected_by', 'employees.name as corrected_by_name',
+        'c.reason', 'c.created_at',
+      )
+      .orderBy('c.created_at', 'desc');
+    if (shift_id) query = query.where('c.shift_id', shift_id);
+    if (from) query = query.where('c.created_at', '>=', from);
+    if (to) query = query.where('c.created_at', '<=', to);
+    const rows = await query;
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    console.error('[reports:cogs-corrections] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
