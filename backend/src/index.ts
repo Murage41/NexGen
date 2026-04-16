@@ -2,8 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import db from './database';
-import { computeBookStock, recomputeAllDipsFromDate } from './services/stockCalculator';
+import { recomputeAllDipsFromDate } from './services/stockCalculator';
 import { recomputeAllAccountBalances } from './services/accountBalance';
+import { detectDrift } from './services/driftDetector';
 import employeesRouter from './routes/employees';
 import pumpsRouter from './routes/pumps';
 import tanksRouter from './routes/tanks';
@@ -106,68 +107,16 @@ app.get('/api/health/db-stats', async (_req, res) => {
   }
 });
 
-// Drift detector — Phase 1 production-readiness debug-sweep.
+// Drift detector — Phase 1/11 production-readiness debug-sweep.
 // Walks every Category C cache, recomputes the truth, and reports any rows
 // whose cached value disagrees with truth. Used to detect regressions after
 // each phase. Returns ok:true when all caches are in sync.
+// Implementation lives in services/driftDetector so the dashboard can
+// embed a summary too.
 app.get('/api/health/drift-check', async (_req, res) => {
   try {
-    const dipDrift: any[] = [];
-    const dips = await db('tank_dips')
-      .whereNull('deleted_at')
-      .select('id', 'tank_id', 'dip_date', 'measured_litres', 'book_stock_at_dip', 'variance_litres');
-    for (const d of dips) {
-      const truthBook = await computeBookStock(d.tank_id, d.dip_date);
-      const truthVar = parseFloat(d.measured_litres) - truthBook;
-      const cachedBook = parseFloat(d.book_stock_at_dip) || 0;
-      if (Math.abs(cachedBook - truthBook) > 0.01) {
-        dipDrift.push({
-          dip_id: d.id,
-          tank_id: d.tank_id,
-          dip_date: d.dip_date,
-          cached_book: cachedBook,
-          truth_book: Number(truthBook.toFixed(2)),
-          drift: Number((cachedBook - truthBook).toFixed(2)),
-          cached_variance: parseFloat(d.variance_litres) || 0,
-          truth_variance: Number(truthVar.toFixed(2)),
-        });
-      }
-    }
-
-    const accountDrift: any[] = [];
-    const accounts = await db('credit_accounts').whereNull('deleted_at').select('id', 'name', 'balance');
-    for (const a of accounts) {
-      const creditsSum = await db('credits')
-        .where('account_id', a.id).whereNull('deleted_at').sum('amount as t').first();
-      const ids = await db('credits').where('account_id', a.id).whereNull('deleted_at').pluck('id');
-      const paySum = await db('credit_payments')
-        .whereNull('deleted_at')
-        .where((q: any) => {
-          q.where('account_id', a.id);
-          if (ids.length) q.orWhereIn('credit_id', ids);
-        })
-        .sum('amount as t').first();
-      const truth = (parseFloat(creditsSum?.t) || 0) - (parseFloat(paySum?.t) || 0);
-      const cached = parseFloat(a.balance) || 0;
-      if (Math.abs(cached - truth) > 0.01) {
-        accountDrift.push({
-          account_id: a.id,
-          name: a.name,
-          cached_balance: cached,
-          truth_balance: Number(truth.toFixed(2)),
-          drift: Number((cached - truth).toFixed(2)),
-        });
-      }
-    }
-
-    const ok = dipDrift.length === 0 && accountDrift.length === 0;
-    res.json({
-      success: true,
-      ok,
-      dips: { drift_count: dipDrift.length, total_checked: dips.length, drifted: dipDrift },
-      accounts: { drift_count: accountDrift.length, total_checked: accounts.length, drifted: accountDrift },
-      timestamp: new Date().toISOString(),
-    });
+    const report = await detectDrift();
+    res.json({ success: true, ...report });
   } catch (err: any) {
     console.error('[health:drift-check] ERROR', err.message);
     res.status(500).json({ success: false, error: err.message });

@@ -27,9 +27,37 @@ export default function Dashboard() {
 
   const formatKES = (n: number) => `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
+  const drift = data.drift_check as
+    | { ok: boolean; dip_drift_count: number; account_drift_count: number }
+    | undefined;
+  const hasDrift = drift && !drift.ok;
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-800 mb-6">Dashboard</h1>
+
+      {/* Phase 11: Reconciliation drift banner. Category C caches (dip book
+          stock, credit-account balance) disagree with their recomputed truth
+          — usually indicates a new mutation path that skipped the recompute
+          helper. Hit /api/health/drift-check for per-row detail. */}
+      {hasDrift && (
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <AlertCircle className="mt-0.5 flex-shrink-0" size={20} />
+          <div>
+            <p className="font-semibold">
+              Reconciliation drift detected
+            </p>
+            <p>
+              {drift.dip_drift_count} tank dip{drift.dip_drift_count === 1 ? '' : 's'}
+              {' and '}
+              {drift.account_drift_count} credit account{drift.account_drift_count === 1 ? '' : 's'}
+              {' '}have cached values that disagree with the computed truth. Run{' '}
+              <code className="rounded bg-red-100 px-1">/api/health/drift-check</code>{' '}
+              for details, then <code className="rounded bg-red-100 px-1">/api/health/phase1-backfill</code> to repair.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Row 1: Today's Summary */}
       <div className="grid grid-cols-4 gap-4 mb-4">

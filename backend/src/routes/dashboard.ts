@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../database';
 import { getFIFOCostByFuelType } from '../services/stockCalculator';
+import { detectDriftSummary } from '../services/driftDetector';
 import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
@@ -336,6 +337,17 @@ router.get('/', async (_req, res) => {
       weeklySales.push({ date: dateStr, amount });
     }
 
+    // Phase 11: embed drift summary so the dashboard can flag Category C
+    // cache drift the moment it appears. If this query ever becomes slow,
+    // move it behind a ?include=drift flag.
+    let driftSummary: { ok: boolean; dip_drift_count: number; account_drift_count: number; checked_at: string };
+    try {
+      driftSummary = await detectDriftSummary();
+    } catch (e: any) {
+      console.error('[dashboard:drift] ERROR', e.message);
+      driftSummary = { ok: true, dip_drift_count: 0, account_drift_count: 0, checked_at: new Date().toISOString() };
+    }
+
     res.json({
       success: true,
       data: {
@@ -377,6 +389,8 @@ router.get('/', async (_req, res) => {
         // Existing
         current_shift: currentShift || null,
         weekly_sales: weeklySales,
+        // Phase 11: reconciliation health
+        drift_check: driftSummary,
       },
     });
   } catch (err: any) {
