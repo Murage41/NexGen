@@ -62,6 +62,7 @@ router.post('/', validate(createCreditSchema), async (req, res) => {
 
     res.status(201).json({ success: true, data: credit });
   } catch (err: any) {
+    console.error('[credits:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -111,6 +112,7 @@ router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => 
 
     res.status(201).json({ success: true, data: updated });
   } catch (err: any) {
+    console.error('[credits:payment] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

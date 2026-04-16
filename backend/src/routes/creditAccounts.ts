@@ -151,6 +151,7 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
       },
     });
   } catch (err: any) {
+    console.error('[creditAccounts:payment] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

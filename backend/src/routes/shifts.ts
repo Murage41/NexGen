@@ -867,6 +867,7 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
 
     res.json({ success: true, ...(warnings.length > 0 ? { warnings } : {}) });
   } catch (err: any) {
+    console.error('[shifts:close] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

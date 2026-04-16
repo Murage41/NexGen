@@ -94,6 +94,7 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
 
     res.status(201).json({ success: true, data: delivery });
   } catch (err: any) {
+    console.error('[deliveries:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -201,6 +202,7 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
 
     res.json({ success: true, data: delivery });
   } catch (err: any) {
+    console.error('[deliveries:update] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -243,6 +245,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (err: any) {
+    console.error('[deliveries:delete] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
