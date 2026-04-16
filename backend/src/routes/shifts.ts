@@ -369,9 +369,11 @@ router.post('/:id/credits', validate(createShiftCreditSchema), async (req, res) 
 
     const shiftCredit = await db.transaction(async (trx) => {
       // Look up or auto-create credit_account for this customer
+      // Phase 6: exclude soft-deleted accounts so we don't resurrect archived ones
       let account = await trx('credit_accounts')
         .whereRaw('LOWER(name) = ?', [customer_name.toLowerCase()])
         .where({ type: 'customer' })
+        .whereNull('deleted_at')
         .first();
 
       if (!account) {

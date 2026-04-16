@@ -41,8 +41,10 @@ router.post('/', validate(createCreditSchema), async (req, res) => {
       });
 
       // 2. Find or create credit_account and sync balance
+      // Phase 6: exclude soft-deleted accounts so we don't resurrect archived ones
       let account = await trx('credit_accounts')
         .where({ name: customer_name, type: 'customer' })
+        .whereNull('deleted_at')
         .first();
       if (!account) {
         const [accountId] = await trx('credit_accounts').insert({
@@ -73,8 +75,11 @@ router.post('/', validate(createCreditSchema), async (req, res) => {
 router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => {
   try {
     const { amount, payment_method, date, payment_date, notes } = req.body;
-    const credit = await db('credits').where({ id: req.params.id }).first();
+    const credit = await db('credits').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!credit) return res.status(404).json({ success: false, error: 'Credit not found' });
+    if (credit.status === 'paid') {
+      return res.status(400).json({ success: false, error: 'Credit is already fully paid' });
+    }
 
     if (amount > credit.balance) {
       return res.status(400).json({

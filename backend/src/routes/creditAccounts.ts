@@ -11,7 +11,9 @@ router.get('/', async (req, res) => {
   try {
     const type = req.query.type as string;
 
-    let query = db('credit_accounts as ca').select(
+    let query = db('credit_accounts as ca')
+      .whereNull('ca.deleted_at')
+      .select(
       'ca.id',
       'ca.name',
       'ca.phone',
@@ -35,7 +37,7 @@ router.get('/', async (req, res) => {
 // GET /:id - Get single account with all credits and payments
 router.get('/:id', async (req, res) => {
   try {
-    const account = await db('credit_accounts').where({ id: req.params.id }).first();
+    const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
 
     let credits: any[] = [];
@@ -74,7 +76,7 @@ router.get('/:id', async (req, res) => {
 // Auto-settles outstanding credits FIFO (oldest first) for audit continuity.
 router.post('/:id/payments', requireAdmin, async (req, res) => {
   try {
-    const account = await db('credit_accounts').where({ id: req.params.id }).first();
+    const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
 
     if (account.type !== 'customer') {
@@ -187,7 +189,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 // GET /:id/statement - Chronological list of all debits and credits
 router.get('/:id/statement', async (req, res) => {
   try {
-    const account = await db('credit_accounts').where({ id: req.params.id }).first();
+    const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
 
     let entries: Array<{
