@@ -13,6 +13,7 @@ router.get('/', async (_req, res) => {
     const employees = await db('employees').select(SAFE_COLUMNS).orderBy('name');
     res.json({ success: true, data: employees });
   } catch (err: any) {
+    console.error('[employees:list] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -23,6 +24,7 @@ router.get('/active', async (_req, res) => {
     const employees = await db('employees').select(SAFE_COLUMNS).where({ active: true }).orderBy('name');
     res.json({ success: true, data: employees });
   } catch (err: any) {
+    console.error('[employees:list-active] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -34,6 +36,7 @@ router.get('/:id', async (req, res) => {
     if (!employee) return res.status(404).json({ success: false, error: 'Employee not found' });
     res.json({ success: true, data: employee });
   } catch (err: any) {
+    console.error('[employees:get] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -46,6 +49,7 @@ router.post('/', requireAdmin, async (req, res) => {
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id }).first();
     res.status(201).json({ success: true, data: employee });
   } catch (err: any) {
+    console.error('[employees:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -65,6 +69,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id: req.params.id }).first();
     res.json({ success: true, data: employee });
   } catch (err: any) {
+    console.error('[employees:update] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -75,6 +80,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     await db('employees').where({ id: req.params.id }).update({ active: false });
     res.json({ success: true });
   } catch (err: any) {
+    console.error('[employees:delete] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

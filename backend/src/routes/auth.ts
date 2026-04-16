@@ -29,6 +29,7 @@ router.post('/login', async (req, res) => {
     const token = generateToken(employee.id, employee.role);
     res.json({ success: true, data: employeeData, token });
   } catch (err: any) {
+    console.error('[auth:login] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -42,6 +43,7 @@ router.get('/employees', async (_req, res) => {
       .orderBy('name');
     res.json({ success: true, data: employees });
   } catch (err: any) {
+    console.error('[auth:list-employees] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

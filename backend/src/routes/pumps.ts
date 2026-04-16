@@ -21,6 +21,7 @@ router.get('/', async (req, res) => {
     const pumps = await query;
     res.json({ success: true, data: pumps });
   } catch (err: any) {
+    console.error('[pumps:list] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -30,6 +31,7 @@ router.get('/active', async (_req, res) => {
     const pumps = await db('pumps').where({ active: true }).orderBy('label');
     res.json({ success: true, data: pumps });
   } catch (err: any) {
+    console.error('[pumps:list-active] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -40,6 +42,7 @@ router.get('/:id', async (req, res) => {
     if (!pump) return res.status(404).json({ success: false, error: 'Pump not found' });
     res.json({ success: true, data: pump });
   } catch (err: any) {
+    console.error('[pumps:get] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -67,6 +70,7 @@ router.post('/', requireAdmin, async (req, res) => {
     const pump = await db('pumps').where({ id }).first();
     res.status(201).json({ success: true, data: pump });
   } catch (err: any) {
+    console.error('[pumps:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -132,6 +136,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     const pump = await db('pumps').where({ id: req.params.id }).first();
     res.json({ success: true, data: pump });
   } catch (err: any) {
+    console.error('[pumps:update] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -144,6 +149,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     await db('pumps').where({ id: req.params.id }).update({ active: false });
     res.json({ success: true });
   } catch (err: any) {
+    console.error('[pumps:delete] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

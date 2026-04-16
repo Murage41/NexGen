@@ -380,6 +380,7 @@ router.get('/', async (_req, res) => {
       },
     });
   } catch (err: any) {
+    console.error('[dashboard:get] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -15,6 +15,7 @@ router.get('/', async (_req, res) => {
     const tanks = await db('tanks').orderBy('label');
     res.json({ success: true, data: tanks });
   } catch (err: any) {
+    console.error('[tanks:list] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -85,6 +86,7 @@ router.get('/:id/stock-summary', async (req, res) => {
       },
     });
   } catch (err: any) {
+    console.error('[tanks:stock-summary] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -95,6 +97,7 @@ router.get('/:id', async (req, res) => {
     if (!tank) return res.status(404).json({ success: false, error: 'Tank not found' });
     res.json({ success: true, data: tank });
   } catch (err: any) {
+    console.error('[tanks:get] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -106,6 +109,7 @@ router.post('/', requireAdmin, async (req, res) => {
     const tank = await db('tanks').where({ id }).first();
     res.status(201).json({ success: true, data: tank });
   } catch (err: any) {
+    console.error('[tanks:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -120,6 +124,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     const tank = await db('tanks').where({ id: req.params.id }).first();
     res.json({ success: true, data: tank });
   } catch (err: any) {
+    console.error('[tanks:update] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -142,6 +147,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     await db('tanks').where({ id: req.params.id }).delete();
     res.json({ success: true });
   } catch (err: any) {
+    console.error('[tanks:delete] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -158,6 +164,7 @@ router.get('/:id/ledger', async (req, res) => {
     const rows = await query.limit(parseInt(limit as string) || 50);
     res.json({ success: true, data: rows });
   } catch (err: any) {
+    console.error('[tanks:ledger] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

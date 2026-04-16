@@ -16,6 +16,7 @@ router.get('/', async (req, res) => {
     const invoices = await query;
     res.json({ success: true, data: invoices });
   } catch (err: any) {
+    console.error('[invoices:list] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -30,6 +31,7 @@ router.get('/:id', async (req, res) => {
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
     res.json({ success: true, data: invoice });
   } catch (err: any) {
+    console.error('[invoices:get] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -52,6 +54,7 @@ router.post('/', requireAdmin, async (req, res) => {
       .first();
     res.status(201).json({ success: true, data: invoice });
   } catch (err: any) {
+    console.error('[invoices:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -64,6 +67,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     const invoice = await db('invoices').where({ id: req.params.id }).first();
     res.json({ success: true, data: invoice });
   } catch (err: any) {
+    console.error('[invoices:update] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });

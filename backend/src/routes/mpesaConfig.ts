@@ -11,6 +11,7 @@ router.get('/', async (_req, res) => {
     const configs = await db('mpesa_fee_config').orderBy('effective_date', 'desc');
     res.json({ success: true, data: configs });
   } catch (err: any) {
+    console.error('[mpesaConfig:list] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -25,6 +26,7 @@ router.get('/current', async (_req, res) => {
       .first();
     res.json({ success: true, data: current || null });
   } catch (err: any) {
+    console.error('[mpesaConfig:get-current] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -51,6 +53,7 @@ router.post('/', requireAdmin, async (req, res) => {
     const row = await db('mpesa_fee_config').where({ id }).first();
     res.status(201).json({ success: true, data: row });
   } catch (err: any) {
+    console.error('[mpesaConfig:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
