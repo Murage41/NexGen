@@ -200,6 +200,72 @@ export async function getFIFOCostByFuelType(
 }
 
 /**
+ * Recompute `book_stock_at_dip` and `variance_litres` for every active dip
+ * with `tank_id = tankId AND dip_date >= fromDate`.
+ *
+ * **Why**: `tank_dips.book_stock_at_dip` is a Category C cache (see
+ * data-immutability policy). It is computed once at dip insert time. When a
+ * backdated delivery or a new closed shift lands on/before an existing dip,
+ * the cache becomes stale. Every mutation that can affect a past dip MUST
+ * call this helper.
+ *
+ * Triggers (callers):
+ *  - fuelDeliveries POST/PUT/DELETE: pass tank_id + delivery.date
+ *  - shifts close/open: for each tank touched by the shift, pass tank_id +
+ *    shift.shift_date
+ *  - tank_dips POST/PUT itself uses computeBookStock directly (no recompute
+ *    needed — the new dip writes its own truth).
+ */
+export async function recomputeDipsForTankFromDate(
+  tankId: number,
+  fromDate: string,
+  conn?: Knex
+): Promise<{ updated: number; details: Array<{ id: number; oldBook: number; newBook: number }> }> {
+  const qb = conn || db;
+  const dips = await qb('tank_dips')
+    .where('tank_id', tankId)
+    .where('dip_date', '>=', fromDate)
+    .whereNull('deleted_at')
+    .select('id', 'dip_date', 'measured_litres', 'book_stock_at_dip');
+
+  const details: Array<{ id: number; oldBook: number; newBook: number }> = [];
+  for (const d of dips) {
+    const newBook = await computeBookStock(tankId, d.dip_date, conn);
+    const newVariance = parseFloat(d.measured_litres) - newBook;
+    const oldBook = parseFloat(d.book_stock_at_dip) || 0;
+    if (Math.abs(oldBook - newBook) > 0.001) {
+      console.log(
+        `[stockCalc:recomputeDips] dip=${d.id} tank=${tankId} date=${d.dip_date} ` +
+          `book ${oldBook.toFixed(2)}→${newBook.toFixed(2)} (Δ${(newBook - oldBook).toFixed(2)})`
+      );
+    }
+    await qb('tank_dips')
+      .where({ id: d.id })
+      .update({ book_stock_at_dip: newBook, variance_litres: newVariance });
+    details.push({ id: d.id, oldBook, newBook });
+  }
+  return { updated: details.length, details };
+}
+
+/**
+ * Recompute dips for ALL tanks from `fromDate` onwards. Used during the
+ * one-time backfill and when a multi-tank operation occurs.
+ */
+export async function recomputeAllDipsFromDate(
+  fromDate: string,
+  conn?: Knex
+): Promise<number> {
+  const qb = conn || db;
+  const tanks = await qb('tanks').select('id');
+  let total = 0;
+  for (const t of tanks) {
+    const r = await recomputeDipsForTankFromDate(t.id, fromDate, conn);
+    total += r.updated;
+  }
+  return total;
+}
+
+/**
  * Get FIFO cost for a specific shift (all tanks combined).
  */
 export async function getShiftFIFOCost(

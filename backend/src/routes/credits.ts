@@ -3,6 +3,7 @@ import db from '../database';
 import { validate } from '../middleware/validate';
 import { createCreditSchema, creditPaymentSchema } from '../schemas';
 import { getKenyaDate } from '../utils/timezone';
+import { recomputeAccountBalance } from '../services/accountBalance';
 
 const router = Router();
 
@@ -51,9 +52,10 @@ router.post('/', validate(createCreditSchema), async (req, res) => {
         account = { id: accountId };
       }
 
-      // 3. Link credit to account + increment balance
+      // 3. Link credit to account + recompute balance from source rows
+      // (Phase 1 stale-cache fix: replaces increment pattern that risks drift)
       await trx('credits').where({ id }).update({ account_id: account.id });
-      await trx('credit_accounts').where({ id: account.id }).increment('balance', amount);
+      await recomputeAccountBalance(account.id, trx);
 
       return trx('credits').where({ id }).first();
     });
@@ -98,9 +100,10 @@ router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => 
       const status = newBalance <= 0 ? 'paid' : 'partial';
       await trx('credits').where({ id: credit.id }).update({ balance: Math.max(0, newBalance), status });
 
-      // Keep credit_accounts.balance in sync with the individual credit payment
+      // Keep credit_accounts.balance in sync (Phase 1 stale-cache fix:
+      // recompute from source rows rather than decrement)
       if (credit.account_id) {
-        await trx('credit_accounts').where({ id: credit.account_id }).decrement('balance', amount);
+        await recomputeAccountBalance(credit.account_id, trx);
       }
 
       return trx('credits').where({ id: credit.id }).first();

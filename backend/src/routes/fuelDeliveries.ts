@@ -3,7 +3,7 @@ import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
 import { createDeliverySchema, updateDeliverySchema } from '../schemas';
-import { recomputeCache } from '../services/stockCalculator';
+import { recomputeCache, recomputeDipsForTankFromDate } from '../services/stockCalculator';
 
 const router = Router();
 
@@ -51,6 +51,10 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
 
       // Recompute cached stock (replaces old tanks.increment)
       const newStock = await recomputeCache(tank_id, trx);
+
+      // Phase 1 stale-cache fix: any dip on/after this delivery's date is now
+      // stale because its book_stock_at_dip didn't include this delivery.
+      await recomputeDipsForTankFromDate(tank_id, date, trx);
 
       // Ledger entry
       await trx('tank_stock_ledger').insert({
@@ -146,6 +150,11 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
           const oldStock = await recomputeCache(oldTankId, trx);
           const newStock = await recomputeCache(newTankId, trx);
 
+          // Phase 1 stale-cache fix: dips on both tanks from earlier of old/new date
+          const earliestDate = existing.date < date ? existing.date : date;
+          await recomputeDipsForTankFromDate(oldTankId, earliestDate, trx);
+          await recomputeDipsForTankFromDate(newTankId, earliestDate, trx);
+
           await trx('tank_stock_ledger').insert({
             tank_id: oldTankId, event_type: 'delivery', reference_id: parseInt(req.params.id as string),
             litres_change: -oldLitres, balance_after: oldStock,
@@ -174,6 +183,10 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
           } else {
             await recomputeCache(newTankId, trx);
           }
+
+          // Phase 1 stale-cache fix: dips for this tank from earlier of old/new date
+          const earliestDate = existing.date < date ? existing.date : date;
+          await recomputeDipsForTankFromDate(newTankId, earliestDate, trx);
         }
       }
 
@@ -213,6 +226,10 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       await trx('fuel_deliveries').where({ id: req.params.id }).update({ deleted_at: new Date().toISOString() });
 
       const newStock = await recomputeCache(delivery.tank_id, trx);
+
+      // Phase 1 stale-cache fix: dips on/after delivery date are stale
+      await recomputeDipsForTankFromDate(delivery.tank_id, delivery.date, trx);
+
       await trx('tank_stock_ledger').insert({
         tank_id: delivery.tank_id,
         event_type: 'delivery',

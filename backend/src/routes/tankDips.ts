@@ -163,21 +163,19 @@ router.put('/:id', requireAdmin, validate(updateTankDipSchema), async (req, res)
     const { measured_litres, dip_date, variance_category, variance_notes } = req.body;
     const updateData: any = {};
     const effectiveDate = dip_date !== undefined ? dip_date : existing.dip_date;
+    const ml = measured_litres !== undefined
+      ? parseFloat(measured_litres)
+      : parseFloat(existing.measured_litres);
 
-    if (dip_date !== undefined && dip_date !== existing.dip_date) {
-      // Date changed — must recompute book stock as-of the new date
-      const bookStock = await computeBookStock(existing.tank_id, effectiveDate);
-      const ml = measured_litres !== undefined ? parseFloat(measured_litres) : parseFloat(existing.measured_litres);
-      updateData.book_stock_at_dip = bookStock;
-      updateData.variance_litres = ml - bookStock;
-      updateData.dip_date = dip_date;
-      if (measured_litres !== undefined) updateData.measured_litres = measured_litres;
-    } else if (measured_litres !== undefined) {
-      // Only measured_litres changed — keep original frozen book_stock, recalc variance only
-      const frozenBookStock = parseFloat(existing.book_stock_at_dip);
-      updateData.measured_litres = measured_litres;
-      updateData.variance_litres = parseFloat(measured_litres) - frozenBookStock;
-    }
+    // Phase 1 stale-cache fix: always recompute book_stock_at_dip from current
+    // truth. The previous version froze book_stock when only `measured_litres`
+    // changed, but deliveries/shifts can mutate underneath — book_stock_at_dip
+    // is a Cat C cache and must always reflect current source data.
+    const bookStock = await computeBookStock(existing.tank_id, effectiveDate);
+    updateData.book_stock_at_dip = bookStock;
+    updateData.variance_litres = ml - bookStock;
+    if (dip_date !== undefined) updateData.dip_date = dip_date;
+    if (measured_litres !== undefined) updateData.measured_litres = measured_litres;
     if (variance_category !== undefined) updateData.variance_category = variance_category;
     if (variance_notes !== undefined) updateData.variance_notes = variance_notes;
 

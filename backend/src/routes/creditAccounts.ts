@@ -2,6 +2,7 @@ import { Router } from 'express';
 import db from '../database';
 import { getKenyaDate } from '../utils/timezone';
 import { requireAdmin } from '../middleware/requireAdmin';
+import { recomputeAccountBalance } from '../services/accountBalance';
 
 const router = Router();
 
@@ -112,12 +113,7 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
         notes,
       });
 
-      // 2. Decrement the account balance
-      await trx('credit_accounts').where({ id: account.id }).decrement('balance', amount);
-
-      // 3. Auto-settle outstanding credits FIFO so individual rows stay consistent
-      //    with the account balance. This is pure bookkeeping — the source of
-      //    truth is credit_accounts.balance.
+      // 2. Auto-settle outstanding credits FIFO so individual rows stay consistent.
       let remaining = amount;
       const openCredits = await trx('credits')
         .where({ account_id: account.id })
@@ -136,6 +132,10 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
         });
         remaining -= apply;
       }
+
+      // 3. Recompute account balance from source rows (Phase 1 stale-cache fix:
+      //    replaces decrement pattern that risks drift over time)
+      await recomputeAccountBalance(account.id, trx);
 
       const updatedAccount = await trx('credit_accounts').where({ id: account.id }).first();
       const payment = await trx('credit_payments').where({ id: paymentId }).first();

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import db from '../database';
 import { validate } from '../middleware/validate';
 import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema } from '../schemas';
-import { computeBookStock, recomputeCache, consumeBatchesFIFO } from '../services/stockCalculator';
+import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
+import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
 import { getKenyaDate } from '../utils/timezone';
 
@@ -404,8 +405,9 @@ router.post('/:id/credits', validate(createShiftCreditSchema), async (req, res) 
         credit_id: mainCreditId,
       });
 
-      // 3. Increment the account balance — this is the authoritative running total
-      await trx('credit_accounts').where({ id: account.id }).increment('balance', amount);
+      // 3. Recompute the account balance from source rows (Phase 1 stale-cache fix:
+      //    replaces the increment/decrement pattern that risks drift over time).
+      await recomputeAccountBalance(account.id, trx);
 
       // 4. Update credits_amount in shift_collections (auto-sum)
       const totalCredits = await trx('shift_credits')
@@ -469,11 +471,9 @@ router.delete('/:id/credits/:creditId', async (req, res) => {
               .where({ id: shiftCredit.credit_id })
               .update({ deleted_at: now, status: 'cancelled' });
 
-            // Decrement account balance by the credit amount
+            // Phase 1 stale-cache fix: recompute account balance from source rows
             if (credit.account_id) {
-              await trx('credit_accounts')
-                .where({ id: credit.account_id })
-                .decrement('balance', credit.amount);
+              await recomputeAccountBalance(credit.account_id, trx);
             }
           }
           // If payments exist, we don't touch the credit or balance — the payment
@@ -559,10 +559,7 @@ router.post('/:id/credit-receipts', async (req, res) => {
         shift_id: shiftId,
       });
 
-      // 2. Decrement account balance
-      await trx('credit_accounts').where({ id: account_id }).decrement('balance', pay);
-
-      // 3. FIFO settle oldest individual credit line items
+      // 2. FIFO settle oldest individual credit line items
       let remaining = pay;
       const openCredits = await trx('credits')
         .where({ account_id })
@@ -580,6 +577,9 @@ router.post('/:id/credit-receipts', async (req, res) => {
         });
         remaining = Math.round((remaining - apply) * 100) / 100;
       }
+
+      // 3. Recompute account balance from source rows (Phase 1 stale-cache fix)
+      await recomputeAccountBalance(account_id, trx);
 
       // 4. Add to shift collections (cash or mpesa)
       let collections = await trx('shift_collections').where({ shift_id: shiftId }).first();
@@ -842,6 +842,9 @@ router.put('/:id/close', async (req, res) => {
             notes: `Shift #${req.params.id} sales: ${sales.toFixed(1)} L`,
           });
         }
+        // Phase 1 stale-cache fix: any dip on/after this shift_date now has a
+        // stale book_stock_at_dip because this shift's sales weren't counted.
+        await recomputeDipsForTankFromDate(t.id, shiftDate, trx);
       }
     });
 
