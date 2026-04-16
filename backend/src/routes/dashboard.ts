@@ -92,8 +92,11 @@ router.get('/', async (_req, res) => {
     const todayNetProfit = todayGrossProfit - todayWages - todayExpenses;
     const todayGrossMargin = todaySales > 0 ? (todayGrossProfit / todaySales) * 100 : 0;
 
-    // Today's variance
-    const todayTotalCollected = todayCash + todayMpesa + todayCreditsOnAccount;
+    // Today's variance — must match shift detail formula:
+    // variance = (cash + mpesa + credits + expenses + wages) − expected_sales
+    // Phase 2 fix: was missing todayExpenses + todayWages, causing
+    // dashboard variance to disagree with individual shift variances.
+    const todayTotalCollected = todayCash + todayMpesa + todayCreditsOnAccount + todayShiftExpenses + todayWages;
     const todayVariance = todayTotalCollected - todaySales;
 
     // ── Month-to-date figures ──
@@ -312,11 +315,11 @@ router.get('/', async (_req, res) => {
       .first();
 
     // ── Weekly sales (last 7 days) ──
+    // Phase 2/8 fix: use Kenya date arithmetic (was UTC — wrong after 9 PM EAT)
     const weeklySales = [];
+    const todayMs = new Date(today + 'T00:00:00+03:00').getTime();
     for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = new Date(todayMs - i * 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
       const dayShifts = await db('shifts')
         .where('shift_date', dateStr)
         .select('id');

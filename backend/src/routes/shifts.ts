@@ -805,6 +805,16 @@ router.put('/:id/close', async (req, res) => {
         if (sales > 0) {
           const fifoResult = await consumeBatchesFIFO(t.id, sales, parseInt(req.params.id), trx);
           cogs = fifoResult.totalCost;
+
+          // Phase 2 fix: warn if FIFO couldn't find batches for some litres
+          // (batchId=0 means 0-cost placeholder — missing delivery records)
+          const missingBatch = fifoResult.details.find(d => d.batchId === 0);
+          if (missingBatch) {
+            const tankInfo = await trx('tanks').where({ id: t.id }).select('label').first();
+            warnings.push(
+              `Tank ${tankInfo?.label || t.id}: ${missingBatch.litres.toFixed(1)} L sold have no matching delivery batch — COGS for those litres is KES 0. Record the missing delivery to correct profit calculations.`
+            );
+          }
         }
 
         await trx('shift_tank_snapshots').insert({

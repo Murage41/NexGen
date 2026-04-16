@@ -167,7 +167,9 @@ router.get('/daily', async (req, res) => {
       // Computed book stock as-of this report date
       const bookStock = await computeBookStock(tank.id, date);
       const dipReading = dip ? Number(dip.measured_litres) : null;
-      const dipVariance = dipReading !== null ? bookStock - dipReading : null;
+      // Phase 2 fix: sign convention = measured − book (matches tank_dips.variance_litres).
+      // Positive = surplus (more fuel than expected), negative = loss/shrinkage.
+      const dipVariance = dipReading !== null ? dipReading - bookStock : null;
       const variancePct = dipReading !== null && bookStock > 0 ? (dipVariance! / bookStock) * 100 : null;
 
       tankSnapshot.push({
@@ -611,8 +613,8 @@ router.get('/stock-reconciliation', async (req, res) => {
         .first();
       const dipReading = dip ? Number(dip.measured_litres) : null;
 
-      // Variance
-      const variance = dipReading !== null ? closingBookStock - dipReading : null;
+      // Phase 2 fix: sign = measured − book (positive = surplus, negative = loss)
+      const variance = dipReading !== null ? dipReading - closingBookStock : null;
       const variancePct = dipReading !== null && closingBookStock > 0
         ? (variance! / closingBookStock) * 100 : null;
 
