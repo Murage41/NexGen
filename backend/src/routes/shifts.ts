@@ -683,6 +683,11 @@ router.put('/:id/close', async (req, res) => {
 
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
 
+    // Phase 4: guard against double-close (already-closed shift)
+    if (shift.status === 'closed') {
+      return res.status(400).json({ success: false, error: 'Shift is already closed.' });
+    }
+
     const warnings: string[] = [];
 
     await db.transaction(async (trx) => {
@@ -880,6 +885,7 @@ router.get('/staff-debts/:employeeId', async (req, res) => {
 });
 
 // PUT repay staff debt from wage (used when opening/during a shift to clear past debts)
+// Phase 3 fix: wrapped in transaction — writes staff_debts + credit_accounts + wage_deductions
 router.put('/:id/repay-debt', async (req, res) => {
   try {
     const { amount } = req.body;
@@ -891,62 +897,64 @@ router.put('/:id/repay-debt', async (req, res) => {
 
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
 
-    // Get outstanding debts oldest first
-    const debts = await db('staff_debts')
-      .where({ employee_id: shift.emp_id, status: 'outstanding' })
-      .orderBy('created_at', 'asc');
+    await db.transaction(async (trx) => {
+      // Get outstanding debts oldest first
+      const debts = await trx('staff_debts')
+        .where({ employee_id: shift.emp_id, status: 'outstanding' })
+        .orderBy('created_at', 'asc');
 
-    let remaining = amount;
-    for (const debt of debts) {
-      if (remaining <= 0) break;
-      const payment = Math.min(remaining, debt.balance);
-      const newBalance = debt.balance - payment;
-      await db('staff_debts').where({ id: debt.id }).update({
-        balance: newBalance,
-        status: newBalance <= 0 ? 'cleared' : 'outstanding',
-      });
-      remaining -= payment;
-    }
-
-    // Sync credit_accounts.balance for this employee
-    const deductionAmount = amount - remaining; // actual amount applied
-    if (deductionAmount > 0) {
-      const empAccount = await db('credit_accounts')
-        .where({ employee_id: shift.emp_id, type: 'employee' })
-        .first();
-      if (empAccount) {
-        const newBalance = Math.max(0, Number(empAccount.balance) - deductionAmount);
-        await db('credit_accounts')
-          .where({ id: empAccount.id })
-          .update({ balance: newBalance });
-      }
-    }
-
-    // Create/update wage deduction for this debt repayment
-    if (deductionAmount > 0) {
-      const existing = await db('wage_deductions').where({ shift_id: shift.id }).first();
-      const totalDeduction = (existing?.deduction_amount || 0) + deductionAmount;
-      if (existing) {
-        await db('wage_deductions').where({ shift_id: shift.id }).update({
-          deduction_amount: totalDeduction,
-          final_wage: shift.daily_wage - totalDeduction,
-          reason: existing.reason
-            ? `${existing.reason} + Debt repayment KES ${deductionAmount.toFixed(2)}`
-            : `Debt repayment KES ${deductionAmount.toFixed(2)}`,
+      let remaining = amount;
+      for (const debt of debts) {
+        if (remaining <= 0) break;
+        const payment = Math.min(remaining, debt.balance);
+        const newBalance = debt.balance - payment;
+        await trx('staff_debts').where({ id: debt.id }).update({
+          balance: newBalance,
+          status: newBalance <= 0 ? 'cleared' : 'outstanding',
         });
-      } else {
-        await db('wage_deductions').insert({
-          shift_id: shift.id,
-          employee_id: shift.emp_id,
-          original_wage: shift.daily_wage,
-          deduction_amount: totalDeduction,
-          final_wage: shift.daily_wage - totalDeduction,
-          reason: `Debt repayment KES ${deductionAmount.toFixed(2)}`,
-        });
+        remaining -= payment;
       }
-    }
 
-    // Return updated debts
+      // Sync credit_accounts.balance for this employee
+      const deductionAmount = amount - remaining; // actual amount applied
+      if (deductionAmount > 0) {
+        const empAccount = await trx('credit_accounts')
+          .where({ employee_id: shift.emp_id, type: 'employee' })
+          .first();
+        if (empAccount) {
+          const newBalance = Math.max(0, Number(empAccount.balance) - deductionAmount);
+          await trx('credit_accounts')
+            .where({ id: empAccount.id })
+            .update({ balance: newBalance });
+        }
+      }
+
+      // Create/update wage deduction for this debt repayment
+      if (deductionAmount > 0) {
+        const existing = await trx('wage_deductions').where({ shift_id: shift.id }).first();
+        const totalDeduction = (existing?.deduction_amount || 0) + deductionAmount;
+        if (existing) {
+          await trx('wage_deductions').where({ shift_id: shift.id }).update({
+            deduction_amount: totalDeduction,
+            final_wage: shift.daily_wage - totalDeduction,
+            reason: existing.reason
+              ? `${existing.reason} + Debt repayment KES ${deductionAmount.toFixed(2)}`
+              : `Debt repayment KES ${deductionAmount.toFixed(2)}`,
+          });
+        } else {
+          await trx('wage_deductions').insert({
+            shift_id: shift.id,
+            employee_id: shift.emp_id,
+            original_wage: shift.daily_wage,
+            deduction_amount: totalDeduction,
+            final_wage: shift.daily_wage - totalDeduction,
+            reason: `Debt repayment KES ${deductionAmount.toFixed(2)}`,
+          });
+        }
+      }
+    });
+
+    // Return updated debts (outside trx — read-only)
     const updatedDebts = await db('staff_debts')
       .where({ employee_id: shift.emp_id })
       .orderBy('created_at', 'desc');
@@ -956,6 +964,7 @@ router.put('/:id/repay-debt', async (req, res) => {
 
     res.json({ success: true, data: { debts: updatedDebts, total_outstanding: totalOutstanding } });
   } catch (err: any) {
+    console.error('[shifts:repay-debt] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
   }
 });
