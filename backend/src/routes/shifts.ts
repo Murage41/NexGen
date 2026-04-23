@@ -5,7 +5,7 @@ import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema
 import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
 import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
-import { requireAdmin } from '../middleware/requireAdmin';
+import { requireAdmin, requireAuth, requireOwnShiftOrAdmin } from '../middleware/requireAdmin';
 import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
@@ -176,7 +176,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST open a new shift
-router.post('/', async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const { employee_id, shift_date } = req.body;
     const today = getKenyaDate();
@@ -250,7 +250,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT set opening readings (admin only, for initial setup)
-router.put('/:id/opening-readings', async (req, res) => {
+router.put('/:id/opening-readings', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { readings } = req.body; // Array of { pump_id, opening_litres, opening_amount }
@@ -311,7 +311,7 @@ router.put('/:id/opening-readings', async (req, res) => {
 });
 
 // PUT update pump readings for a shift
-router.put('/:id/readings', validate(updateReadingsSchema), async (req, res) => {
+router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(updateReadingsSchema), async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { readings } = req.body; // Array of { pump_id, closing_litres, closing_amount }
@@ -376,7 +376,7 @@ router.put('/:id/readings', validate(updateReadingsSchema), async (req, res) => 
 });
 
 // PUT update collections for a shift
-router.put('/:id/collections', async (req, res) => {
+router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { cash_amount, mpesa_amount, credits_amount } = req.body;
@@ -404,7 +404,7 @@ router.put('/:id/collections', async (req, res) => {
 });
 
 // POST add shift expense
-router.post('/:id/expenses', validate(createShiftExpenseSchema), async (req, res) => {
+router.post('/:id/expenses', requireAuth, requireOwnShiftOrAdmin, validate(createShiftExpenseSchema), async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { category, description, amount } = req.body;
@@ -419,7 +419,7 @@ router.post('/:id/expenses', validate(createShiftExpenseSchema), async (req, res
 });
 
 // DELETE shift expense
-router.delete('/:id/expenses/:expenseId', async (req, res) => {
+router.delete('/:id/expenses/:expenseId', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     await db('shift_expenses').where({ id: req.params.expenseId, shift_id: req.params.id }).update({ deleted_at: new Date().toISOString() });
@@ -430,7 +430,7 @@ router.delete('/:id/expenses/:expenseId', async (req, res) => {
 });
 
 // POST add shift credit — creates shift_credit + credits line item, increments account balance
-router.post('/:id/credits', validate(createShiftCreditSchema), async (req, res) => {
+router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(createShiftCreditSchema), async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { customer_name, customer_phone, amount, description } = req.body;
@@ -514,7 +514,7 @@ router.post('/:id/credits', validate(createShiftCreditSchema), async (req, res) 
 });
 
 // DELETE shift credit — decrements account balance and voids the credits line item
-router.delete('/:id/credits/:creditId', async (req, res) => {
+router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const shiftId = req.params.id;
@@ -590,7 +590,7 @@ router.delete('/:id/credits/:creditId', async (req, res) => {
  *   - The shift may show a positive variance (cash > today's sales) which is correct
  *     because old debt was collected; the UI labels this as "debt collected"
  */
-router.post('/:id/credit-receipts', async (req, res) => {
+router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   if (!(await requireOpenShift(req, res))) return;
   try {
     const shiftId = parseInt(req.params.id as string);
@@ -693,7 +693,7 @@ router.post('/:id/credit-receipts', async (req, res) => {
 });
 
 // POST/PUT wage deduction for shift
-router.put('/:id/wage-deduction', async (req, res) => {
+router.put('/:id/wage-deduction', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { deduction_amount, reason } = req.body;
@@ -728,7 +728,7 @@ router.put('/:id/wage-deduction', async (req, res) => {
 });
 
 // DELETE wage deduction
-router.delete('/:id/wage-deduction', async (req, res) => {
+router.delete('/:id/wage-deduction', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     await db('wage_deductions').where({ shift_id: req.params.id }).update({ deleted_at: new Date().toISOString() });
@@ -740,7 +740,7 @@ router.delete('/:id/wage-deduction', async (req, res) => {
 
 // PUT close shift — with deduction options and debt carry-forward
 // Phase 5: shift close is an owner-only operation (finalizes financials)
-router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
+router.put('/:id/close', requireAuth, async (req: any, res: any) => {
   try {
     const { notes, deduct_amount, wage_paid: submittedWage } = req.body;
     // deduct_amount: number | null

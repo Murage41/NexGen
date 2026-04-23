@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import db from '../database';
 
 const SECRET = process.env.SESSION_SECRET || 'nexgen-station-secret-2026';
 
@@ -49,6 +50,13 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  // Desktop app uses shared key — grant admin-level access (desktop is admin-only by design)
+  const desktopKey = req.headers['x-desktop-key'];
+  if (desktopKey && desktopKey === (process.env.DESKTOP_KEY || 'nexgen-desktop-2026')) {
+    (req as any).employee = { id: 0, role: 'admin' };
+    return next();
+  }
+
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, error: 'Authentication required' });
@@ -60,4 +68,22 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
   (req as any).employee = decoded;
   next();
+}
+
+// Shift-scope guard: admins unrestricted; attendants can only touch their own shift.
+// Expects `req.params.id` = shift_id and `req.employee` set by a prior auth middleware.
+export async function requireOwnShiftOrAdmin(req: Request, res: Response, next: NextFunction) {
+  const employee = (req as any).employee;
+  if (!employee) return res.status(401).json({ success: false, error: 'Authentication required' });
+  if (employee.role === 'admin') return next();
+  try {
+    const shift = await db('shifts').where({ id: req.params.id }).select('employee_id').first();
+    if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
+    if (shift.employee_id !== employee.id) {
+      return res.status(403).json({ success: false, error: 'You can only modify your own shift' });
+    }
+    next();
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 }
