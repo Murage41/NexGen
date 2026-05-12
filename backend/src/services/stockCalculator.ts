@@ -2,35 +2,50 @@ import db from '../database';
 import { Knex } from 'knex';
 
 /**
- * Computed book stock for a tank as of a given date.
- * Formula: SUM(deliveries up to date) - SUM(closed shift sales up to date)
+ * Computed book stock for a tank as of a given point in time.
+ * Formula: SUM(deliveries received before asOf) - SUM(closed-shift sales closed before asOf)
  *
- * This replaces the old running counter approach. The `current_stock_litres`
- * column in `tanks` is now just a cache of this computation for "today".
+ * `asOf` may be either a full ISO datetime (e.g. '2026-04-23T11:41:45.000Z' or
+ * '2026-04-23 11:41:45') or a bare date 'YYYY-MM-DD'. A bare date is treated
+ * as end-of-day (23:59:59) — which preserves the previous date-level semantics
+ * for callers that only have a date (reports, "live" cache).
+ *
+ * Deliveries use COALESCE(delivery_timestamp, created_at) for effective time.
+ * Sales use shifts.end_time (the close moment) as the effective time.
+ *
+ * This replaces the old date-only approach. Fixes the pre-delivery-dip phantom
+ * variance bug (see migration 022).
  */
 export async function computeBookStock(
   tankId: number,
-  asOfDate: string,
+  asOf: string,
   conn?: Knex
 ): Promise<number> {
   const qb = conn || db;
 
-  // Sum all deliveries to this tank on or before asOfDate
+  // Normalize: bare 'YYYY-MM-DD' → end-of-day so date-only callers still work.
+  const asOfTs = /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? `${asOf} 23:59:59` : asOf;
+
+  // Sum deliveries whose effective timestamp <= asOfTs
   const deliveryResult = await qb('fuel_deliveries')
     .where('tank_id', tankId)
-    .where('date', '<=', asOfDate)
     .whereNull('deleted_at')
+    .whereRaw('datetime(COALESCE(delivery_timestamp, created_at)) <= datetime(?)', [asOfTs])
     .sum('litres as total')
     .first();
   const totalDelivered = parseFloat(deliveryResult?.total) || 0;
 
-  // Sum all litres sold from this tank in closed shifts on or before asOfDate
+  // Sum litres sold from closed shifts that ended <= asOfTs.
+  // Fallback: if end_time is null (legacy data), use shift_date end-of-day.
   const salesResult = await qb('pump_readings')
     .join('pumps', 'pump_readings.pump_id', 'pumps.id')
     .join('shifts', 'pump_readings.shift_id', 'shifts.id')
     .where('pumps.tank_id', tankId)
     .where('shifts.status', 'closed')
-    .where('shifts.shift_date', '<=', asOfDate)
+    .whereRaw(
+      "datetime(COALESCE(shifts.end_time, shifts.shift_date || ' 23:59:59')) <= datetime(?)",
+      [asOfTs],
+    )
     .sum('pump_readings.litres_sold as total')
     .first();
   const totalSold = parseFloat(salesResult?.total) || 0;
@@ -226,11 +241,14 @@ export async function recomputeDipsForTankFromDate(
     .where('tank_id', tankId)
     .where('dip_date', '>=', fromDate)
     .whereNull('deleted_at')
-    .select('id', 'dip_date', 'measured_litres', 'book_stock_at_dip');
+    .select('id', 'dip_date', 'timestamp', 'measured_litres', 'book_stock_at_dip');
 
   const details: Array<{ id: number; oldBook: number; newBook: number }> = [];
   for (const d of dips) {
-    const newBook = await computeBookStock(tankId, d.dip_date, conn);
+    // Pass each dip's own timestamp, not its date — this is the sub-day
+    // fix: a pre-delivery dip at 11:41 won't see a delivery at 11:42.
+    const asOf = d.timestamp || `${d.dip_date} 23:59:59`;
+    const newBook = await computeBookStock(tankId, asOf, conn);
     const newVariance = parseFloat(d.measured_litres) - newBook;
     const oldBook = parseFloat(d.book_stock_at_dip) || 0;
     if (Math.abs(oldBook - newBook) > 0.001) {

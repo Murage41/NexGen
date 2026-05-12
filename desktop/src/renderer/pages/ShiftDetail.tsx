@@ -4,6 +4,7 @@ import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
   repayDebt, getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
+  addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices,
 } from '../services/api';
 import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets } from 'lucide-react';
 
@@ -21,11 +22,16 @@ export default function ShiftDetail() {
   const [outstandingDebts, setOutstandingDebts] = useState<any[]>([]);
   const [totalOutstandingDebt, setTotalOutstandingDebt] = useState(0);
   const [newExpense, setNewExpense] = useState({ category: '', description: '', amount: '' });
-  const [newCredit, setNewCredit] = useState({ customer_name: '', customer_phone: '', amount: '', description: '' });
+  const [newCredit, setNewCredit] = useState<{ customer_name: string; customer_phone: string; amount: string; description: string; account_id: number | null }>({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
   const [creditAccounts, setCreditAccounts] = useState<any[]>([]);
   const [creditMode, setCreditMode] = useState<'existing' | 'new'>('existing');
   const [creditSearchQuery, setCreditSearchQuery] = useState('');
   const [showCreditDropdown, setShowCreditDropdown] = useState(false);
+  // Phase 3B: invoice-mode customers don't get money credits — they accrue litres.
+  // selectedBillingMode flips the credits form between money and litres.
+  const [selectedBillingMode, setSelectedBillingMode] = useState<'money' | 'invoice' | null>(null);
+  const [newInvoice, setNewInvoice] = useState<{ fuel_type: 'petrol' | 'diesel'; litres: string }>({ fuel_type: 'petrol', litres: '' });
+  const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,8 +48,39 @@ export default function ShiftDetail() {
   const [receiptAccountSearch, setReceiptAccountSearch] = useState('');
   const [showReceiptAccountDropdown, setShowReceiptAccountDropdown] = useState(false);
   const [collectingReceipt, setCollectingReceipt] = useState(false);
+  const [readingError, setReadingError] = useState('');
+  // Current per-fuel-type prices, used to surface KES/L anomalies on the readings table.
+  const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
-  useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
+  // ---- Meter rollover helpers (mirror backend services/meterRollover.ts) ----
+  function displayMod(cumulative: number, capacity: number): number {
+    if (!(capacity > 0)) return cumulative;
+    return Math.round((cumulative - Math.floor(cumulative / capacity) * capacity) * 100) / 100;
+  }
+  function compensateClient(opening: number, raw: number, capacity: number): { cumulative: number; rolledOver: boolean } {
+    if (!(capacity > 0)) return { cumulative: raw, rolledOver: false };
+    const rolloversSoFar = Math.floor(opening / capacity);
+    const openingDisplay = opening - rolloversSoFar * capacity;
+    if (raw >= openingDisplay) {
+      return { cumulative: Math.round((rolloversSoFar * capacity + raw) * 100) / 100, rolledOver: false };
+    }
+    return { cumulative: Math.round(((rolloversSoFar + 1) * capacity + raw) * 100) / 100, rolledOver: true };
+  }
+
+  useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); }, [id]);
+
+  async function loadCurrentPrices() {
+    try {
+      const res = await getCurrentPrices();
+      const d = res.data.data || {};
+      const map: Record<string, number> = {};
+      if (d.petrol?.price_per_litre) map.petrol = Number(d.petrol.price_per_litre);
+      if (d.diesel?.price_per_litre) map.diesel = Number(d.diesel.price_per_litre);
+      setPriceByFuel(map);
+    } catch (err) {
+      console.error('[ShiftDetail:loadCurrentPrices]', err);
+    }
+  }
 
   async function loadCreditAccounts() {
     try {
@@ -59,13 +96,25 @@ export default function ShiftDetail() {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
       setShift(d);
-      setReadings(d.readings);
+      // Pre-populate raw display inputs from current cumulative values so the
+      // form shows what the pump should currently read.
+      const rs = (d.readings || []).map((r: any) => {
+        const capL = Number(r.meter_capacity_litres) || 1000000;
+        const capA = Number(r.meter_capacity_amount) || 1000000;
+        return {
+          ...r,
+          raw_l_input: displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
+          raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+        };
+      });
+      setReadings(rs);
       if (d.collections) {
         setCollections({ cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount });
         setMpesaFee(Number(d.collections.mpesa_fee) || 0);
         setMpesaNet(Number(d.collections.mpesa_net) || 0);
       }
       setShiftCredits(d.shift_credits || []);
+      setInvoiceConsumption(d.invoice_consumption || []);
       setExpenses(d.expenses);
       setWageDeduction(d.wage_deduction || null);
       setOutstandingDebts(d.outstanding_debts || []);
@@ -82,18 +131,61 @@ export default function ShiftDetail() {
     finally { setLoading(false); }
   }
 
-  async function handleSaveReadings() {
+  async function handleSaveReadings(opts: { confirmAnomaly?: boolean; rolloverByPump?: Record<number, { litres?: boolean; amount?: boolean }> } = {}) {
     setSaving(true);
+    setReadingError('');
     try {
-      const payload = readings.map(r => ({
-        pump_id: r.pump_id,
-        closing_litres: parseFloat(r.closing_litres) || 0,
-        closing_amount: parseFloat(r.closing_amount) || 0,
-      }));
-      const res = await updateReadings(parseInt(id!), payload);
-      setReadings(res.data.data);
-    } catch (err) { console.error(err); }
-    finally { setSaving(false); }
+      const payload = readings.map(r => {
+        const ro = opts.rolloverByPump?.[r.pump_id] || {};
+        return {
+          pump_id: r.pump_id,
+          raw_closing_litres: parseFloat(r.raw_l_input) || 0,
+          raw_closing_amount: parseFloat(r.raw_a_input) || 0,
+          ...(ro.litres ? { rollover_litres: true } : {}),
+          ...(ro.amount ? { rollover_amount: true } : {}),
+        };
+      });
+      const res = await updateReadings(parseInt(id!), payload, opts.confirmAnomaly);
+      // Reload to sync raw inputs with new cumulative values.
+      const rs = (res.data.data || []).map((r: any) => {
+        const capL = Number(r.meter_capacity_litres) || 1000000;
+        const capA = Number(r.meter_capacity_amount) || 1000000;
+        return {
+          ...r,
+          raw_l_input: displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
+          raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+        };
+      });
+      setReadings(rs);
+    } catch (err: any) {
+      const data = err?.response?.data;
+      if (err?.response?.status === 409 && data?.code === 'ROLLOVER_REQUIRED') {
+        const lines = (data.rollovers || []).map((rv: any) =>
+          `• ${rv.pump_label} (${rv.field}): display ${rv.raw.toFixed(2)} → cumulative ${rv.cumulative.toFixed(2)}`
+        ).join('\n');
+        if (window.confirm(`Pump display rollover detected:\n\n${lines}\n\nThis means the meter passed its capacity (e.g. 999,999.99 → 0). Confirm to proceed?`)) {
+          const rolloverByPump: Record<number, { litres?: boolean; amount?: boolean }> = {};
+          for (const rv of data.rollovers || []) {
+            rolloverByPump[rv.pump_id] = rolloverByPump[rv.pump_id] || {};
+            if (rv.field === 'litres') rolloverByPump[rv.pump_id].litres = true;
+            if (rv.field === 'amount') rolloverByPump[rv.pump_id].amount = true;
+          }
+          return handleSaveReadings({ ...opts, rolloverByPump });
+        }
+        return;
+      }
+      if (err?.response?.status === 409 && data?.code === 'PRICE_ANOMALY') {
+        const lines = (data.anomalies || []).map((a: any) =>
+          `• ${a.pump_label}: KES ${a.observed.toFixed(2)}/L (expected ~KES ${a.expected.toFixed(2)}/L, ${a.deviation_pct > 0 ? '+' : ''}${a.deviation_pct}%)`
+        ).join('\n');
+        if (window.confirm(`Price-per-litre looks off:\n\n${lines}\n\nDouble-check the readings. Save anyway?`)) {
+          return handleSaveReadings({ ...opts, confirmAnomaly: true });
+        }
+        return;
+      }
+      console.error('[ShiftDetail:saveReadings]', data || err.message);
+      setReadingError(data?.error || err.message || 'Failed to save readings');
+    } finally { setSaving(false); }
   }
 
   async function handleSaveCollections() {
@@ -135,11 +227,49 @@ export default function ShiftDetail() {
     if (creditMode === 'new' && newCredit.customer_phone) {
       payload.customer_phone = newCredit.customer_phone;
     }
-    await addShiftCredit(parseInt(id!), payload);
-    setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '' });
-    setCreditSearchQuery('');
-    setCreditMode('existing');
-    await loadShift();
+    try {
+      await addShiftCredit(parseInt(id!), payload);
+      setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
+      setCreditSearchQuery('');
+      setCreditMode('existing');
+      setSelectedBillingMode(null);
+      await loadShift();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || err?.message || 'Failed to add credit');
+    }
+  }
+
+  // Phase 3B: invoice-mode customer — record litres, server computes retail.
+  async function handleAddInvoice() {
+    if (!newCredit.account_id || !newInvoice.litres) return;
+    const litresNum = parseFloat(newInvoice.litres);
+    if (!Number.isFinite(litresNum) || litresNum <= 0) {
+      alert('Litres must be a positive number');
+      return;
+    }
+    try {
+      await addInvoiceConsumption(parseInt(id!), {
+        account_id: newCredit.account_id,
+        fuel_type: newInvoice.fuel_type,
+        litres: litresNum,
+      });
+      setNewInvoice({ fuel_type: 'petrol', litres: '' });
+      setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
+      setCreditSearchQuery('');
+      setSelectedBillingMode(null);
+      await loadShift();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || err?.message || 'Failed to record consumption');
+    }
+  }
+
+  async function handleDeleteInvoice(entryId: number) {
+    try {
+      await deleteInvoiceConsumption(parseInt(id!), entryId);
+      await loadShift();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || err?.message || 'Failed to delete entry');
+    }
   }
 
   async function handleDeleteCredit(creditId: number) {
@@ -203,12 +333,21 @@ export default function ShiftDetail() {
   function updateReading(index: number, field: string, value: string) {
     const updated = [...readings];
     updated[index] = { ...updated[index], [field]: value };
-    const opening = parseFloat(updated[index].opening_litres) || 0;
-    const closing = parseFloat(updated[index].closing_litres) || 0;
-    const openAmt = parseFloat(updated[index].opening_amount) || 0;
-    const closeAmt = parseFloat(updated[index].closing_amount) || 0;
-    updated[index].litres_sold = closing - opening;
-    updated[index].amount_sold = closeAmt - openAmt;
+    const row = updated[index];
+    const oL = parseFloat(row.opening_litres) || 0;
+    const oA = parseFloat(row.opening_amount) || 0;
+    const capL = Number(row.meter_capacity_litres) || 1000000;
+    const capA = Number(row.meter_capacity_amount) || 1000000;
+    const rawL = parseFloat(row.raw_l_input) || 0;
+    const rawA = parseFloat(row.raw_a_input) || 0;
+    const cL = compensateClient(oL, rawL, capL);
+    const cA = compensateClient(oA, rawA, capA);
+    row.closing_litres = cL.cumulative;
+    row.closing_amount = cA.cumulative;
+    row.litres_sold = Math.max(0, cL.cumulative - oL);
+    row.amount_sold = Math.max(0, cA.cumulative - oA);
+    row._rolledOverL = cL.rolledOver;
+    row._rolledOverA = cA.rolledOver;
     setReadings(updated);
   }
 
@@ -222,9 +361,10 @@ export default function ShiftDetail() {
   const totalCash = parseFloat(String(collections.cash_amount)) || 0;
   const totalMpesa = parseFloat(String(collections.mpesa_amount)) || 0;
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
+  const totalInvoiceConsumption = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
   const totalExpenses = expenses.reduce((s: number, e: any) => s + e.amount, 0);
   const employeeWage = shift.employee_wage || 0;
-  const totalAccounted = totalCash + totalMpesa + totalCredits + totalExpenses + employeeWage;
+  const totalAccounted = totalCash + totalMpesa + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
   const variance = totalAccounted - expectedSales;
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -300,6 +440,12 @@ export default function ShiftDetail() {
             <span className="text-gray-500">Credits</span>
             <span className="font-medium">{formatKES(totalCredits)}</span>
           </div>
+          {totalInvoiceConsumption > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Invoice Consumption</span>
+              <span className="font-medium text-purple-700">{formatKES(totalInvoiceConsumption)}</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-gray-500">Expenses</span>
             <span className="font-medium">{formatKES(totalExpenses)}</span>
@@ -389,11 +535,19 @@ export default function ShiftDetail() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Pump Readings</h2>
           {isOpen && (
-            <button onClick={handleSaveReadings} disabled={saving} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+            <button onClick={() => handleSaveReadings({})} disabled={saving} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
               <Save size={14} /> Save Readings
             </button>
           )}
         </div>
+        {readingError && (
+          <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+            {readingError}
+          </div>
+        )}
+        {isOpen && (
+          <p className="mb-2 text-xs text-gray-500">Closing inputs accept the digits showing on the pump display. The system handles meter rollovers automatically.</p>
+        )}
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
@@ -405,39 +559,87 @@ export default function ShiftDetail() {
               <th className="text-right p-2 font-medium text-gray-600">Opening (KES)</th>
               <th className="text-right p-2 font-medium text-gray-600">Closing (KES)</th>
               <th className="text-right p-2 font-medium text-gray-600">Amount Sold</th>
+              <th className="text-right p-2 font-medium text-gray-600">KES / L</th>
             </tr>
           </thead>
           <tbody>
-            {readings.map((r: any, i: number) => (
-              <tr key={r.id || i} className="border-t">
-                <td className="p-2 font-medium">{r.pump_label} {r.nozzle_label}</td>
-                <td className="p-2">
-                  <span className={`px-2 py-0.5 rounded text-xs ${r.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {r.fuel_type}
-                  </span>
-                </td>
-                <td className="p-2 text-right text-gray-500">{parseFloat(r.opening_litres).toFixed(2)}</td>
-                <td className="p-2 text-right">
-                  {isOpen ? (
-                    <input type="number" step="0.01" value={numVal(r.closing_litres)}
-                      onChange={e => updateReading(i, 'closing_litres', e.target.value)}
-                      onFocus={selectOnFocus} placeholder="0.00"
-                      className="w-28 text-right border border-gray-300 rounded p-1" />
-                  ) : parseFloat(r.closing_litres).toFixed(2)}
-                </td>
-                <td className="p-2 text-right font-medium">{parseFloat(r.litres_sold).toFixed(2)}</td>
-                <td className="p-2 text-right text-gray-500">{parseFloat(r.opening_amount).toFixed(2)}</td>
-                <td className="p-2 text-right">
-                  {isOpen ? (
-                    <input type="number" step="0.01" value={numVal(r.closing_amount)}
-                      onChange={e => updateReading(i, 'closing_amount', e.target.value)}
-                      onFocus={selectOnFocus} placeholder="0.00"
-                      className="w-32 text-right border border-gray-300 rounded p-1" />
-                  ) : parseFloat(r.closing_amount).toFixed(2)}
-                </td>
-                <td className="p-2 text-right font-bold">{formatKES(parseFloat(r.amount_sold) || 0)}</td>
-              </tr>
-            ))}
+            {readings.map((r: any, i: number) => {
+              const lSold = parseFloat(r.litres_sold) || 0;
+              const aSold = parseFloat(r.amount_sold) || 0;
+              const expectedPrice = priceByFuel[r.fuel_type];
+              let perLitreLabel = '—';
+              let perLitreClass = 'text-gray-400';
+              if (lSold > 0 && aSold > 0) {
+                const observed = aSold / lSold;
+                perLitreLabel = observed.toFixed(2);
+                if (expectedPrice && Math.abs(observed - expectedPrice) / expectedPrice > 0.15) {
+                  perLitreClass = 'text-red-600 font-semibold';
+                } else if (expectedPrice) {
+                  perLitreClass = 'text-green-600';
+                }
+              } else if (lSold > 0 && aSold === 0) {
+                perLitreLabel = '!';
+                perLitreClass = 'text-red-600 font-bold';
+              } else if (aSold > 0 && lSold === 0) {
+                perLitreLabel = '∞';
+                perLitreClass = 'text-red-600 font-bold';
+              }
+              return (
+                <tr key={r.id || i} className="border-t">
+                  <td className="p-2 font-medium">{r.pump_label} {r.nozzle_label}</td>
+                  <td className="p-2">
+                    <span className={`px-2 py-0.5 rounded text-xs ${r.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {r.fuel_type}
+                    </span>
+                  </td>
+                  <td className="p-2 text-right text-gray-500">
+                    <div>{parseFloat(r.opening_litres).toFixed(2)}</div>
+                    {Number(r.opening_litres) >= (Number(r.meter_capacity_litres) || 1000000) && (
+                      <div className="text-xs text-gray-400">display {displayMod(Number(r.opening_litres), Number(r.meter_capacity_litres) || 1000000).toFixed(2)}</div>
+                    )}
+                  </td>
+                  <td className="p-2 text-right">
+                    {isOpen ? (
+                      <>
+                        <input type="number" step="0.01" value={r.raw_l_input ?? ''}
+                          onChange={e => updateReading(i, 'raw_l_input', e.target.value)}
+                          onFocus={selectOnFocus} placeholder="display"
+                          className={`w-28 text-right border rounded p-1 ${r._rolledOverL ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`}
+                          title="Type the digits showing on the pump display" />
+                        {r._rolledOverL && (
+                          <div className="text-[10px] text-amber-700 mt-0.5">↻ rolled → {Number(r.closing_litres).toFixed(2)}</div>
+                        )}
+                      </>
+                    ) : parseFloat(r.closing_litres).toFixed(2)}
+                  </td>
+                  <td className="p-2 text-right font-medium">{lSold.toFixed(2)}</td>
+                  <td className="p-2 text-right text-gray-500">
+                    <div>{parseFloat(r.opening_amount).toFixed(2)}</div>
+                    {Number(r.opening_amount) >= (Number(r.meter_capacity_amount) || 1000000) && (
+                      <div className="text-xs text-gray-400">display {displayMod(Number(r.opening_amount), Number(r.meter_capacity_amount) || 1000000).toFixed(2)}</div>
+                    )}
+                  </td>
+                  <td className="p-2 text-right">
+                    {isOpen ? (
+                      <>
+                        <input type="number" step="0.01" value={r.raw_a_input ?? ''}
+                          onChange={e => updateReading(i, 'raw_a_input', e.target.value)}
+                          onFocus={selectOnFocus} placeholder="display"
+                          className={`w-32 text-right border rounded p-1 ${r._rolledOverA ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`}
+                          title="Type the digits showing on the pump display" />
+                        {r._rolledOverA && (
+                          <div className="text-[10px] text-amber-700 mt-0.5">↻ rolled → {Number(r.closing_amount).toFixed(2)}</div>
+                        )}
+                      </>
+                    ) : parseFloat(r.closing_amount).toFixed(2)}
+                  </td>
+                  <td className="p-2 text-right font-bold">{formatKES(aSold)}</td>
+                  <td className={`p-2 text-right ${perLitreClass}`} title={expectedPrice ? `expected ~KES ${expectedPrice.toFixed(2)}/L` : ''}>
+                    {perLitreLabel}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
           <tfoot className="bg-gray-50 font-bold">
             <tr>
@@ -445,6 +647,7 @@ export default function ShiftDetail() {
               <td className="p-2 text-right">{readings.reduce((s: number, r: any) => s + (parseFloat(r.litres_sold) || 0), 0).toFixed(2)} L</td>
               <td colSpan={2}></td>
               <td className="p-2 text-right">{formatKES(expectedSales)}</td>
+              <td></td>
             </tr>
           </tfoot>
         </table>
@@ -553,14 +756,20 @@ export default function ShiftDetail() {
                               className="w-full text-left px-3 py-2 hover:bg-gray-100 text-sm flex justify-between items-center"
                               onMouseDown={e => {
                                 e.preventDefault();
-                                setNewCredit({ ...newCredit, customer_name: a.name });
+                                setNewCredit({ ...newCredit, customer_name: a.name, account_id: a.id });
+                                setSelectedBillingMode((a.billing_mode as 'money' | 'invoice') || 'money');
                                 setCreditSearchQuery(a.name);
                                 setShowCreditDropdown(false);
                               }}
                             >
                               <span className="font-medium">{a.name}</span>
-                              <span className={`px-1.5 py-0.5 rounded text-xs ${a.type === 'employee' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
-                                {a.type}
+                              <span className="flex gap-1">
+                                {a.billing_mode === 'invoice' && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-700">invoice</span>
+                                )}
+                                <span className={`px-1.5 py-0.5 rounded text-xs ${a.type === 'employee' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
+                                  {a.type}
+                                </span>
                               </span>
                             </button>
                           ))}
@@ -571,7 +780,10 @@ export default function ShiftDetail() {
                             e.preventDefault();
                             setCreditMode('new');
                             setCreditSearchQuery('');
-                            setNewCredit({ ...newCredit, customer_name: '', customer_phone: '' });
+                            setNewCredit({ ...newCredit, customer_name: '', customer_phone: '', account_id: null });
+                            // New customers are always money-mode (invoice-mode
+                            // accounts are onboarded via the Credit Accounts page).
+                            setSelectedBillingMode('money');
                             setShowCreditDropdown(false);
                           }}
                         >
@@ -608,23 +820,105 @@ export default function ShiftDetail() {
                   </div>
                 )}
               </div>
-              <div className="flex-1">
-                <label className="block text-xs text-gray-500 mb-1">Description (optional)</label>
-                <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
-                  placeholder="Optional details" className="w-full border border-gray-300 rounded p-2 text-sm" />
-              </div>
-              <div className="w-32">
-                <label className="block text-xs text-gray-500 mb-1">Amount</label>
-                <input type="number" step="0.01" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
-                  placeholder="0.00" className="w-full border border-gray-300 rounded p-2 text-sm" />
-              </div>
-              <button onClick={handleAddCredit} className="bg-gray-800 text-white px-3 py-2 rounded text-sm hover:bg-gray-900 flex items-center gap-1">
-                <Plus size={14} /> Add
-              </button>
+              {selectedBillingMode === 'invoice' ? (
+                <>
+                  <div className="w-32">
+                    <label className="block text-xs text-gray-500 mb-1">Fuel</label>
+                    <select
+                      value={newInvoice.fuel_type}
+                      onChange={e => setNewInvoice({ ...newInvoice, fuel_type: e.target.value as 'petrol' | 'diesel' })}
+                      className="w-full border border-gray-300 rounded p-2 text-sm"
+                    >
+                      <option value="petrol">Petrol</option>
+                      <option value="diesel">Diesel</option>
+                    </select>
+                  </div>
+                  <div className="w-32">
+                    <label className="block text-xs text-gray-500 mb-1">Litres</label>
+                    <input type="number" step="0.01" value={newInvoice.litres}
+                      onChange={e => setNewInvoice({ ...newInvoice, litres: e.target.value })}
+                      placeholder="0.00" className="w-full border border-gray-300 rounded p-2 text-sm" />
+                  </div>
+                  <button onClick={handleAddInvoice} className="bg-purple-600 text-white px-3 py-2 rounded text-sm hover:bg-purple-700 flex items-center gap-1">
+                    <Plus size={14} /> Invoice
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="flex-1">
+                    <label className="block text-xs text-gray-500 mb-1">Description (optional)</label>
+                    <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
+                      placeholder="Optional details" className="w-full border border-gray-300 rounded p-2 text-sm" />
+                  </div>
+                  <div className="w-32">
+                    <label className="block text-xs text-gray-500 mb-1">Amount</label>
+                    <input type="number" step="0.01" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
+                      placeholder="0.00" className="w-full border border-gray-300 rounded p-2 text-sm" />
+                  </div>
+                  <button onClick={handleAddCredit} className="bg-gray-800 text-white px-3 py-2 rounded text-sm hover:bg-gray-900 flex items-center gap-1">
+                    <Plus size={14} /> Add
+                  </button>
+                </>
+              )}
             </div>
+            {selectedBillingMode === 'invoice' && (
+              <p className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2">
+                Invoice-mode customer — record litres only. Retail amount is computed automatically and rolled into a monthly invoice.
+              </p>
+            )}
           </div>
         )}
       </div>
+
+      {/* Invoice Consumption (Phase 3B) — invoice-mode customers' litres */}
+      {(invoiceConsumption.length > 0 || isOpen) && (
+        <div className="bg-white rounded-lg shadow p-4 mb-4 border-l-4 border-purple-400">
+          <h2 className="text-lg font-semibold text-gray-700 mb-3">Invoice Consumption (litres)</h2>
+          {invoiceConsumption.length > 0 ? (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 font-medium text-gray-600">Customer</th>
+                  <th className="text-left p-2 font-medium text-gray-600">Fuel</th>
+                  <th className="text-right p-2 font-medium text-gray-600">Litres</th>
+                  <th className="text-right p-2 font-medium text-gray-600">Retail</th>
+                  <th className="text-right p-2 font-medium text-gray-600">Amount</th>
+                  {isOpen && <th className="p-2"></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {invoiceConsumption.map((c: any) => (
+                  <tr key={c.id} className="border-t">
+                    <td className="p-2 font-medium">{c.account_name || `#${c.account_id}`}</td>
+                    <td className="p-2">
+                      <span className={`px-1.5 py-0.5 rounded text-xs ${c.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {c.fuel_type}
+                      </span>
+                    </td>
+                    <td className="p-2 text-right">{Number(c.litres).toFixed(2)}</td>
+                    <td className="p-2 text-right text-gray-500">{formatKES(Number(c.retail_price_at_time))}</td>
+                    <td className="p-2 text-right font-medium">{formatKES(Number(c.retail_amount))}</td>
+                    {isOpen && (
+                      <td className="p-2 text-right">
+                        <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50 font-bold">
+                <tr>
+                  <td colSpan={4} className="p-2 text-right">Total Invoice Retail:</td>
+                  <td className="p-2 text-right">{formatKES(totalInvoiceConsumption)}</td>
+                  {isOpen && <td></td>}
+                </tr>
+              </tfoot>
+            </table>
+          ) : (
+            <p className="text-sm text-gray-400">No invoice consumption recorded for this shift</p>
+          )}
+        </div>
+      )}
 
       {/* Expenses */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">

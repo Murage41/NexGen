@@ -11,6 +11,8 @@ router.get('/', async (req, res) => {
   try {
     const type = req.query.type as string;
 
+    const billingMode = req.query.billing_mode as string;
+
     let query = db('credit_accounts as ca')
       .whereNull('ca.deleted_at')
       .select(
@@ -18,12 +20,14 @@ router.get('/', async (req, res) => {
       'ca.name',
       'ca.phone',
       'ca.type',
+      'ca.billing_mode',
       'ca.employee_id',
       'ca.balance as outstanding_balance',
       'ca.created_at',
     );
 
     if (type) query = query.where('ca.type', type);
+    if (billingMode) query = query.where('ca.billing_mode', billingMode);
 
     query = query.orderBy('ca.balance', 'desc');
 
@@ -67,6 +71,105 @@ router.get('/:id', async (req, res) => {
         ...(account.type === 'customer' ? { credits, payments } : { debts }),
       },
     });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST / - Create a new customer credit account (admin)
+// Used primarily to onboard invoice-mode customers like Diwafa before their
+// first fuel-up. Money-mode accounts are still auto-created on shift credits.
+router.post('/', requireAdmin, async (req, res) => {
+  try {
+    const { name, phone, billing_mode } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ success: false, error: 'name is required' });
+    }
+    const mode = billing_mode === 'invoice' ? 'invoice' : 'money';
+
+    const [id] = await db('credit_accounts').insert({
+      name: name.trim(),
+      phone: phone || null,
+      type: 'customer',
+      billing_mode: mode,
+      balance: 0,
+    });
+    const account = await db('credit_accounts').where({ id }).first();
+    res.status(201).json({ success: true, data: account });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /:id - Update name, phone, or billing_mode (customer accounts only)
+// Safety rules on mode switch:
+//   money → invoice: blocked if any credits exist on this account
+//     (mixing models on history is confusing; open a new account instead)
+//   invoice → money: blocked if unbilled invoice_consumption or unpaid
+//     customer_invoices exist on this account
+router.put('/:id', requireAdmin, async (req, res) => {
+  try {
+    const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
+    if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
+    if (account.type !== 'customer') {
+      return res.status(400).json({ success: false, error: 'Only customer accounts are editable here' });
+    }
+
+    const { name, phone, billing_mode } = req.body;
+    const update: any = {};
+    if (name !== undefined) update.name = String(name).trim();
+    if (phone !== undefined) update.phone = phone || null;
+
+    if (billing_mode !== undefined && billing_mode !== account.billing_mode) {
+      if (billing_mode !== 'money' && billing_mode !== 'invoice') {
+        return res.status(400).json({ success: false, error: "billing_mode must be 'money' or 'invoice'" });
+      }
+
+      if (billing_mode === 'invoice') {
+        // Allow flip only if the money balance is fully settled. Historical
+        // fully-paid credits remain as read-only audit trail.
+        if (Number(account.balance || 0) > 0) {
+          return res.status(400).json({
+            success: false,
+            error: `Cannot switch to invoice mode: account has an outstanding money balance of KES ${Number(account.balance).toFixed(2)}. Settle it or create a new account.`,
+          });
+        }
+      } else {
+        // invoice → money
+        const unbilled = await db('invoice_consumption')
+          .where({ account_id: account.id })
+          .whereNull('deleted_at')
+          .whereNull('invoice_line_id')
+          .count('* as c')
+          .first();
+        if (Number((unbilled as any)?.c || 0) > 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Cannot switch to money mode: unbilled invoice consumption exists. Invoice or clear those first.',
+          });
+        }
+        const unpaidInv = await db('customer_invoices')
+          .where({ account_id: account.id })
+          .whereNull('deleted_at')
+          .whereIn('status', ['draft', 'issued', 'partial'])
+          .count('* as c')
+          .first();
+        if (Number((unpaidInv as any)?.c || 0) > 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Cannot switch to money mode: unpaid customer invoices exist. Clear them first.',
+          });
+        }
+      }
+      update.billing_mode = billing_mode;
+    }
+
+    if (Object.keys(update).length > 0) {
+      await db('credit_accounts').where({ id: account.id }).update(update);
+    }
+
+    const updated = await db('credit_accounts').where({ id: account.id }).first();
+    res.json({ success: true, data: updated });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

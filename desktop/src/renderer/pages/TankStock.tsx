@@ -11,7 +11,7 @@ import { getKenyaDate } from '../utils/timezone';
 const today = () => getKenyaDate();
 
 const emptyTankForm = { label: '', fuel_type: 'petrol', capacity_litres: '' };
-const emptyDeliveryForm = { tank_id: '', supplier: '', supplier_id: '', litres: '', cost_per_litre: '', date: today() };
+const emptyDeliveryForm = { tank_id: '', supplier: '', supplier_id: '', litres: '', cost_per_litre: '', date: today(), delivery_time: '' };
 const emptyDipForm = { tank_id: '', measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' };
 
 const VARIANCE_CATEGORIES = [
@@ -123,6 +123,9 @@ export default function TankStock() {
       litres: String(d.litres),
       cost_per_litre: String(d.cost_per_litre),
       date: d.date,
+      delivery_time: d.delivery_timestamp
+        ? String(d.delivery_timestamp).slice(11, 16)
+        : '',
     });
     setError('');
     setDeliveryModal({ open: true, editing: d });
@@ -137,6 +140,7 @@ export default function TankStock() {
         litres: parseFloat(deliveryForm.litres),
         cost_per_litre: parseFloat(deliveryForm.cost_per_litre),
         date: deliveryForm.date,
+        ...(deliveryForm.delivery_time ? { delivery_time: deliveryForm.delivery_time } : {}),
       };
       if (deliveryForm.supplier_id) payload.supplier_id = parseInt(deliveryForm.supplier_id);
       if (deliveryModal.editing) {
@@ -540,10 +544,18 @@ export default function TankStock() {
             </div>
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
             <form onSubmit={handleSaveDelivery} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-                <input type="date" required max={today()} value={deliveryForm.date} onChange={e => setDeliveryForm({ ...deliveryForm, date: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                  <input type="date" required max={today()} value={deliveryForm.date} onChange={e => setDeliveryForm({ ...deliveryForm, date: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg p-2" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Time (optional)</label>
+                  <input type="time" value={deliveryForm.delivery_time} onChange={e => setDeliveryForm({ ...deliveryForm, delivery_time: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg p-2" />
+                  <p className="text-xs text-gray-500 mt-1">Leave blank = now. Set if delivery arrived before/after dips on the same date.</p>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tank *</label>

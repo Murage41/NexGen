@@ -46,9 +46,16 @@ export async function detectDrift(): Promise<DriftReport> {
   const dipDrift: DipDrift[] = [];
   const dips = await db('tank_dips')
     .whereNull('deleted_at')
-    .select('id', 'tank_id', 'dip_date', 'measured_litres', 'book_stock_at_dip', 'variance_litres');
+    .select('id', 'tank_id', 'dip_date', 'timestamp', 'measured_litres', 'book_stock_at_dip', 'variance_litres');
   for (const d of dips) {
-    const truthBook = await computeBookStock(d.tank_id, d.dip_date);
+    // Use the dip's own timestamp as the asOf cutoff — same as
+    // recomputeDipsForTankFromDate. If we passed only dip_date,
+    // computeBookStock would normalize to end-of-day, causing a false
+    // drift report whenever a delivery lands between EOD(dip_date) and
+    // the dip's actual measurement time (e.g. an overnight delivery
+    // before a 7am morning dip).
+    const asOf = d.timestamp || d.dip_date;
+    const truthBook = await computeBookStock(d.tank_id, asOf);
     const truthVar = parseFloat(d.measured_litres) - truthBook;
     const cachedBook = parseFloat(d.book_stock_at_dip) || 0;
     if (Math.abs(cachedBook - truthBook) > 0.01) {

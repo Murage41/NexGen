@@ -3,6 +3,7 @@ import db from '../database';
 import { validate } from '../middleware/validate';
 import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema } from '../schemas';
 import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
+import { compensate } from '../services/meterRollover';
 import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
 import { requireAdmin, requireAuth, requireOwnShiftOrAdmin } from '../middleware/requireAdmin';
@@ -110,7 +111,7 @@ router.get('/:id', async (req, res) => {
 
     const readings = await db('pump_readings')
       .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type')
+      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
       .where('pump_readings.shift_id', shift.id)
       .where('pumps.active', true);
 
@@ -118,6 +119,18 @@ router.get('/:id', async (req, res) => {
     const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
     const shiftCredits = await db('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
+
+    // Phase 3B: invoice-mode consumption (litre ledger, retail-priced for shift balance)
+    const invoiceConsumption = await db('invoice_consumption')
+      .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
+      .where('invoice_consumption.shift_id', shift.id)
+      .whereNull('invoice_consumption.deleted_at')
+      .select(
+        'invoice_consumption.*',
+        'credit_accounts.name as account_name',
+        'credit_accounts.phone as account_phone',
+      )
+      .orderBy('invoice_consumption.created_at', 'asc');
 
     // Credit receipts collected during this shift (old-debt payments received)
     const creditReceipts = await db('credit_payments')
@@ -139,12 +152,20 @@ router.get('/:id', async (req, res) => {
     const total_mpesa = collections ? collections.mpesa_amount : 0;
     const total_credits = shiftCredits.reduce((sum: number, c: any) => sum + c.amount, 0);
     const total_expenses = expenses.reduce((sum: number, e: any) => sum + e.amount, 0);
+    // Phase 3B: invoice-mode consumption counts toward shift balance at retail price
+    // (like a credit from the shift's POV). Pricing delta vs agreed invoice price is
+    // a separate concern reported in the pricing-variance report.
+    const total_invoice_consumption = invoiceConsumption.reduce(
+      (sum: number, c: any) => sum + Number(c.retail_amount || 0),
+      0,
+    );
     // For closed shifts, use the stored wage_paid; for open shifts, show daily_wage as preview
     const employee_wage = shift.status === 'closed'
       ? (shift.wage_paid ?? shift.employee_wage ?? 0)
       : (shift.employee_wage || 0);
     // Accounted = everything the attendant used the sales money for (including wages taken from drawer)
-    const total_accounted = total_cash + total_mpesa + total_credits + total_expenses + employee_wage;
+    const total_accounted =
+      total_cash + total_mpesa + total_credits + total_invoice_consumption + total_expenses + employee_wage;
     const variance = total_accounted - expected_sales;
 
     res.json({
@@ -155,6 +176,7 @@ router.get('/:id', async (req, res) => {
         collections: collections || null,
         expenses,
         shift_credits: shiftCredits,
+        invoice_consumption: invoiceConsumption,
         credit_receipts: creditReceipts,
         wage_deduction: wageDeduction || null,
         outstanding_debts: outstandingDebts,
@@ -163,6 +185,7 @@ router.get('/:id', async (req, res) => {
         total_cash,
         total_mpesa,
         total_credits,
+        total_invoice_consumption,
         total_credit_receipts,
         total_expenses,
         employee_wage,
@@ -301,7 +324,7 @@ router.put('/:id/opening-readings', requireAdmin, async (req, res) => {
     }
     const updatedReadings = await db('pump_readings')
       .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type')
+      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
       .where('pump_readings.shift_id', req.params.id);
     res.json({ success: true, data: updatedReadings });
   } catch (err: any) {
@@ -313,35 +336,151 @@ router.put('/:id/opening-readings', requireAdmin, async (req, res) => {
 // PUT update pump readings for a shift
 router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(updateReadingsSchema), async (req, res) => {
   try {
+    console.log('[shifts:readings PUT]', { shiftId: req.params.id, body: req.body });
     if (!(await requireOpenShift(req, res))) return;
-    const { readings } = req.body; // Array of { pump_id, closing_litres, closing_amount }
+    const { readings, confirm_anomaly } = req.body;
 
-    // Phase 12: reject any closing reading that is below its opening.
-    // Meter readings are monotonic — a closing below opening means either a
-    // typo or a meter reset, both of which need explicit admin intervention
-    // rather than a silently-negative litres_sold.
-    const invalid: string[] = [];
+    // Current fuel prices keyed by fuel_type, used by Layer 2 (price sanity).
+    const today = getKenyaDate();
+    const priceRows = await db('fuel_prices')
+      .where('effective_date', '<=', today)
+      .orderBy('effective_date', 'desc')
+      .orderBy('id', 'desc');
+    const priceByFuel: Record<string, number> = {};
+    for (const p of priceRows) {
+      if (!(p.fuel_type in priceByFuel)) priceByFuel[p.fuel_type] = Number(p.price_per_litre);
+    }
+
+    // Validate every reading first; only persist after all pass.
+    const errors: string[] = [];
+    type Anomaly = { pump_id: number; pump_label: string; observed: number; expected: number; deviation_pct: number };
+    type RolloverConfirm = { pump_id: number; pump_label: string; field: 'litres' | 'amount'; raw: number; cumulative: number };
+    const anomalies: Anomaly[] = [];
+    const rolloverConfirms: RolloverConfirm[] = [];
+    // Resolved cumulative closings, keyed by pump_id, used in the persist loop.
+    const resolved: Record<number, { closing_litres: number; closing_amount: number }> = {};
+    const PRICE_DEVIATION = 0.15; // ±15%
+
     for (const r of readings) {
-      const existing = await db('pump_readings')
-        .where({ shift_id: req.params.id, pump_id: r.pump_id })
+      const existing = await db('pump_readings as pr')
+        .join('pumps as p', 'pr.pump_id', 'p.id')
+        .where({ 'pr.shift_id': req.params.id, 'pr.pump_id': r.pump_id })
+        .select(
+          'pr.opening_litres', 'pr.opening_amount',
+          'p.label as pump_label', 'p.fuel_type',
+          'p.meter_capacity_litres', 'p.meter_capacity_amount',
+        )
         .first();
-      if (existing) {
-        if (Number(r.closing_litres) < Number(existing.opening_litres)) {
-          invalid.push(
-            `Pump ${r.pump_id}: closing litres ${r.closing_litres} is below opening ${existing.opening_litres}.`
-          );
+      if (!existing) continue;
+
+      const oL = Number(existing.opening_litres);
+      const oA = Number(existing.opening_amount);
+      const capL = Number(existing.meter_capacity_litres) || 1000000;
+      const capA = Number(existing.meter_capacity_amount) || 1000000;
+
+      // Resolve cumulative closing_litres: prefer raw input (compensated for
+      // rollover) over direct cumulative input.
+      let cL: number;
+      if (r.raw_closing_litres !== undefined) {
+        const out = compensate(oL, Number(r.raw_closing_litres), capL);
+        if (!out.ok) {
+          errors.push(`Pump ${existing.pump_label}: ${out.reason}`);
+          continue;
         }
-        if (Number(r.closing_amount) < Number(existing.opening_amount)) {
-          invalid.push(
-            `Pump ${r.pump_id}: closing amount ${r.closing_amount} is below opening ${existing.opening_amount}.`
-          );
+        if (out.rolledOver && !r.rollover_litres) {
+          rolloverConfirms.push({
+            pump_id: r.pump_id, pump_label: existing.pump_label, field: 'litres',
+            raw: Number(r.raw_closing_litres), cumulative: out.cumulative,
+          });
+        }
+        cL = out.cumulative;
+      } else {
+        cL = Number(r.closing_litres);
+      }
+
+      // Same for amount.
+      let cA: number;
+      if (r.raw_closing_amount !== undefined) {
+        const out = compensate(oA, Number(r.raw_closing_amount), capA);
+        if (!out.ok) {
+          errors.push(`Pump ${existing.pump_label}: ${out.reason}`);
+          continue;
+        }
+        if (out.rolledOver && !r.rollover_amount) {
+          rolloverConfirms.push({
+            pump_id: r.pump_id, pump_label: existing.pump_label, field: 'amount',
+            raw: Number(r.raw_closing_amount), cumulative: out.cumulative,
+          });
+        }
+        cA = out.cumulative;
+      } else {
+        cA = Number(r.closing_amount);
+      }
+
+      resolved[r.pump_id] = { closing_litres: cL, closing_amount: cA };
+
+      // Phase 12: monotonic check — closing must be >= opening.
+      if (cL < oL) {
+        errors.push(`Pump ${existing.pump_label}: closing litres ${cL} is below opening ${oL}.`);
+      }
+      if (cA < oA) {
+        errors.push(`Pump ${existing.pump_label}: closing amount ${cA} is below opening ${oA}.`);
+      }
+      if (cL < oL || cA < oA) continue;
+
+      const lDelta = Math.round((cL - oL) * 100) / 100;
+      const aDelta = Math.round((cA - oA) * 100) / 100;
+
+      // Layer 1: cross-field zero check — pumps cannot dispense KES without
+      // dispensing litres (or vice versa). One field changing while the other
+      // stays at opening is the shift-42 bug class.
+      if (lDelta > 0 && aDelta === 0) {
+        errors.push(`Pump ${existing.pump_label}: litres changed by ${lDelta.toFixed(2)} but amount did not. Did you forget the closing amount?`);
+        continue;
+      }
+      if (aDelta > 0 && lDelta === 0) {
+        errors.push(`Pump ${existing.pump_label}: amount changed by ${aDelta.toFixed(2)} but litres did not. Did you forget the closing litres?`);
+        continue;
+      }
+
+      // Layer 2: price-per-litre sanity check. Soft — caller can confirm and proceed.
+      if (lDelta > 0 && aDelta > 0) {
+        const observed = aDelta / lDelta;
+        const expected = priceByFuel[existing.fuel_type];
+        if (expected && Math.abs(observed - expected) / expected > PRICE_DEVIATION) {
+          anomalies.push({
+            pump_id: r.pump_id,
+            pump_label: existing.pump_label,
+            observed: Math.round(observed * 100) / 100,
+            expected: Math.round(expected * 100) / 100,
+            deviation_pct: Math.round(((observed - expected) / expected) * 1000) / 10,
+          });
         }
       }
     }
-    if (invalid.length > 0) {
-      return res.status(400).json({
+
+    if (errors.length > 0) {
+      console.log('[shifts:readings PUT] hard errors', errors);
+      return res.status(400).json({ success: false, error: errors.join(' ') });
+    }
+
+    if (rolloverConfirms.length > 0) {
+      console.log('[shifts:readings PUT] rollover confirm required', rolloverConfirms);
+      return res.status(409).json({
         success: false,
-        error: `Closing readings must be at least opening readings: ${invalid.join(' ')}`,
+        code: 'ROLLOVER_REQUIRED',
+        error: 'Pump display rollover detected. Confirm to proceed.',
+        rollovers: rolloverConfirms,
+      });
+    }
+
+    if (anomalies.length > 0 && !confirm_anomaly) {
+      console.log('[shifts:readings PUT] price anomalies (require confirm)', anomalies);
+      return res.status(409).json({
+        success: false,
+        code: 'PRICE_ANOMALY',
+        error: 'Price-per-litre looks off. Re-check the readings or confirm to proceed.',
+        anomalies,
       });
     }
 
@@ -351,13 +490,15 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
         .first();
 
       if (existing) {
-        const litres_sold = r.closing_litres - existing.opening_litres;
-        const amount_sold = r.closing_amount - existing.opening_amount;
+        const cL = resolved[r.pump_id].closing_litres;
+        const cA = resolved[r.pump_id].closing_amount;
+        const litres_sold = cL - Number(existing.opening_litres);
+        const amount_sold = cA - Number(existing.opening_amount);
         await db('pump_readings')
           .where({ shift_id: req.params.id, pump_id: r.pump_id })
           .update({
-            closing_litres: r.closing_litres,
-            closing_amount: r.closing_amount,
+            closing_litres: cL,
+            closing_amount: cA,
             litres_sold,
             amount_sold,
           });
@@ -366,7 +507,7 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
 
     const updatedReadings = await db('pump_readings')
       .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type')
+      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
       .where('pump_readings.shift_id', req.params.id);
 
     res.json({ success: true, data: updatedReadings });
@@ -452,7 +593,20 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
           type: 'customer',
           balance: 0,
         });
-        account = { id: accountId, balance: 0 };
+        account = { id: accountId, balance: 0, billing_mode: 'money' };
+      }
+
+      // Phase 3B: invoice-mode accounts (e.g. Diwafa, Mugendi Stores) must not
+      // be debited in KES; they bill by litres at an agreed price later. The
+      // mobile shift-close UI should branch on billing_mode and call
+      // POST /shifts/:id/invoice-consumption instead.
+      if (account.billing_mode === 'invoice') {
+        throw Object.assign(
+          new Error(
+            `"${customer_name}" is an invoice-mode customer. Record litres & fuel type via invoice consumption instead of a money credit.`,
+          ),
+          { code: 'INVOICE_MODE_ACCOUNT' },
+        );
       }
 
       // 1. Create credits line item (preserved for shift reporting / audit trail)
@@ -509,6 +663,9 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
 
     res.status(201).json({ success: true, data: shiftCredit });
   } catch (err: any) {
+    if (err.code === 'INVOICE_MODE_ACCOUNT') {
+      return res.status(400).json({ success: false, error: err.message, code: err.code });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -570,6 +727,166 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
       }
     });
 
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Phase 3B: Invoice Consumption (invoice-mode customers) ──────────────────
+// Attendants record LITRES per fuel type for invoice-mode customers during a
+// shift. Retail price is snapshotted for shift-balance math only; the actual
+// agreed price is set later when the invoice is generated. No KES debit hits
+// the customer account here — just a litre ledger that later rolls up into a
+// customer_invoices row.
+
+/** Look up retail fuel price effective on a given date (YYYY-MM-DD). */
+async function getRetailPriceAsOf(
+  trx: any,
+  fuelType: string,
+  asOfDate: string,
+): Promise<number | null> {
+  const row = await trx('fuel_prices')
+    .where({ fuel_type: fuelType })
+    .where('effective_date', '<=', asOfDate)
+    .orderBy('effective_date', 'desc')
+    .orderBy('id', 'desc')
+    .first();
+  return row ? Number(row.price_per_litre) : null;
+}
+
+// POST /shifts/:id/invoice-consumption
+// Body: { account_id, tank_id?, fuel_type: 'petrol' | 'diesel', litres }
+router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
+  try {
+    if (!(await requireOpenShift(req, res))) return;
+    const shiftId = Number(req.params.id);
+    const { account_id, tank_id, fuel_type, litres } = req.body;
+
+    if (!account_id || !fuel_type || litres === undefined) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'account_id, fuel_type, and litres are required' });
+    }
+    if (fuel_type !== 'petrol' && fuel_type !== 'diesel') {
+      return res.status(400).json({ success: false, error: "fuel_type must be 'petrol' or 'diesel'" });
+    }
+    const litresNum = Number(litres);
+    if (!Number.isFinite(litresNum) || litresNum <= 0) {
+      return res.status(400).json({ success: false, error: 'litres must be a positive number' });
+    }
+
+    const entry = await db.transaction(async (trx) => {
+      const account = await trx('credit_accounts')
+        .where({ id: account_id })
+        .whereNull('deleted_at')
+        .first();
+      if (!account) throw Object.assign(new Error('Credit account not found'), { http: 404 });
+      if (account.type !== 'customer') {
+        throw Object.assign(new Error('Invoice consumption only applies to customer accounts'), { http: 400 });
+      }
+      if (account.billing_mode !== 'invoice') {
+        throw Object.assign(
+          new Error(`Account "${account.name}" is money-mode. Use POST /shifts/:id/credits instead.`),
+          { http: 400 },
+        );
+      }
+
+      const shift = await trx('shifts').where({ id: shiftId }).first();
+      if (!shift) throw Object.assign(new Error('Shift not found'), { http: 404 });
+
+      const priceAsOf = shift.shift_date || getKenyaDate();
+      const retailPrice = await getRetailPriceAsOf(trx, fuel_type, priceAsOf);
+      if (retailPrice === null) {
+        throw Object.assign(
+          new Error(`No fuel_price configured for ${fuel_type} on/before ${priceAsOf}`),
+          { http: 400 },
+        );
+      }
+      const retailAmount = Math.round(litresNum * retailPrice * 100) / 100;
+
+      const [id] = await trx('invoice_consumption').insert({
+        account_id,
+        shift_id: shiftId,
+        tank_id: tank_id || null,
+        fuel_type,
+        litres: litresNum,
+        retail_price_at_time: retailPrice,
+        retail_amount: retailAmount,
+      });
+      return trx('invoice_consumption').where({ id }).first();
+    });
+
+    res.status(201).json({ success: true, data: entry });
+  } catch (err: any) {
+    const status = err.http || 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /shifts/:id/invoice-consumption/:entryId
+// Editable: litres, tank_id. fuel_type & account_id are frozen — delete & re-add to change those.
+router.put('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
+  try {
+    if (!(await requireOpenShift(req, res))) return;
+    const shiftId = Number(req.params.id);
+    const entryId = Number(req.params.entryId);
+
+    const entry = await db('invoice_consumption')
+      .where({ id: entryId, shift_id: shiftId })
+      .whereNull('deleted_at')
+      .first();
+    if (!entry) return res.status(404).json({ success: false, error: 'Consumption entry not found' });
+    if (entry.invoice_line_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Entry has already been invoiced and cannot be edited from the shift. Adjust via the invoice instead.',
+      });
+    }
+
+    const update: any = {};
+    if (req.body.tank_id !== undefined) update.tank_id = req.body.tank_id || null;
+    if (req.body.litres !== undefined) {
+      const litresNum = Number(req.body.litres);
+      if (!Number.isFinite(litresNum) || litresNum <= 0) {
+        return res.status(400).json({ success: false, error: 'litres must be a positive number' });
+      }
+      update.litres = litresNum;
+      update.retail_amount = Math.round(litresNum * Number(entry.retail_price_at_time) * 100) / 100;
+    }
+
+    if (Object.keys(update).length > 0) {
+      await db('invoice_consumption').where({ id: entryId }).update(update);
+    }
+    const updated = await db('invoice_consumption').where({ id: entryId }).first();
+    res.json({ success: true, data: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /shifts/:id/invoice-consumption/:entryId (soft-delete; blocked once invoiced)
+router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
+  try {
+    if (!(await requireOpenShift(req, res))) return;
+    const shiftId = Number(req.params.id);
+    const entryId = Number(req.params.entryId);
+
+    const entry = await db('invoice_consumption')
+      .where({ id: entryId, shift_id: shiftId })
+      .whereNull('deleted_at')
+      .first();
+    if (!entry) return res.status(404).json({ success: false, error: 'Consumption entry not found' });
+    if (entry.invoice_line_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Entry has already been invoiced and cannot be deleted. Void the invoice instead.',
+      });
+    }
+
+    await db('invoice_consumption')
+      .where({ id: entryId })
+      .update({ deleted_at: new Date().toISOString() });
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -772,16 +1089,26 @@ router.put('/:id/close', requireAuth, async (req: any, res: any) => {
       const collections = await trx('shift_collections').where({ shift_id: shift.id }).first();
       const expenses = await trx('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
       const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
+      // Phase 3B: invoice-mode consumption — retail_amount enters the balance math
+      // exactly like a credit. Agreed-price delta is reconciled at invoice time.
+      const invoiceConsumption = await trx('invoice_consumption')
+        .where({ shift_id: shift.id })
+        .whereNull('deleted_at');
 
       const expected_sales = readings.reduce((s: number, r: any) => s + r.amount_sold, 0);
       const total_cash = collections ? collections.cash_amount : 0;
       const total_mpesa = collections ? collections.mpesa_amount : 0;
       const total_credits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
+      const total_invoice_consumption = invoiceConsumption.reduce(
+        (s: number, c: any) => s + Number(c.retail_amount || 0),
+        0,
+      );
       const total_expenses = expenses.reduce((s: number, e: any) => s + e.amount, 0);
       const employee_wage = (submittedWage !== undefined && submittedWage !== null)
         ? Number(submittedWage)
         : (shift.daily_wage || 0);
-      const total_accounted = total_cash + total_mpesa + total_credits + total_expenses + employee_wage;
+      const total_accounted =
+        total_cash + total_mpesa + total_credits + total_invoice_consumption + total_expenses + employee_wage;
       const variance = total_accounted - expected_sales;
 
       // Handle deficit and deductions

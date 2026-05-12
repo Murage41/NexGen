@@ -1,9 +1,11 @@
 import axios from 'axios';
 
-// When served from backend (port 3001), use same origin; otherwise use same host on port 3001
-const baseURL = window.location.port === '3001'
-  ? `${window.location.origin}/api`
-  : import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3001/api`;
+// When running under Vite dev server (5173/5174), call the local backend on :3001.
+// Otherwise (served from backend directly, or via ngrok) use same origin.
+const isViteDev = window.location.port === '5173' || window.location.port === '5174';
+const baseURL = isViteDev
+  ? import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3001/api`
+  : `${window.location.origin}/api`;
 
 const api = axios.create({
   baseURL,
@@ -34,7 +36,8 @@ export const getShifts = (params?: any) => api.get('/shifts', { params });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
 export const openShift = (data: { employee_id: number; shift_date?: string }) => api.post('/shifts', data);
-export const updateReadings = (shiftId: number, readings: any[]) => api.put(`/shifts/${shiftId}/readings`, { readings });
+export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean) =>
+  api.put(`/shifts/${shiftId}/readings`, { readings, ...(confirm_anomaly ? { confirm_anomaly: true } : {}) });
 export const updateCollections = (shiftId: number, data: any) => api.put(`/shifts/${shiftId}/collections`, data);
 export const addShiftExpense = (shiftId: number, data: any) => api.post(`/shifts/${shiftId}/expenses`, data);
 export const deleteShiftExpense = (shiftId: number, expenseId: number) => api.delete(`/shifts/${shiftId}/expenses/${expenseId}`);
@@ -49,6 +52,12 @@ export const getStaffDebts = (employeeId: number) => api.get(`/shifts/staff-debt
 export const repayDebt = (shiftId: number, amount: number) => api.put(`/shifts/${shiftId}/repay-debt`, { amount });
 export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }) =>
   api.post(`/shifts/${shiftId}/credit-receipts`, data);
+export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }) =>
+  api.post(`/shifts/${shiftId}/invoice-consumption`, data);
+export const updateInvoiceConsumption = (shiftId: number, entryId: number, data: { litres?: number; tank_id?: number | null }) =>
+  api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
+export const deleteInvoiceConsumption = (shiftId: number, entryId: number) =>
+  api.delete(`/shifts/${shiftId}/invoice-consumption/${entryId}`);
 
 // Employees
 export const getEmployees = () => api.get('/employees');

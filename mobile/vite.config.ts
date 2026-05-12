@@ -7,5 +7,6 @@ export default defineConfig({
   server: {
     port: 5174,
     host: true,
+    allowedHosts: ['voluble-octavia-intrepid.ngrok-free.dev', '.ngrok-free.dev'],
   },
 });

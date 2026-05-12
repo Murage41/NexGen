@@ -16,17 +16,38 @@ export const createDeliverySchema = z.object({
   litres: z.number({ error: 'litres is required' }).positive('litres must be greater than 0'),
   cost_per_litre: z.number({ error: 'cost_per_litre is required' }).positive('cost_per_litre must be greater than 0'),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD format'),
+  delivery_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'delivery_time must be HH:MM format').optional(),
 });
 
 export const updateDeliverySchema = createDeliverySchema;
 
 // --- Pump Readings ---
+// Accept either cumulative `closing_*` (legacy / direct) or display `raw_closing_*`
+// (preferred — what the user reads off the pump). The route compensates raw values
+// for meter rollover before storing the cumulative.
 export const updateReadingsSchema = z.object({
-  readings: z.array(z.object({
-    pump_id: z.number().int().positive(),
-    closing_litres: z.number().min(0, 'closing_litres cannot be negative'),
-    closing_amount: z.number().min(0, 'closing_amount cannot be negative'),
-  })).min(1, 'At least one reading is required'),
+  readings: z.array(
+    z.object({
+      pump_id: z.number().int().positive(),
+      closing_litres: z.number().min(0).optional(),
+      closing_amount: z.number().min(0).optional(),
+      raw_closing_litres: z.number().min(0).optional(),
+      raw_closing_amount: z.number().min(0).optional(),
+      // When the user explicitly acknowledges a rollover in the UI, set true.
+      // If unset and the raw input would imply a rollover, the route returns 409.
+      rollover_litres: z.boolean().optional(),
+      rollover_amount: z.boolean().optional(),
+    }).refine(
+      (r) => r.closing_litres !== undefined || r.raw_closing_litres !== undefined,
+      { message: 'closing_litres or raw_closing_litres is required' },
+    ).refine(
+      (r) => r.closing_amount !== undefined || r.raw_closing_amount !== undefined,
+      { message: 'closing_amount or raw_closing_amount is required' },
+    ),
+  ).min(1, 'At least one reading is required'),
+  // When the price-per-litre sanity check flags an anomaly, the client must
+  // re-submit with this set true to acknowledge and proceed.
+  confirm_anomaly: z.boolean().optional(),
 });
 
 // --- Shift Expenses ---

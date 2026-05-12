@@ -225,6 +225,8 @@ PAYMENT: Mgdi pays KES 5,000 via M-Pesa
 
 ### General Expense → Journal Entry
 
+**Scope decision**: expenses always post against Cash in Hand (`1000`). No payment-method field on expenses for now.
+
 ```
 EXPENSE: KES 15,000 Rent (December)
 
@@ -423,9 +425,11 @@ export async function postShiftClose(shift: any, trx: Knex.Transaction) {
 
 ### Frontend
 
+**Desktop only.** Accounting pages are owner-facing — attendants have no access. Mobile app is out of scope for Phase 3.
+
 | Page | Purpose |
 |------|---------|
-| New: `Accounting.tsx` (desktop only initially) | Dashboard with P&L, Balance Sheet, Trial Balance tabs |
+| New: `Accounting.tsx` | Dashboard with P&L, Balance Sheet, Trial Balance tabs |
 | New: `JournalEntries.tsx` | Browse all journal entries, filter by date/source/account. Drill into any entry to see lines. |
 | New: `ChartOfAccounts.tsx` | View/manage accounts. System accounts are read-only. |
 | Reports page | Add "Financial Statements" section with P&L and Balance Sheet |

@@ -27,6 +27,9 @@ router.get('/daily', async (req, res) => {
     let totalCash = 0;
     let totalMpesa = 0;
     let totalCredits = 0;
+    let totalInvoiceRetail = 0;
+    let totalInvoicePetrolLitres = 0;
+    let totalInvoiceDieselLitres = 0;
     let totalWagesPaid = 0;
     let totalShiftExpenses = 0;
     let totalMpesaFee = 0;
@@ -40,6 +43,14 @@ router.get('/daily', async (req, res) => {
 
       const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
       const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
+      // Phase 3B: invoice-mode consumption for this shift (retail-priced)
+      const shiftInvoiceConsumption = await db('invoice_consumption')
+        .where({ shift_id: shift.id })
+        .whereNull('deleted_at');
+      const shiftInvoiceRetail = shiftInvoiceConsumption.reduce(
+        (s: number, c: any) => s + Number(c.retail_amount || 0),
+        0,
+      );
 
       const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
       const actualWagePaid = shift.status === 'closed'
@@ -62,12 +73,22 @@ router.get('/daily', async (req, res) => {
       const mpesaNet = Number(collections?.mpesa_net) || 0;
       const totalCollections = cash + mpesa + credits;
 
+      const shiftInvoicePetrolLitres = shiftInvoiceConsumption
+        .filter((c: any) => c.fuel_type === 'petrol')
+        .reduce((s: number, c: any) => s + Number(c.litres || 0), 0);
+      const shiftInvoiceDieselLitres = shiftInvoiceConsumption
+        .filter((c: any) => c.fuel_type === 'diesel')
+        .reduce((s: number, c: any) => s + Number(c.litres || 0), 0);
+
       totalSales += shiftSales;
       totalPetrolLitres += petrolLitres;
       totalDieselLitres += dieselLitres;
       totalCash += cash;
       totalMpesa += mpesa;
       totalCredits += credits;
+      totalInvoiceRetail += shiftInvoiceRetail;
+      totalInvoicePetrolLitres += shiftInvoicePetrolLitres;
+      totalInvoiceDieselLitres += shiftInvoiceDieselLitres;
       totalWagesPaid += actualWagePaid;
       totalShiftExpenses += shiftExpensesTotal;
       totalMpesaFee += mpesaFee;
@@ -83,6 +104,8 @@ router.get('/daily', async (req, res) => {
         readings,
         collections,
         expenses,
+        invoice_consumption: shiftInvoiceConsumption,
+        invoice_retail_amount: shiftInvoiceRetail,
         petrol_litres: petrolLitres,
         diesel_litres: dieselLitres,
         total_sales: shiftSales,
@@ -90,8 +113,46 @@ router.get('/daily', async (req, res) => {
         standard_wage: Number(shift.daily_wage),
         wage_deduction: wageDeduction ? Number(wageDeduction.deduction_amount) : 0,
         actual_wage_paid: actualWagePaid,
-        variance: (cash + mpesa + credits + shiftExpensesTotal + actualWagePaid) - shiftSales,
+        // Phase 3B: invoice-mode retail enters the balance math like a credit
+        variance: (cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid) - shiftSales,
       });
+    }
+
+    // Phase 3B: Invoice customers summary — per-account breakdown for the day
+    const shiftIdsForInvoice = shifts.map((s: any) => s.id);
+    let invoiceCustomersSummary: any[] = [];
+    if (shiftIdsForInvoice.length > 0) {
+      const rows = await db('invoice_consumption')
+        .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
+        .whereIn('invoice_consumption.shift_id', shiftIdsForInvoice)
+        .whereNull('invoice_consumption.deleted_at')
+        .select(
+          'invoice_consumption.account_id',
+          'credit_accounts.name as account_name',
+          'invoice_consumption.fuel_type',
+        )
+        .sum('invoice_consumption.litres as litres')
+        .sum('invoice_consumption.retail_amount as retail_amount')
+        .groupBy('invoice_consumption.account_id', 'credit_accounts.name', 'invoice_consumption.fuel_type');
+
+      // Collapse to one row per account with per-fuel-type breakdown
+      const byAccount: Record<number, any> = {};
+      for (const r of rows as any[]) {
+        const id = r.account_id;
+        if (!byAccount[id]) {
+          byAccount[id] = {
+            account_id: id,
+            account_name: r.account_name,
+            petrol_litres: 0,
+            diesel_litres: 0,
+            retail_amount: 0,
+          };
+        }
+        if (r.fuel_type === 'petrol') byAccount[id].petrol_litres += Number(r.litres || 0);
+        if (r.fuel_type === 'diesel') byAccount[id].diesel_litres += Number(r.litres || 0);
+        byAccount[id].retail_amount += Number(r.retail_amount || 0);
+      }
+      invoiceCustomersSummary = Object.values(byAccount).sort((a: any, b: any) => b.retail_amount - a.retail_amount);
     }
 
     // General business expenses for the day
@@ -129,8 +190,8 @@ router.get('/daily', async (req, res) => {
       unrecoveredLosses = Number((debtResult as any)?.total) || 0;
     }
 
-    // Collection rate
-    const totalCollected = totalCash + totalMpesa + totalCredits;
+    // Collection rate — includes invoice retail (treated like a credit for accountability)
+    const totalCollected = totalCash + totalMpesa + totalCredits + totalInvoiceRetail;
     const collectionRate = totalSales > 0 ? (totalCollected / totalSales) * 100 : 0;
 
     // Tank stock snapshot for the day — computed as-of report date (fixes Issue 3)
@@ -222,6 +283,10 @@ router.get('/daily', async (req, res) => {
         total_mpesa_fee: totalMpesaFee,
         total_mpesa_net: totalMpesaNet,
         total_credits: totalCredits,
+        total_invoice_retail: totalInvoiceRetail,
+        invoice_petrol_litres: totalInvoicePetrolLitres,
+        invoice_diesel_litres: totalInvoiceDieselLitres,
+        invoice_customers: invoiceCustomersSummary,
         total_credit_receipts: totalCreditReceipts,
         collection_rate: collectionRate,
         // Costs

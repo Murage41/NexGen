@@ -136,9 +136,10 @@ export default function ShiftDetail() {
   const totalCash = shift.total_cash || 0;
   const totalMpesa = shift.total_mpesa || 0;
   const totalCredits = shift.total_credits || 0;
+  const totalInvoiceConsumption = shift.total_invoice_consumption || 0;
   const totalExpenses = shift.total_expenses || 0;
   const employeeWage = shift.employee_wage || 0;
-  const totalAccounted = totalCash + totalMpesa + totalCredits + totalExpenses + employeeWage;
+  const totalAccounted = totalCash + totalMpesa + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
   const variance = totalAccounted - expected;
 
   const totalDebt = debts.reduce((s: number, d: any) => s + (d.balance || 0), 0);
@@ -337,6 +338,28 @@ export default function ShiftDetail() {
           <div className="flex justify-between border-t pt-1 mt-1 text-sm font-bold">
             <span>Total Credits</span>
             <span>{fmt(totalCredits)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 3B: Invoice consumption (litre ledger for invoice-mode customers) */}
+      {shift.invoice_consumption?.length > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-purple-400">
+          <p className="font-semibold text-gray-700 mb-2">Invoice Consumption (litres)</p>
+          {shift.invoice_consumption.map((c: any) => (
+            <div key={c.id} className="flex justify-between py-1 text-sm">
+              <div>
+                <span className="text-gray-600 font-medium">{c.account_name}</span>
+                <span className="text-gray-400 ml-1 text-xs">
+                  ({Number(c.litres).toLocaleString()} L {c.fuel_type} @ {fmt(Number(c.retail_price_at_time))})
+                </span>
+              </div>
+              <span>{fmt(Number(c.retail_amount))}</span>
+            </div>
+          ))}
+          <div className="flex justify-between border-t pt-1 mt-1 text-sm font-bold">
+            <span>Total (at retail)</span>
+            <span>{fmt(totalInvoiceConsumption)}</span>
           </div>
         </div>
       )}

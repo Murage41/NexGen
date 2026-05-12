@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts } from '../services/api';
+import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
 import { Save, Plus, Trash2, Search, UserPlus } from 'lucide-react';
@@ -13,9 +13,13 @@ export default function ShiftRecord() {
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
+  const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [newExp, setNewExp] = useState({ category: '', description: '', amount: '' });
   const [newCredit, setNewCredit] = useState({ customer_name: '', amount: '', description: '', account_id: null as number | null });
+  // Phase 3B: invoice-mode form — shown only when the selected account is invoice-mode
+  const [newInvoice, setNewInvoice] = useState({ fuel_type: 'petrol' as 'petrol' | 'diesel', litres: '' });
+  const [selectedBillingMode, setSelectedBillingMode] = useState<'money' | 'invoice' | null>(null);
   const [tab, setTab] = useState<'readings' | 'collections' | 'credits' | 'expenses'>('readings');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -25,8 +29,22 @@ export default function ShiftRecord() {
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
-  useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
+  useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); }, [id]);
+
+  async function loadCurrentPrices() {
+    try {
+      const res = await getCurrentPrices();
+      const d = res.data.data || {};
+      const map: Record<string, number> = {};
+      if (d.petrol?.price_per_litre) map.petrol = Number(d.petrol.price_per_litre);
+      if (d.diesel?.price_per_litre) map.diesel = Number(d.diesel.price_per_litre);
+      setPriceByFuel(map);
+    } catch (err) {
+      console.error('[ShiftRecord:loadCurrentPrices]', err);
+    }
+  }
 
   async function loadCreditAccounts() {
     try {
@@ -35,32 +53,100 @@ export default function ShiftRecord() {
     } catch (err) { console.error(err); }
   }
 
+  // ---- Meter rollover helpers (mirror backend services/meterRollover.ts) ----
+  function displayMod(cumulative: number, capacity: number): number {
+    if (!(capacity > 0)) return cumulative;
+    return Math.round((cumulative - Math.floor(cumulative / capacity) * capacity) * 100) / 100;
+  }
+  function compensateClient(opening: number, raw: number, capacity: number): { cumulative: number; rolledOver: boolean } {
+    if (!(capacity > 0)) return { cumulative: raw, rolledOver: false };
+    const rolloversSoFar = Math.floor(opening / capacity);
+    const openingDisplay = opening - rolloversSoFar * capacity;
+    if (raw >= openingDisplay) {
+      return { cumulative: Math.round((rolloversSoFar * capacity + raw) * 100) / 100, rolledOver: false };
+    }
+    return { cumulative: Math.round(((rolloversSoFar + 1) * capacity + raw) * 100) / 100, rolledOver: true };
+  }
+
   async function loadShift() {
     try {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
       setShiftStatus(d.status || 'open');
-      setReadings(d.readings || []);
+      const rs = (d.readings || []).map((r: any) => {
+        const capL = Number(r.meter_capacity_litres) || 1000000;
+        const capA = Number(r.meter_capacity_amount) || 1000000;
+        return {
+          ...r,
+          raw_l_input: displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
+          raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+        };
+      });
+      setReadings(rs);
       if (d.collections) setCollections({ cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount });
       setShiftCredits(d.shift_credits || []);
+      setInvoiceConsumption(d.invoice_consumption || []);
       setExpenses(d.expenses || []);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }
 
-  async function saveReadings() {
+  async function saveReadings(opts: { confirmAnomaly?: boolean; rolloverByPump?: Record<number, { litres?: boolean; amount?: boolean }> } = {}) {
     setSaving(true);
     try {
-      const payload = readings.map(r => ({ pump_id: r.pump_id, closing_litres: parseFloat(r.closing_litres) || 0, closing_amount: parseFloat(r.closing_amount) || 0 }));
-      const res = await updateReadings(parseInt(id!), payload);
-      setReadings(res.data.data);
+      const payload = readings.map(r => {
+        const ro = opts.rolloverByPump?.[r.pump_id] || {};
+        return {
+          pump_id: r.pump_id,
+          raw_closing_litres: parseFloat(r.raw_l_input) || 0,
+          raw_closing_amount: parseFloat(r.raw_a_input) || 0,
+          ...(ro.litres ? { rollover_litres: true } : {}),
+          ...(ro.amount ? { rollover_amount: true } : {}),
+        };
+      });
+      const res = await updateReadings(parseInt(id!), payload, opts.confirmAnomaly);
+      const rs = (res.data.data || []).map((r: any) => {
+        const capL = Number(r.meter_capacity_litres) || 1000000;
+        const capA = Number(r.meter_capacity_amount) || 1000000;
+        return {
+          ...r,
+          raw_l_input: displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
+          raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+        };
+      });
+      setReadings(rs);
       alert('Readings saved');
     } catch (err: any) {
-      // Phase 13: surface backend validation (e.g. Phase 12 monotonic guard)
-      // instead of silently swallowing it.
-      const msg = err?.response?.data?.error || err?.message || 'Failed to save readings';
+      const data = err?.response?.data;
+      if (err?.response?.status === 409 && data?.code === 'ROLLOVER_REQUIRED') {
+        const lines = (data.rollovers || []).map((rv: any) =>
+          `• ${rv.pump_label} (${rv.field}): display ${rv.raw.toFixed(2)} → cumulative ${rv.cumulative.toFixed(2)}`
+        ).join('\n');
+        setSaving(false);
+        if (window.confirm(`Pump display rollover detected:\n\n${lines}\n\nThis means the meter passed its capacity (e.g. 999,999.99 → 0). Confirm to proceed?`)) {
+          const rolloverByPump: Record<number, { litres?: boolean; amount?: boolean }> = {};
+          for (const rv of data.rollovers || []) {
+            rolloverByPump[rv.pump_id] = rolloverByPump[rv.pump_id] || {};
+            if (rv.field === 'litres') rolloverByPump[rv.pump_id].litres = true;
+            if (rv.field === 'amount') rolloverByPump[rv.pump_id].amount = true;
+          }
+          return saveReadings({ ...opts, rolloverByPump });
+        }
+        return;
+      }
+      if (err?.response?.status === 409 && data?.code === 'PRICE_ANOMALY') {
+        const lines = (data.anomalies || []).map((a: any) =>
+          `• ${a.pump_label}: KES ${a.observed.toFixed(2)}/L (expected ~KES ${a.expected.toFixed(2)}/L, ${a.deviation_pct > 0 ? '+' : ''}${a.deviation_pct}%)`
+        ).join('\n');
+        setSaving(false);
+        if (window.confirm(`Price-per-litre looks off:\n\n${lines}\n\nDouble-check the readings. Save anyway?`)) {
+          return saveReadings({ ...opts, confirmAnomaly: true });
+        }
+        return;
+      }
+      const msg = data?.error || err?.message || 'Failed to save readings';
       alert(msg);
-      console.error(err);
+      console.error('[ShiftRecord:saveReadings]', err);
     }
     finally { setSaving(false); }
   }
@@ -97,17 +183,59 @@ export default function ShiftRecord() {
 
   async function handleAddCredit() {
     if (!newCredit.customer_name || !newCredit.amount) return;
-    const payload: any = {
-      customer_name: newCredit.customer_name,
-      amount: parseFloat(newCredit.amount),
-      description: newCredit.description,
-    };
-    if (newCredit.account_id) payload.account_id = newCredit.account_id;
-    await addShiftCredit(parseInt(id!), payload);
-    setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
-    setAccountSearch('');
-    setIsNewCustomer(false);
-    await loadShift();
+    try {
+      const payload: any = {
+        customer_name: newCredit.customer_name,
+        amount: parseFloat(newCredit.amount),
+        description: newCredit.description,
+      };
+      if (newCredit.account_id) payload.account_id = newCredit.account_id;
+      await addShiftCredit(parseInt(id!), payload);
+      setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
+      setAccountSearch('');
+      setIsNewCustomer(false);
+      await loadShift();
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to add credit';
+      alert(msg);
+    }
+  }
+
+  // Phase 3B: add a litre consumption entry for an invoice-mode customer.
+  // No amount is collected — server computes retail_amount from fuel_prices.
+  async function handleAddInvoice() {
+    if (!newCredit.account_id || !newInvoice.litres) return;
+    const litresNum = parseFloat(newInvoice.litres);
+    if (!Number.isFinite(litresNum) || litresNum <= 0) {
+      alert('Litres must be a positive number');
+      return;
+    }
+    try {
+      await addInvoiceConsumption(parseInt(id!), {
+        account_id: newCredit.account_id,
+        fuel_type: newInvoice.fuel_type,
+        litres: litresNum,
+      });
+      setNewInvoice({ fuel_type: 'petrol', litres: '' });
+      setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
+      setAccountSearch('');
+      setSelectedBillingMode(null);
+      setIsNewCustomer(false);
+      await loadShift();
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to record consumption';
+      alert(msg);
+    }
+  }
+
+  async function handleDeleteInvoice(entryId: number) {
+    try {
+      await deleteInvoiceConsumption(parseInt(id!), entryId);
+      await loadShift();
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to delete entry';
+      alert(msg);
+    }
   }
 
   function selectAccount(account: any) {
@@ -115,6 +243,7 @@ export default function ShiftRecord() {
     setAccountSearch(account.name);
     setShowAccountDropdown(false);
     setIsNewCustomer(false);
+    setSelectedBillingMode((account.billing_mode as 'money' | 'invoice') || 'money');
   }
 
   function selectNewCustomer() {
@@ -122,6 +251,9 @@ export default function ShiftRecord() {
     setShowAccountDropdown(false);
     setAccountSearch('');
     setNewCredit({ ...newCredit, customer_name: '', account_id: null });
+    // New customers always start as money-mode (invoice-mode accounts must be
+    // onboarded from the desktop CreditAccounts page first).
+    setSelectedBillingMode('money');
   }
 
   const filteredAccounts = creditAccounts.filter(a =>
@@ -136,12 +268,21 @@ export default function ShiftRecord() {
   function updateReading(index: number, field: string, value: string) {
     const updated = [...readings];
     updated[index] = { ...updated[index], [field]: value };
-    const opening = parseFloat(updated[index].opening_litres) || 0;
-    const closing = parseFloat(updated[index].closing_litres) || 0;
-    const openAmt = parseFloat(updated[index].opening_amount) || 0;
-    const closeAmt = parseFloat(updated[index].closing_amount) || 0;
-    updated[index].litres_sold = closing - opening;
-    updated[index].amount_sold = closeAmt - openAmt;
+    const row = updated[index];
+    const oL = parseFloat(row.opening_litres) || 0;
+    const oA = parseFloat(row.opening_amount) || 0;
+    const capL = Number(row.meter_capacity_litres) || 1000000;
+    const capA = Number(row.meter_capacity_amount) || 1000000;
+    const rawL = parseFloat(row.raw_l_input) || 0;
+    const rawA = parseFloat(row.raw_a_input) || 0;
+    const cL = compensateClient(oL, rawL, capL);
+    const cA = compensateClient(oA, rawA, capA);
+    row.closing_litres = cL.cumulative;
+    row.closing_amount = cA.cumulative;
+    row.litres_sold = Math.max(0, cL.cumulative - oL);
+    row.amount_sold = Math.max(0, cA.cumulative - oA);
+    row._rolledOverL = cL.rolledOver;
+    row._rolledOverA = cA.rolledOver;
     setReadings(updated);
   }
 
@@ -181,6 +322,7 @@ export default function ShiftRecord() {
   ] as const;
 
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
+  const totalInvoice = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
 
   return (
     <div className="pb-6">
@@ -211,33 +353,66 @@ export default function ShiftRecord() {
                 <div>
                   <label className="text-xs text-gray-400">Opening (L)</label>
                   <p className="text-sm font-medium text-gray-500">{parseFloat(r.opening_litres).toFixed(2)}</p>
+                  {Number(r.opening_litres) >= (Number(r.meter_capacity_litres) || 1000000) && (
+                    <p className="text-[10px] text-gray-400">display {displayMod(Number(r.opening_litres), Number(r.meter_capacity_litres) || 1000000).toFixed(2)}</p>
+                  )}
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400">Closing (L)</label>
-                  <input type="number" step="0.01" value={numVal(r.closing_litres)}
-                    onChange={e => updateReading(i, 'closing_litres', e.target.value)}
-                    onFocus={selectOnFocus} placeholder="0.00"
-                    className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+                  <label className="text-xs text-gray-400">Closing display (L)</label>
+                  <input type="number" step="0.01" value={r.raw_l_input ?? ''}
+                    onChange={e => updateReading(i, 'raw_l_input', e.target.value)}
+                    onFocus={selectOnFocus} placeholder="display"
+                    className={`w-full border rounded-lg p-2 text-sm ${r._rolledOverL ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`} />
+                  {r._rolledOverL && (
+                    <p className="text-[10px] text-amber-700 mt-0.5">↻ rolled → {Number(r.closing_litres).toFixed(2)}</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-gray-400">Opening (KES)</label>
                   <p className="text-sm font-medium text-gray-500">{parseFloat(r.opening_amount).toFixed(2)}</p>
+                  {Number(r.opening_amount) >= (Number(r.meter_capacity_amount) || 1000000) && (
+                    <p className="text-[10px] text-gray-400">display {displayMod(Number(r.opening_amount), Number(r.meter_capacity_amount) || 1000000).toFixed(2)}</p>
+                  )}
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400">Closing (KES)</label>
-                  <input type="number" step="0.01" value={numVal(r.closing_amount)}
-                    onChange={e => updateReading(i, 'closing_amount', e.target.value)}
-                    onFocus={selectOnFocus} placeholder="0.00"
-                    className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+                  <label className="text-xs text-gray-400">Closing display (KES)</label>
+                  <input type="number" step="0.01" value={r.raw_a_input ?? ''}
+                    onChange={e => updateReading(i, 'raw_a_input', e.target.value)}
+                    onFocus={selectOnFocus} placeholder="display"
+                    className={`w-full border rounded-lg p-2 text-sm ${r._rolledOverA ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`} />
+                  {r._rolledOverA && (
+                    <p className="text-[10px] text-amber-700 mt-0.5">↻ rolled → {Number(r.closing_amount).toFixed(2)}</p>
+                  )}
                 </div>
               </div>
               <div className="flex justify-between mt-2 pt-2 border-t border-gray-100 text-xs">
                 <span className="text-gray-400">Sold: <strong className="text-gray-700">{parseFloat(r.litres_sold).toFixed(2)} L</strong></span>
                 <span className="text-gray-400">Amount: <strong className="text-gray-700">KES {(parseFloat(r.amount_sold) || 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</strong></span>
               </div>
+              {(() => {
+                const lSold = parseFloat(r.litres_sold) || 0;
+                const aSold = parseFloat(r.amount_sold) || 0;
+                const expectedPrice = priceByFuel[r.fuel_type];
+                if (lSold === 0 && aSold === 0) return null;
+                if (lSold > 0 && aSold === 0) {
+                  return <p className="mt-1 text-xs text-red-600 font-semibold">⚠ Litres entered but amount is 0 — did you forget the closing amount?</p>;
+                }
+                if (aSold > 0 && lSold === 0) {
+                  return <p className="mt-1 text-xs text-red-600 font-semibold">⚠ Amount entered but litres is 0 — did you forget the closing litres?</p>;
+                }
+                const observed = aSold / lSold;
+                const off = expectedPrice ? Math.abs(observed - expectedPrice) / expectedPrice > 0.15 : false;
+                return (
+                  <p className={`mt-1 text-xs ${off ? 'text-red-600 font-semibold' : 'text-green-600'}`}>
+                    @ KES {observed.toFixed(2)}/L
+                    {expectedPrice ? ` (expected ~${expectedPrice.toFixed(2)})` : ''}
+                  </p>
+                );
+              })()}
             </div>
           ))}
-          <button onClick={saveReadings} disabled={saving}
+          <p className="text-xs text-gray-400 px-1">Closing accepts the digits showing on the pump display. Rollovers are detected automatically.</p>
+          <button onClick={() => saveReadings({})} disabled={saving}
             className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50">
             <Save size={18} /> Save Readings
           </button>
@@ -295,10 +470,27 @@ export default function ShiftRecord() {
               </div>
             </div>
           ))}
-          {totalCredits > 0 && (
+          {/* Phase 3B: invoice-mode litre entries — retail_amount counts toward shift balance */}
+          {invoiceConsumption.map(c => (
+            <div key={`inv-${c.id}`} className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between border-l-4 border-purple-400">
+              <div>
+                <p className="text-sm font-medium">{c.account_name}</p>
+                <p className="text-xs text-gray-500">
+                  {Number(c.litres).toLocaleString()} L {c.fuel_type} @ KES {Number(c.retail_price_at_time).toFixed(2)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-sm">KES {Number(c.retail_amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+                {isAdmin && !c.invoice_line_id && (
+                  <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>
+                )}
+              </div>
+            </div>
+          ))}
+          {(totalCredits > 0 || totalInvoice > 0) && (
             <div className="bg-gray-50 rounded-xl p-3 flex justify-between text-sm font-bold">
-              <span>Total Credits</span>
-              <span>KES {totalCredits.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+              <span>Total Credits {totalInvoice > 0 && <span className="text-xs font-normal text-gray-500">(incl. invoice)</span>}</span>
+              <span>KES {(totalCredits + totalInvoice).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
             </div>
           )}
           <div className="bg-white rounded-xl p-4 shadow-sm">
@@ -331,9 +523,16 @@ export default function ShiftRecord() {
                       >
                         <div>
                           <p className="text-sm font-medium text-gray-800">{a.name}</p>
-                          <span className={`text-xs px-1.5 py-0.5 rounded-full ${a.type === 'customer' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                            {a.type}
-                          </span>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${a.type === 'customer' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                              {a.type}
+                            </span>
+                            {a.billing_mode === 'invoice' && (
+                              <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
+                                Invoice
+                              </span>
+                            )}
+                          </div>
                         </div>
                         {Number(a.outstanding_balance) > 0 && (
                           <span className="text-xs text-red-500">KES {Number(a.outstanding_balance).toLocaleString()}</span>
@@ -365,14 +564,40 @@ export default function ShiftRecord() {
               </div>
             )}
 
-            <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
-              placeholder="Optional details" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
-            <input type="number" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
-              placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
-            <button onClick={handleAddCredit}
-              className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1">
-              <Plus size={16} /> Add Credit
-            </button>
+            {selectedBillingMode === 'invoice' ? (
+              <>
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 mb-2 text-xs text-purple-800">
+                  Invoice-mode customer — record <strong>litres & fuel type</strong>. Amount is tallied at retail price for the shift balance; final invoice uses the agreed price.
+                </div>
+                <div className="flex gap-2 mb-2">
+                  <button
+                    onClick={() => setNewInvoice({ ...newInvoice, fuel_type: 'petrol' })}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${newInvoice.fuel_type === 'petrol' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                  >Petrol</button>
+                  <button
+                    onClick={() => setNewInvoice({ ...newInvoice, fuel_type: 'diesel' })}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${newInvoice.fuel_type === 'diesel' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                  >Diesel</button>
+                </div>
+                <input type="number" step="0.01" value={newInvoice.litres} onChange={e => setNewInvoice({ ...newInvoice, litres: e.target.value })}
+                  placeholder="Litres" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
+                <button onClick={handleAddInvoice}
+                  className="w-full bg-purple-600 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1">
+                  <Plus size={16} /> Record Litres
+                </button>
+              </>
+            ) : (
+              <>
+                <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
+                  placeholder="Optional details" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
+                <input type="number" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
+                  placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
+                <button onClick={handleAddCredit}
+                  className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1">
+                  <Plus size={16} /> Add Credit
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

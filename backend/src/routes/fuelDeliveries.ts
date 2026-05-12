@@ -28,13 +28,20 @@ router.get('/', async (req, res) => {
 
 router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) => {
   try {
-    const { tank_id, supplier, supplier_id, litres, cost_per_litre, date } = req.body;
+    const { tank_id, supplier, supplier_id, litres, cost_per_litre, date, delivery_time } = req.body;
     const total_cost = litres * cost_per_litre;
+
+    // Effective real-world delivery time. If caller provided HH:MM, build
+    // `${date} ${HH:MM}:00`. Otherwise default to now (SQLite local format).
+    const nowSqlite = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const delivery_timestamp = delivery_time
+      ? `${date} ${delivery_time}:00`
+      : nowSqlite;
 
     const delivery = await db.transaction(async (trx) => {
       const [id] = await trx('fuel_deliveries').insert({
         tank_id, supplier, supplier_id: supplier_id || null,
-        litres, cost_per_litre, total_cost, date,
+        litres, cost_per_litre, total_cost, date, delivery_timestamp,
       });
 
       // Create FIFO batch
@@ -104,7 +111,7 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     const existing = await db('fuel_deliveries').where({ id: req.params.id }).first();
     if (!existing) return res.status(404).json({ success: false, error: 'Delivery not found' });
 
-    const { tank_id, supplier, supplier_id: reqSupplierId, litres, cost_per_litre, date } = req.body;
+    const { tank_id, supplier, supplier_id: reqSupplierId, litres, cost_per_litre, date, delivery_time } = req.body;
     const newLitres = parseFloat(litres);
     const oldLitres = parseFloat(existing.litres);
     const oldTankId = existing.tank_id;
@@ -129,9 +136,18 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     }
 
     const delivery = await db.transaction(async (trx) => {
+      // If user supplied a new HH:MM, rebuild delivery_timestamp; otherwise
+      // preserve whatever was stored (date change alone also rolls forward).
+      const newDeliveryTs = delivery_time
+        ? `${date} ${delivery_time}:00`
+        : (existing.delivery_timestamp
+            ? `${date} ${existing.delivery_timestamp.slice(11)}`  // keep HH:MM:SS, swap date
+            : null);
+
       await trx('fuel_deliveries').where({ id: req.params.id }).update({
         tank_id: newTankId, supplier, supplier_id: reqSupplierId || existing.supplier_id,
         litres: newLitres, cost_per_litre, total_cost, date,
+        ...(newDeliveryTs !== null ? { delivery_timestamp: newDeliveryTs } : {}),
       });
 
       // Update FIFO batch — handle tank change and/or litres change independently (fixes Issue 4)

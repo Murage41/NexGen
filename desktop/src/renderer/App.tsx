@@ -1,7 +1,7 @@
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import {
   LayoutDashboard, Gauge, Users, Fuel, DollarSign,
-  CreditCard, FileText, Receipt, BarChart3, Settings, Droplets, Truck,
+  CreditCard, Receipt, BarChart3, Settings, Droplets, Truck, FileSpreadsheet,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
@@ -13,6 +13,7 @@ import Expenses from './pages/Expenses';
 import Credits from './pages/Credits';
 import CreditAccounts from './pages/CreditAccounts';
 import Invoices from './pages/Invoices';
+import CustomerInvoices from './pages/CustomerInvoices';
 import TankStock from './pages/TankStock';
 import Reports from './pages/Reports';
 import Suppliers from './pages/Suppliers';
@@ -26,7 +27,10 @@ const navItems = [
   { to: '/fuel-pricing', icon: DollarSign, label: 'Fuel Pricing' },
   { to: '/expenses', icon: Receipt, label: 'Expenses' },
   { to: '/credit-accounts', icon: CreditCard, label: 'Credit Accounts' },
-  { to: '/invoices', icon: FileText, label: 'Invoices' },
+  { to: '/customer-invoices', icon: FileSpreadsheet, label: 'Customer Invoices' },
+  // /invoices route still exists for legacy use but hidden from sidebar —
+  // Customer Invoices supersedes it for invoice-mode customers, and money-mode
+  // AR is now managed via Credit Accounts.
   { to: '/suppliers', icon: Truck, label: 'Suppliers' },
   { to: '/tank-stock', icon: Droplets, label: 'Tank & Stock' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
@@ -82,6 +86,7 @@ export default function App() {
             <Route path="/credit-accounts" element={<CreditAccounts />} />
             <Route path="/credits" element={<Navigate to="/credit-accounts" replace />} />
             <Route path="/invoices" element={<Invoices />} />
+            <Route path="/customer-invoices" element={<CustomerInvoices />} />
             <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/tank-stock" element={<TankStock />} />
             <Route path="/reports" element={<Reports />} />

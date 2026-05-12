@@ -120,14 +120,20 @@ router.post('/', requireAdmin, validate(createTankDipSchema), async (req, res) =
     const today = getKenyaDate();
     const dipDate = dip_date || today;
 
-    // Computed book stock as-of the dip date (not the running counter)
-    const bookStock = await computeBookStock(tank_id, dipDate);
+    // Effective moment of the dip. For a same-day dip this is "now"; for a
+    // back-dated dip we use end-of-day on dip_date so it appears last in order.
+    const nowSqlite = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const dipTimestamp = dipDate === today ? nowSqlite : `${dipDate} 23:59:59`;
+
+    // Timestamp-aware book stock: sees only deliveries/sales before dipTimestamp.
+    const bookStock = await computeBookStock(tank_id, dipTimestamp);
     const varianceLitres = parseFloat(measured_litres) - bookStock;
 
     const [id] = await db('tank_dips').insert({
       tank_id,
       measured_litres,
       dip_date: dipDate,
+      timestamp: dipTimestamp,
       book_stock_at_dip: bookStock,
       variance_litres: varianceLitres,
       variance_category: variance_category || 'unclassified',
@@ -171,7 +177,12 @@ router.put('/:id', requireAdmin, validate(updateTankDipSchema), async (req, res)
     // truth. The previous version froze book_stock when only `measured_litres`
     // changed, but deliveries/shifts can mutate underneath — book_stock_at_dip
     // is a Cat C cache and must always reflect current source data.
-    const bookStock = await computeBookStock(existing.tank_id, effectiveDate);
+    // Timestamp-aware: if dip_date changed, move the dip's timestamp to match
+    // (end-of-day on the new date). Otherwise use the dip's existing timestamp.
+    const asOf = dip_date !== undefined
+      ? `${effectiveDate} 23:59:59`
+      : (existing.timestamp || `${effectiveDate} 23:59:59`);
+    const bookStock = await computeBookStock(existing.tank_id, asOf);
     updateData.book_stock_at_dip = bookStock;
     updateData.variance_litres = ml - bookStock;
     if (dip_date !== undefined) updateData.dip_date = dip_date;

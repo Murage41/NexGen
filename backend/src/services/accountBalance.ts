@@ -35,6 +35,31 @@ export async function recomputeAccountBalance(
 ): Promise<number> {
   const qb = conn || db;
 
+  // Phase 3B/3C: branch on billing_mode. Invoice-mode accounts' balance is
+  // driven by issued customer_invoices minus invoice_payments, not by the
+  // money-mode credits/credit_payments tables.
+  const acct = await qb('credit_accounts').where({ id: accountId }).first('billing_mode');
+  if (acct && acct.billing_mode === 'invoice') {
+    const totalIssuedRow = await qb('customer_invoices')
+      .where({ account_id: accountId })
+      .whereNull('deleted_at')
+      .whereIn('status', ['issued', 'partial', 'paid'])
+      .sum('total_amount as total')
+      .first();
+    const totalIssued = parseFloat((totalIssuedRow as any)?.total) || 0;
+
+    const totalPaidRow = await qb('invoice_payments')
+      .where({ account_id: accountId })
+      .whereNull('deleted_at')
+      .sum('amount as total')
+      .first();
+    const totalPaid = parseFloat((totalPaidRow as any)?.total) || 0;
+
+    const invBalance = Math.max(0, totalIssued - totalPaid);
+    await qb('credit_accounts').where({ id: accountId }).update({ balance: invBalance });
+    return invBalance;
+  }
+
   const creditsSum = await qb('credits')
     .where('account_id', accountId)
     .whereNull('deleted_at')

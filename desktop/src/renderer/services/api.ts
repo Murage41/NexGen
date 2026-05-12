@@ -37,8 +37,8 @@ export const getShifts = (params?: any) => api.get('/shifts', { params });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
 export const openShift = (data: { employee_id: number; shift_date?: string }) => api.post('/shifts', data);
-export const updateReadings = (shiftId: number, readings: any[]) =>
-  api.put(`/shifts/${shiftId}/readings`, { readings });
+export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean) =>
+  api.put(`/shifts/${shiftId}/readings`, { readings, ...(confirm_anomaly ? { confirm_anomaly: true } : {}) });
 export const setOpeningReadings = (shiftId: number, readings: any[]) =>
   api.put(`/shifts/${shiftId}/opening-readings`, { readings });
 export const updateCollections = (shiftId: number, data: any) =>
@@ -63,6 +63,12 @@ export const repayDebt = (shiftId: number, amount: number) =>
   api.put(`/shifts/${shiftId}/repay-debt`, { amount });
 export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }) =>
   api.post(`/shifts/${shiftId}/credit-receipts`, data);
+export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }) =>
+  api.post(`/shifts/${shiftId}/invoice-consumption`, data);
+export const updateInvoiceConsumption = (shiftId: number, entryId: number, data: { litres?: number; tank_id?: number | null }) =>
+  api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
+export const deleteInvoiceConsumption = (shiftId: number, entryId: number) =>
+  api.delete(`/shifts/${shiftId}/invoice-consumption/${entryId}`);
 
 // ============ Fuel Prices ============
 export const getFuelPrices = () => api.get('/fuel-prices');
@@ -90,10 +96,45 @@ export const getCreditSummary = () => api.get('/credits/summary/by-customer');
 // ============ Credit Accounts ============
 export const getCreditAccounts = (params?: any) => api.get('/credit-accounts', { params });
 export const getCreditAccount = (id: number) => api.get(`/credit-accounts/${id}`);
+export const createCreditAccount = (data: any) => api.post('/credit-accounts', data);
+export const updateCreditAccount = (id: number, data: any) => api.put(`/credit-accounts/${id}`, data);
 export const deleteCreditAccount = (id: number) => api.delete(`/credit-accounts/${id}`);
 export const getCreditAccountStatement = (id: number) => api.get(`/credit-accounts/${id}/statement`);
 export const addAccountPayment = (accountId: number, data: any) =>
   api.post(`/credit-accounts/${accountId}/payments`, data);
+
+// ============ Customer Invoices (invoice-mode AR) ============
+export const getCustomerInvoices = (params?: { account_id?: number; status?: string; from?: string; to?: string }) =>
+  api.get('/customer-invoices', { params });
+export const getCustomerInvoice = (id: number) => api.get(`/customer-invoices/${id}`);
+export const previewCustomerInvoice = (params: { account_id: number; from: string; to: string }) =>
+  api.get('/customer-invoices/preview/scan', { params });
+export const createCustomerInvoiceDraft = (data: {
+  account_id: number;
+  from_date: string;
+  to_date: string;
+  agreed_prices?: { petrol?: number; diesel?: number };
+  notes?: string;
+}) => api.post('/customer-invoices', data);
+export const updateCustomerInvoiceLine = (invoiceId: number, lineId: number, data: { agreed_price: number }) =>
+  api.put(`/customer-invoices/${invoiceId}/lines/${lineId}`, data);
+export const issueCustomerInvoice = (id: number) => api.post(`/customer-invoices/${id}/issue`);
+export const voidCustomerInvoice = (id: number) => api.post(`/customer-invoices/${id}/void`);
+export const deleteCustomerInvoiceDraft = (id: number) => api.delete(`/customer-invoices/${id}`);
+
+// ─── Customer Invoice Payments (Phase 3D) ───
+export const getInvoicePayments = (params?: { account_id?: number; from?: string; to?: string }) =>
+  api.get('/customer-invoices/payments', { params });
+export const createInvoicePayment = (data: {
+  account_id: number;
+  amount: number;
+  payment_method?: string;
+  payment_date?: string;
+  reference?: string;
+  notes?: string;
+}) => api.post('/customer-invoices/payments', data);
+export const deleteInvoicePayment = (paymentId: number) =>
+  api.delete(`/customer-invoices/payments/${paymentId}`);
 
 // ============ Fuel Deliveries ============
 export const getFuelDeliveries = (params?: any) => api.get('/fuel-deliveries', { params });
