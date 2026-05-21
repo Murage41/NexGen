@@ -13,7 +13,7 @@ function Get-CommandVersion {
   $cmd = Get-Command $Command -ErrorAction SilentlyContinue
   if (-not $cmd) { return "not installed" }
   try {
-    return (& $Command @Arguments 2>$null | Select-Object -First 1)
+    return (& $cmd.Source @Arguments 2>$null | Select-Object -First 1)
   } catch {
     return "installed, version check failed"
   }
@@ -47,10 +47,10 @@ $spec = [ordered]@{
   CPUCores = $cpu.NumberOfCores
   CPULogicalProcessors = $cpu.NumberOfLogicalProcessors
   RAM = Format-Bytes $computer.TotalPhysicalMemory
-  Node = Get-CommandVersion "node"
-  Npm = Get-CommandVersion "npm"
-  Git = Get-CommandVersion "git"
-  Ngrok = Get-CommandVersion "ngrok" @("version")
+  Node = Get-CommandVersion "node.exe"
+  Npm = Get-CommandVersion "npm.cmd"
+  Git = Get-CommandVersion "git.exe"
+  Ngrok = Get-CommandVersion "ngrok.exe" @("version")
   Drives = @(
     foreach ($drive in $drives) {
       [PSCustomObject]@{

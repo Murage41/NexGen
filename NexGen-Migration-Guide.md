@@ -10,6 +10,24 @@ The new PC starts with a fresh database; the old development database is not mig
 
 ---
 
+## Target PC Notes
+
+Current migration target:
+
+- Windows user: `MUGENDIB01\Mugendi`
+- PC model: HP EliteDesk 705 G2 SFF
+- Windows: Windows 10 Pro, build 16299
+- CPU: AMD PRO A10-8750B, 2 cores / 4 logical processors
+- RAM: 3.45 GB
+- Recommended install drive: `E:` because `C:` has only about 12 GB free
+- Installed tools confirmed: Node 24, npm 11, Git 2.53, ngrok 3.37
+
+This machine should handle a single-station NexGen setup, but keep it lean:
+close heavy apps, keep Windows sleep disabled, and prefer `E:\NexGen` for the
+repo/database.
+
+---
+
 ## Step 1 — Install Git
 
 1. Download from: https://git-scm.com/download/win
@@ -65,7 +83,7 @@ station use, prefer LAN, Tailscale, or Cloudflare Tunnel.
 ## Step 4 — Clone the Repository
 
 ```cmd
-cd C:\
+cd /d E:\
 git clone https://github.com/Murage41/NexGen.git
 cd NexGen
 ```
@@ -77,7 +95,7 @@ cd NexGen
 Run this once from the root directory. It installs everything for backend, desktop, and mobile:
 
 ```cmd
-cd C:\NexGen
+cd /d E:\NexGen
 npm install
 ```
 
@@ -91,15 +109,15 @@ After cloning and installing dependencies, run this on the new PC and send the
 output back for review:
 
 ```cmd
-cd C:\NexGen
-npm run machine:spec > C:\NexGen\nexgen-machine-spec.json
+cd /d E:\NexGen
+npm run machine:spec > E:\NexGen\nexgen-machine-spec.json
 ```
 
 If you want to check the PC before cloning the repo, run this PowerShell
 command instead:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_ComputerSystem,Win32_OperatingSystem,Win32_Processor | Select-Object *; Get-CimInstance Win32_LogicalDisk | Where-Object DriveType -eq 3 | Select-Object DeviceID,Size,FreeSpace; node --version; npm --version; git --version; ngrok version"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$cs=Get-CimInstance -ClassName Win32_ComputerSystem; $os=Get-CimInstance -ClassName Win32_OperatingSystem; $cpu=Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1; $bios=Get-CimInstance -ClassName Win32_BIOS; $drives=Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object DriveType -eq 3 | Select-Object DeviceID,@{n='SizeGB';e={[math]::Round($_.Size/1GB,2)}},@{n='FreeGB';e={[math]::Round($_.FreeSpace/1GB,2)}}; [pscustomobject]@{ComputerName=$env:COMPUTERNAME;User=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name;Manufacturer=$cs.Manufacturer;Model=$cs.Model;SerialNumber=$bios.SerialNumber;RAMGB=[math]::Round($cs.TotalPhysicalMemory/1GB,2);Windows=$os.Caption;WindowsVersion=$os.Version;Build=$os.BuildNumber;Architecture=$os.OSArchitecture;CPU=$cpu.Name;Cores=$cpu.NumberOfCores;LogicalProcessors=$cpu.NumberOfLogicalProcessors;Node=(& node.exe --version);Npm=(& npm.cmd --version);Git=(& git.exe --version);Ngrok=(& ngrok.exe version);Drives=$drives} | ConvertTo-Json -Depth 5"
 ```
 
 ---
@@ -113,8 +131,8 @@ migrations on the new PC.
 Create the data folder and run migrations:
 
 ```cmd
-mkdir C:\NexGen\backend\data
-cd C:\NexGen\backend
+mkdir E:\NexGen\backend\data
+cd /d E:\NexGen\backend
 npx knex migrate:latest --knexfile src/knexfile.ts
 ```
 
@@ -135,7 +153,7 @@ After migration, enter the production opening setup from the physical station:
 From the root directory, one command starts the development stack (backend + desktop + mobile):
 
 ```cmd
-cd C:\NexGen
+cd /d E:\NexGen
 npm run dev
 ```
 
@@ -171,7 +189,7 @@ This starts NexGen in the background when that user logs in. It also starts
 the ngrok tunnel because the installer uses `-WithTunnel`.
 
 ```cmd
-cd C:\NexGen
+cd /d E:\NexGen
 npm run startup:install
 ```
 
@@ -224,7 +242,7 @@ When you push new ERP changes from the development PC, update the station PC
 like this:
 
 ```cmd
-cd C:\NexGen
+cd /d E:\NexGen
 npm run dev:stop
 git pull --ff-only
 npm install
@@ -244,6 +262,7 @@ local code changes that need review first.
 | `npm install` fails with node-gyp error | Reinstall Node.js and ensure C++ build tools are included |
 | Desktop app doesn't open | Check the BACKEND output — it must say "running on port 3001" first |
 | Phone can't reach the app | Confirm the station PC IP/port, Wi-Fi network, firewall, or tunnel status |
-| Database is empty after migration | Confirm file is at `C:\NexGen\backend\data\nexgen.db` (not just `C:\NexGen\nexgen.db`) |
-| `concurrently` not found | Run `npm install` again from `C:\NexGen` |
+| Database is empty after migration | Confirm file is at `E:\NexGen\backend\data\nexgen.db` (not just `E:\NexGen\nexgen.db`) |
+| `concurrently` not found | Run `npm install` again from `E:\NexGen` |
+| PowerShell blocks `npm.ps1` | Use Command Prompt, or run `npm.cmd` instead of `npm` |
 | Port 3001 already in use | Check Task Manager for any leftover node.exe processes and end them |
