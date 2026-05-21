@@ -39,8 +39,12 @@ export async function up(knex: Knex): Promise<void> {
     const r42 = await trx('pump_readings').where({ id: SHIFT_42_READING_ID }).first();
     const r43 = await trx('pump_readings').where({ id: SHIFT_43_READING_ID }).first();
 
+    if (!r42 && !r43) {
+      console.log('[mig 024] historical shift 42/43 readings not present. Skipping data repair for fresh database.');
+      return;
+    }
     if (!r42 || !r43) {
-      throw new Error('Migration 024: expected pump_readings 126 (shift 42) and 129 (shift 43) not found');
+      throw new Error('Migration 024: only one of the expected historical readings was found; aborting to avoid a partial data repair');
     }
     if (r42.shift_id !== 42 || r43.shift_id !== 43) {
       throw new Error('Migration 024: reading ids no longer map to shifts 42/43 — aborting');
@@ -79,6 +83,10 @@ export async function up(knex: Knex): Promise<void> {
 
 export async function down(knex: Knex): Promise<void> {
   await knex.transaction(async (trx) => {
+    const r42 = await trx('pump_readings').where({ id: SHIFT_42_READING_ID }).first();
+    const r43 = await trx('pump_readings').where({ id: SHIFT_43_READING_ID }).first();
+    if (!r42 && !r43) return;
+
     await trx('pump_readings').where({ id: SHIFT_42_READING_ID }).update({
       closing_litres: PRE_42_CLOSING,
       litres_sold: PRE_42_SOLD,
