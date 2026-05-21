@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getShifts, getActiveEmployees, openShift } from '../services/api';
-import { getKenyaDate } from '../utils/timezone';
 import PageHeader from '../components/PageHeader';
 import { Plus, Clock, CheckCircle } from 'lucide-react';
 
@@ -10,7 +9,6 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState('');
-  const [shiftDate, setShiftDate] = useState(getKenyaDate());
   const navigate = useNavigate();
 
   useEffect(() => { loadData(); }, []);
@@ -24,7 +22,7 @@ export default function Shifts() {
   async function handleOpen() {
     if (!selectedEmp) return;
     try {
-      const res = await openShift({ employee_id: parseInt(selectedEmp), shift_date: shiftDate });
+      const res = await openShift({ employee_id: parseInt(selectedEmp) });
       setShowNew(false);
       navigate(`/shifts/${res.data.data.id}`);
     } catch (err: any) {
@@ -49,10 +47,6 @@ export default function Shifts() {
               <option value="">Select Employee</option>
               {employees.map((e: any) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
-            <label className="block text-sm text-gray-600 mb-1">Shift Date</label>
-            <input type="date" value={shiftDate} max={getKenyaDate()}
-              onChange={e => setShiftDate(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg p-3 mb-3 text-base" />
             <div className="flex gap-2">
               <button onClick={() => setShowNew(false)} className="flex-1 py-3 rounded-lg bg-gray-100 text-gray-600 font-medium">Cancel</button>
               <button onClick={handleOpen} disabled={!selectedEmp} className="flex-1 py-3 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50">Open Shift</button>

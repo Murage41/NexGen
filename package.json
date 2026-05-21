@@ -10,7 +10,14 @@
     "mobile"
   ],
   "scripts": {
-    "dev": "concurrently -n \"BACKEND,DESKTOP,MOBILE,NGROK\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgYellow.bold\" \"cd backend && npm run dev\" \"cd desktop && npm run dev\" \"cd mobile && npm run dev\" \"ngrok start nexgen\"",
+    "dev": "concurrently -n \"BACKEND,DESKTOP,MOBILE\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold\" \"cd backend && npm run dev\" \"cd desktop && npm run dev\" \"cd mobile && npm run dev\"",
+    "dev:tunnel": "concurrently -n \"BACKEND,DESKTOP,MOBILE,TUNNEL\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgYellow.bold\" \"cd backend && npm run dev\" \"cd desktop && npm run dev\" \"cd mobile && npm run dev\" \"ngrok start nexgen\"",
+    "dev:bg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Start-NexGenDevStack.ps1 -WithTunnel",
+    "dev:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenStatus.ps1",
+    "dev:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Stop-NexGenLocal.ps1",
+    "startup:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Install-NexGenStartupTask.ps1 -WithTunnel",
+    "startup:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Uninstall-NexGenStartupTask.ps1",
+    "machine:spec": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenMachineSpec.ps1",
     "build:mobile": "cd mobile && npm run build"
   },
   "devDependencies": {

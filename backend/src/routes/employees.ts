@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
+import { hashPin, validatePin } from '../services/pinSecurity';
 
 const router = Router();
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Columns safe to expose in list/detail responses (never leak PIN)
 const SAFE_COLUMNS = ['id', 'name', 'daily_wage', 'phone', 'active', 'role', 'created_at'];
@@ -45,7 +47,22 @@ router.get('/:id', async (req, res) => {
 router.post('/', requireAdmin, async (req, res) => {
   try {
     const { name, daily_wage, phone, pin, role } = req.body;
-    const [id] = await db('employees').insert({ name, daily_wage, phone, pin: pin || '0000', role: role || 'attendant' });
+    const submittedPin = pin === undefined && !IS_PRODUCTION ? '0000' : pin;
+    const pinError = validatePin(submittedPin);
+    if (pinError) {
+      return res.status(400).json({
+        success: false,
+        error: IS_PRODUCTION && pin === undefined ? 'PIN is required in production.' : pinError,
+      });
+    }
+
+    const [id] = await db('employees').insert({
+      name,
+      daily_wage,
+      phone,
+      pin: hashPin(submittedPin),
+      role: role || 'attendant',
+    });
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id }).first();
     res.status(201).json({ success: true, data: employee });
   } catch (err: any) {
@@ -63,7 +80,11 @@ router.put('/:id', requireAdmin, async (req, res) => {
     if (daily_wage !== undefined) updates.daily_wage = daily_wage;
     if (phone !== undefined) updates.phone = phone;
     if (active !== undefined) updates.active = active;
-    if (pin !== undefined) updates.pin = pin;
+    if (pin !== undefined) {
+      const pinError = validatePin(pin);
+      if (pinError) return res.status(400).json({ success: false, error: pinError });
+      updates.pin = hashPin(pin);
+    }
     if (role !== undefined) updates.role = role;
     await db('employees').where({ id: req.params.id }).update(updates);
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id: req.params.id }).first();

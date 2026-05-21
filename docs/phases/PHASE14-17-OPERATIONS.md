@@ -48,20 +48,23 @@ but no statutory deductions computed.
 `backend/data/backups/nexgen-YYYYMMDDHHMMSS.db` (Kenya timestamp).
 Existing manual backups (`nexgen.db.backup-*`) preserved.
 
-**Nightly automation.** Windows Task Scheduler (station PC runs 24/7):
+**Nightly automation.** Windows Task Scheduler (station PC runs 24/7).
+The endpoint now requires admin authentication; use a local admin token or a
+local service script that can inject the `Authorization` header. Do not expose
+the backup endpoint publicly.
 
 ```
 Program: curl.exe
-Arguments: -X POST http://localhost:3001/api/health/backup
+Arguments: -X POST http://localhost:3001/api/health/backup -H "Authorization: Bearer <ADMIN_TOKEN>"
 Trigger:  Daily at 02:00 EAT
 ```
 
 **Retention.** Keep 30 daily + 12 monthly. Delete older than 1 year.
 (Not automated — 30 files × ~1MB each is negligible; review quarterly.)
 
-**Offsite.** Once a week, copy the latest backup to a USB stick or
-Google Drive. SQLite files are a single file — `copy` is the whole
-procedure.
+**Offsite.** Once a week, copy the latest generated backup to a USB stick or
+Google Drive. Do not copy the live `nexgen.db` file directly while the app is
+running; use the backup endpoint or a controlled SQLite backup command.
 
 ## Phase 17 — Recovery
 

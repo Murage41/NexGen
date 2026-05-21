@@ -35,9 +35,13 @@ export const getDashboard = () => api.get('/dashboard');
 export const getShifts = (params?: any) => api.get('/shifts', { params });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
-export const openShift = (data: { employee_id: number; shift_date?: string }) => api.post('/shifts', data);
-export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean) =>
-  api.put(`/shifts/${shiftId}/readings`, { readings, ...(confirm_anomaly ? { confirm_anomaly: true } : {}) });
+export const openShift = (data: { employee_id: number }) => api.post('/shifts', data);
+export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean, confirm_large_sale?: boolean) =>
+  api.put(`/shifts/${shiftId}/readings`, {
+    readings,
+    ...(confirm_anomaly ? { confirm_anomaly: true } : {}),
+    ...(confirm_large_sale ? { confirm_large_sale: true } : {}),
+  });
 export const updateCollections = (shiftId: number, data: any) => api.put(`/shifts/${shiftId}/collections`, data);
 export const addShiftExpense = (shiftId: number, data: any) => api.post(`/shifts/${shiftId}/expenses`, data);
 export const deleteShiftExpense = (shiftId: number, expenseId: number) => api.delete(`/shifts/${shiftId}/expenses/${expenseId}`);
@@ -80,6 +84,8 @@ export const createTank = (data: any) => api.post('/tanks', data);
 export const updateTank = (id: number, data: any) => api.put(`/tanks/${id}`, data);
 export const deleteTank = (id: number) => api.delete(`/tanks/${id}`);
 export const getTankStockSummary = (id: number) => api.get(`/tanks/${id}/stock-summary`);
+export const getTankAdjustments = (tankId: number) => api.get(`/tanks/${tankId}/adjustments`);
+export const createTankAdjustment = (tankId: number, data: any) => api.post(`/tanks/${tankId}/adjustments`, data);
 
 // Tank Dips
 export const getTankDips = (params?: { tank_id?: number; date?: string }) => api.get('/tank-dips', { params });

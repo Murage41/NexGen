@@ -35,6 +35,17 @@ export async function computeBookStock(
     .first();
   const totalDelivered = parseFloat(deliveryResult?.total) || 0;
 
+  const hasAdjustments = await qb.schema.hasTable('tank_stock_adjustments');
+  let totalAdjusted = 0;
+  if (hasAdjustments) {
+    const adjustmentResult = await qb('tank_stock_adjustments')
+      .where('tank_id', tankId)
+      .whereRaw('datetime(adjustment_timestamp) <= datetime(?)', [asOfTs])
+      .sum('litres_change as total')
+      .first();
+    totalAdjusted = parseFloat(adjustmentResult?.total) || 0;
+  }
+
   // Sum litres sold from closed shifts that ended <= asOfTs.
   // Fallback: if end_time is null (legacy data), use shift_date end-of-day.
   const salesResult = await qb('pump_readings')
@@ -50,7 +61,7 @@ export async function computeBookStock(
     .first();
   const totalSold = parseFloat(salesResult?.total) || 0;
 
-  return totalDelivered - totalSold;
+  return totalDelivered + totalAdjusted - totalSold;
 }
 
 /**
@@ -95,49 +106,97 @@ export async function consumeBatchesFIFO(
   litres: number,
   shiftId: number,
   conn?: Knex
-): Promise<{ totalCost: number; details: Array<{ batchId: number; litres: number; costPerLitre: number }> }> {
+): Promise<{ totalCost: number; details: Array<{ batchId: number; litres: number; costPerLitre: number; source: 'delivery' | 'adjustment' | 'missing' }> }> {
   const qb = conn || db;
   if (litres <= 0) return { totalCost: 0, details: [] };
 
-  // Find batches with remaining fuel, oldest first
-  const batches = await qb('delivery_batches')
+  type BatchSource = {
+    source: 'delivery' | 'adjustment';
+    id: number;
+    tank_id: number;
+    remaining_litres: number;
+    cost_per_litre: number;
+    date: string;
+  };
+
+  const deliveryBatches: BatchSource[] = (await qb('delivery_batches')
     .where('tank_id', tankId)
     .where('remaining_litres', '>', 0)
-    .orderBy('date', 'asc')
-    .orderBy('id', 'asc');
+    .select('id', 'tank_id', 'remaining_litres', 'cost_per_litre', 'date'))
+    .map((b: any) => ({
+      source: 'delivery' as const,
+      id: b.id,
+      tank_id: b.tank_id,
+      remaining_litres: parseFloat(b.remaining_litres),
+      cost_per_litre: parseFloat(b.cost_per_litre),
+      date: b.date,
+    }));
+
+  let adjustmentBatches: BatchSource[] = [];
+  if (await qb.schema.hasTable('tank_adjustment_batches')) {
+    adjustmentBatches = (await qb('tank_adjustment_batches')
+      .where('tank_id', tankId)
+      .where('remaining_litres', '>', 0)
+      .select('id', 'tank_id', 'remaining_litres', 'cost_per_litre', 'date'))
+      .map((b: any) => ({
+        source: 'adjustment' as const,
+        id: b.id,
+        tank_id: b.tank_id,
+        remaining_litres: parseFloat(b.remaining_litres),
+        cost_per_litre: parseFloat(b.cost_per_litre),
+        date: b.date,
+      }));
+  }
+
+  const batches = [...deliveryBatches, ...adjustmentBatches].sort((a, b) => {
+    const byDate = String(a.date).localeCompare(String(b.date));
+    if (byDate !== 0) return byDate;
+    if (a.source !== b.source) return a.source === 'delivery' ? -1 : 1;
+    return a.id - b.id;
+  });
 
   let remaining = litres;
   let totalCost = 0;
-  const details: Array<{ batchId: number; litres: number; costPerLitre: number }> = [];
+  const details: Array<{ batchId: number; litres: number; costPerLitre: number; source: 'delivery' | 'adjustment' | 'missing' }> = [];
 
   for (const batch of batches) {
     if (remaining <= 0) break;
 
-    const available = parseFloat(batch.remaining_litres);
+    const available = batch.remaining_litres;
     const consumed = Math.min(available, remaining);
-    const cost = consumed * parseFloat(batch.cost_per_litre);
+    const cost = consumed * batch.cost_per_litre;
 
-    // Deduct from batch
-    await qb('delivery_batches')
-      .where({ id: batch.id })
-      .update({ remaining_litres: available - consumed });
+    if (batch.source === 'delivery') {
+      await qb('delivery_batches')
+        .where({ id: batch.id })
+        .update({ remaining_litres: available - consumed });
+    } else {
+      await qb('tank_adjustment_batches')
+        .where({ id: batch.id })
+        .update({ remaining_litres: available - consumed });
+    }
 
-    // Record consumption
-    await qb('batch_consumption').insert({
+    const consumption: any = {
       batch_id: batch.id,
       shift_id: shiftId,
       tank_id: tankId,
       litres_consumed: consumed,
-      cost_per_litre: parseFloat(batch.cost_per_litre),
+      cost_per_litre: batch.cost_per_litre,
       total_cost: cost,
-    });
+    };
+    if (batch.source === 'adjustment') {
+      consumption.batch_id = null;
+      consumption.adjustment_batch_id = batch.id;
+    }
+    await qb('batch_consumption').insert(consumption);
 
     totalCost += cost;
     remaining -= consumed;
     details.push({
       batchId: batch.id,
       litres: consumed,
-      costPerLitre: parseFloat(batch.cost_per_litre),
+      costPerLitre: batch.cost_per_litre,
+      source: batch.source,
     });
   }
 
@@ -152,7 +211,7 @@ export async function consumeBatchesFIFO(
       cost_per_litre: 0,
       total_cost: 0,
     });
-    details.push({ batchId: 0, litres: remaining, costPerLitre: 0 });
+    details.push({ batchId: 0, litres: remaining, costPerLitre: 0, source: 'missing' });
   }
 
   return { totalCost, details };
@@ -176,6 +235,11 @@ export async function reverseBatchConsumption(
     if (row.batch_id) {
       await qb('delivery_batches')
         .where({ id: row.batch_id })
+        .increment('remaining_litres', parseFloat(row.litres_consumed));
+    }
+    if (row.adjustment_batch_id) {
+      await qb('tank_adjustment_batches')
+        .where({ id: row.adjustment_batch_id })
         .increment('remaining_litres', parseFloat(row.litres_consumed));
     }
   }

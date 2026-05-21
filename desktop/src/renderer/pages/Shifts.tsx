@@ -2,14 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getShifts, getActiveEmployees, openShift } from '../services/api';
 import { Plus, Eye, Clock, CheckCircle } from 'lucide-react';
-import { getKenyaDate } from '../utils/timezone';
 
 export default function Shifts() {
   const [shifts, setShifts] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
-  const [shiftDate, setShiftDate] = useState(getKenyaDate());
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -32,7 +30,7 @@ export default function Shifts() {
   async function handleOpenShift() {
     if (!selectedEmployee) return;
     try {
-      const res = await openShift({ employee_id: parseInt(selectedEmployee), shift_date: shiftDate });
+      const res = await openShift({ employee_id: parseInt(selectedEmployee) });
       setShowNew(false);
       setSelectedEmployee('');
       navigate(`/shifts/${res.data.data.id}`);
@@ -74,14 +72,6 @@ export default function Shifts() {
                 <option key={emp.id} value={emp.id}>{emp.name}</option>
               ))}
             </select>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Shift Date</label>
-            <input
-              type="date"
-              value={shiftDate}
-              max={getKenyaDate()}
-              onChange={e => setShiftDate(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg p-2 mb-4"
-            />
             {employees.length === 0 && (
               <p className="text-sm text-red-500 mb-4">No employees found. Add employees in the Employees page first.</p>
             )}

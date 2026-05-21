@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../database';
 import { generateToken } from '../middleware/requireAdmin';
+import { hashPin, isHashedPin, verifyPin } from '../services/pinSecurity';
 
 const router = Router();
 
@@ -8,7 +9,8 @@ const router = Router();
 router.post('/login', async (req, res) => {
   try {
     const { employee_id, pin } = req.body;
-    if (!employee_id || !pin) {
+    const submittedPin = typeof pin === 'string' ? pin : '';
+    if (!employee_id || !submittedPin) {
       return res.status(400).json({ success: false, error: 'Employee ID and PIN are required' });
     }
 
@@ -20,8 +22,12 @@ router.post('/login', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Employee not found' });
     }
 
-    if (employee.pin !== pin) {
+    if (!verifyPin(submittedPin, employee.pin)) {
       return res.status(401).json({ success: false, error: 'Invalid PIN' });
+    }
+
+    if (!isHashedPin(employee.pin)) {
+      await db('employees').where({ id: employee.id }).update({ pin: hashPin(submittedPin) });
     }
 
     // Return employee data without pin, plus a session token

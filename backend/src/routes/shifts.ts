@@ -11,6 +11,10 @@ import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
 
+function toSqliteDateTime(value: string): string {
+  return String(value).slice(0, 19).replace('T', ' ');
+}
+
 /** Guard: reject modifications to closed shifts */
 async function requireOpenShift(req: any, res: any): Promise<boolean> {
   const shift = await db('shifts').where({ id: req.params.id }).select('status').first();
@@ -203,11 +207,13 @@ router.post('/', requireAdmin, async (req, res) => {
   try {
     const { employee_id, shift_date } = req.body;
     const today = getKenyaDate();
-    const resolvedDate = shift_date || today;
+    const resolvedDate = today;
 
-    // Validate: shift_date must not be in the future
-    if (resolvedDate > today) {
-      return res.status(400).json({ success: false, error: 'Shift date cannot be in the future.' });
+    if (shift_date && shift_date !== today) {
+      return res.status(400).json({
+        success: false,
+        error: 'Shift date is controlled by the system date. Open the shift on the day it is actually worked.',
+      });
     }
 
     // Phase 12: wrap the "at most one open shift" check + insert in a single
@@ -338,7 +344,7 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
   try {
     console.log('[shifts:readings PUT]', { shiftId: req.params.id, body: req.body });
     if (!(await requireOpenShift(req, res))) return;
-    const { readings, confirm_anomaly } = req.body;
+    const { readings, confirm_anomaly, confirm_large_sale } = req.body;
 
     // Current fuel prices keyed by fuel_type, used by Layer 2 (price sanity).
     const today = getKenyaDate();
@@ -355,8 +361,17 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
     const errors: string[] = [];
     type Anomaly = { pump_id: number; pump_label: string; observed: number; expected: number; deviation_pct: number };
     type RolloverConfirm = { pump_id: number; pump_label: string; field: 'litres' | 'amount'; raw: number; cumulative: number };
+    type LargeSale = {
+      pump_id: number;
+      pump_label: string;
+      litres_sold: number;
+      amount_sold: number;
+      litres_threshold: number;
+      amount_threshold: number;
+    };
     const anomalies: Anomaly[] = [];
     const rolloverConfirms: RolloverConfirm[] = [];
+    const largeSales: LargeSale[] = [];
     // Resolved cumulative closings, keyed by pump_id, used in the persist loop.
     const resolved: Record<number, { closing_litres: number; closing_amount: number }> = {};
     const PRICE_DEVIATION = 0.15; // ±15%
@@ -457,6 +472,31 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
           });
         }
       }
+
+      // Layer 3: implausible-sale guard. A typo can keep the right KES/L
+      // price while still creating a huge fake sale.
+      const historical = await db('pump_readings as pr')
+        .join('shifts as s', 'pr.shift_id', 's.id')
+        .where('pr.pump_id', r.pump_id)
+        .where('s.status', 'closed')
+        .whereNot('pr.shift_id', req.params.id)
+        .max({ max_litres: 'pr.litres_sold', max_amount: 'pr.amount_sold' })
+        .first();
+      const defaultMaxLitres = Number(process.env.MAX_PUMP_LITRES_PER_SHIFT || 10000);
+      const expectedPrice = priceByFuel[existing.fuel_type] || 200;
+      const defaultMaxAmount = Number(process.env.MAX_PUMP_AMOUNT_PER_SHIFT || (defaultMaxLitres * expectedPrice));
+      const litresThreshold = Math.max(defaultMaxLitres, (Number(historical?.max_litres) || 0) * 2);
+      const amountThreshold = Math.max(defaultMaxAmount, (Number(historical?.max_amount) || 0) * 2);
+      if (lDelta > litresThreshold || aDelta > amountThreshold) {
+        largeSales.push({
+          pump_id: r.pump_id,
+          pump_label: existing.pump_label,
+          litres_sold: lDelta,
+          amount_sold: aDelta,
+          litres_threshold: Math.round(litresThreshold * 100) / 100,
+          amount_threshold: Math.round(amountThreshold * 100) / 100,
+        });
+      }
     }
 
     if (errors.length > 0) {
@@ -471,6 +511,16 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
         code: 'ROLLOVER_REQUIRED',
         error: 'Pump display rollover detected. Confirm to proceed.',
         rollovers: rolloverConfirms,
+      });
+    }
+
+    if (largeSales.length > 0 && !confirm_large_sale) {
+      console.log('[shifts:readings PUT] large sale confirm required', largeSales);
+      return res.status(409).json({
+        success: false,
+        code: 'LARGE_SALE_CONFIRMATION_REQUIRED',
+        error: 'One or more pump readings imply an unusually large sale. Re-check the display values or confirm with manager approval.',
+        large_sales: largeSales,
       });
     }
 
@@ -1056,8 +1106,8 @@ router.delete('/:id/wage-deduction', requireAdmin, async (req, res) => {
 });
 
 // PUT close shift — with deduction options and debt carry-forward
-// Phase 5: shift close is an owner-only operation (finalizes financials)
-router.put('/:id/close', requireAuth, async (req: any, res: any) => {
+// Finalizes financials, stock snapshots, and FIFO costing, so it is admin-only.
+router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
   try {
     const { notes, deduct_amount, wage_paid: submittedWage } = req.body;
     // deduct_amount: number | null
@@ -1079,6 +1129,8 @@ router.put('/:id/close', requireAuth, async (req: any, res: any) => {
     }
 
     const warnings: string[] = [];
+    const closeTime = new Date().toISOString();
+    const closeTimeSql = toSqliteDateTime(closeTime);
 
     await db.transaction(async (trx) => {
       // Calculate variance
@@ -1157,7 +1209,12 @@ router.put('/:id/close', requireAuth, async (req: any, res: any) => {
               name: shift.emp_name,
               type: 'employee',
               employee_id: shift.emp_id,
+              balance: carriedForward,
             });
+          } else {
+            await trx('credit_accounts')
+              .where({ id: existingAccount.id })
+              .update({ balance: Number(existingAccount.balance || 0) + carriedForward });
           }
         }
       }
@@ -1165,10 +1222,11 @@ router.put('/:id/close', requireAuth, async (req: any, res: any) => {
       // --- Litre accountability: computed book stock + FIFO costing ---
       const allTanks = await trx('tanks').select('id');
       const shiftDate = shift.shift_date || (shift.start_time || '').slice(0, 10);
+      const shiftStartTs = toSqliteDateTime(shift.start_time);
 
       const openingStocks: Record<number, number> = {};
       for (const t of allTanks) {
-        openingStocks[t.id] = await computeBookStock(t.id, shiftDate, trx);
+        openingStocks[t.id] = await computeBookStock(t.id, shiftStartTs, trx);
       }
 
       const allReadings = await trx('pump_readings')
@@ -1187,7 +1245,9 @@ router.put('/:id/close', requireAuth, async (req: any, res: any) => {
       const shiftDeliveries = await trx('fuel_deliveries')
         .select('tank_id')
         .sum('litres as total_litres')
-        .where('date', shiftDate)
+        .whereNull('deleted_at')
+        .whereRaw('datetime(COALESCE(delivery_timestamp, created_at)) > datetime(?)', [shiftStartTs])
+        .whereRaw('datetime(COALESCE(delivery_timestamp, created_at)) <= datetime(?)', [closeTimeSql])
         .groupBy('tank_id');
       const deliveriesByTank: Record<number, number> = {};
       for (const d of shiftDeliveries) {
@@ -1238,7 +1298,7 @@ router.put('/:id/close', requireAuth, async (req: any, res: any) => {
       // sees this shift's status = 'closed' and includes its sales in the total ***
       await trx('shifts').where({ id: req.params.id }).update({
         status: 'closed',
-        end_time: new Date().toISOString(),
+        end_time: closeTime,
         notes: notes || null,
         wage_paid: employee_wage,
       });

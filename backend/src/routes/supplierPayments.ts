@@ -42,6 +42,7 @@ router.post('/', requireAdmin, validate(createSupplierPaymentSchema), async (req
     if (!supplier) return res.status(404).json({ success: false, error: 'Supplier not found' });
 
     const payment = await db.transaction(async (trx) => {
+      const allocations: Array<{ invoice_id: number; amount: number }> = [];
       if (invoice_id) {
         // Payment against specific invoice
         const invoice = await trx('supplier_invoices')
@@ -62,6 +63,7 @@ router.post('/', requireAdmin, validate(createSupplierPaymentSchema), async (req
           balance: newBalance,
           status: newStatus,
         });
+        allocations.push({ invoice_id, amount });
       } else {
         // General payment — apply FIFO to oldest unpaid invoices
         const openInvoices = await trx('supplier_invoices')
@@ -81,7 +83,11 @@ router.post('/', requireAdmin, validate(createSupplierPaymentSchema), async (req
             balance: newBalance,
             status: newBalance <= 0 ? 'paid' : 'partial',
           });
+          allocations.push({ invoice_id: inv.id, amount: apply });
           remaining = Math.round((remaining - apply) * 100) / 100;
+        }
+        if (remaining > 0) {
+          throw new Error(`Payment KES ${amount} exceeds supplier outstanding balance by KES ${remaining}`);
         }
       }
 
@@ -94,6 +100,14 @@ router.post('/', requireAdmin, validate(createSupplierPaymentSchema), async (req
         reference: reference || null,
         notes: notes || null,
       });
+
+      for (const allocation of allocations) {
+        await trx('supplier_payment_allocations').insert({
+          payment_id: paymentId,
+          invoice_id: allocation.invoice_id,
+          amount: allocation.amount,
+        });
+      }
 
       return trx('supplier_payments')
         .join('suppliers', 'supplier_payments.supplier_id', 'suppliers.id')
@@ -119,17 +133,31 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     if (!payment) return res.status(404).json({ success: false, error: 'Payment not found' });
 
     await db.transaction(async (trx) => {
-      // Reverse balance on the invoice if applicable
-      if (payment.invoice_id) {
-        const invoice = await trx('supplier_invoices').where({ id: payment.invoice_id }).first();
+      const allocations = await trx('supplier_payment_allocations')
+        .where({ payment_id: payment.id })
+        .whereNull('deleted_at');
+      const rowsToReverse = allocations.length > 0
+        ? allocations
+        : (payment.invoice_id ? [{ invoice_id: payment.invoice_id, amount: payment.amount }] : []);
+
+      for (const allocation of rowsToReverse) {
+        const invoice = await trx('supplier_invoices').where({ id: allocation.invoice_id }).first();
         if (invoice) {
-          const newBalance = Number(invoice.balance) + Number(payment.amount);
-          await trx('supplier_invoices').where({ id: payment.invoice_id }).update({
+          const newBalance = Math.min(
+            Number(invoice.amount),
+            Math.round((Number(invoice.balance) + Number(allocation.amount)) * 100) / 100,
+          );
+          await trx('supplier_invoices').where({ id: allocation.invoice_id }).update({
             balance: newBalance,
             status: newBalance >= Number(invoice.amount) ? 'unpaid' : 'partial',
           });
         }
       }
+
+      await trx('supplier_payment_allocations')
+        .where({ payment_id: payment.id })
+        .whereNull('deleted_at')
+        .update({ deleted_at: new Date().toISOString() });
 
       await trx('supplier_payments').where({ id: req.params.id }).update({
         deleted_at: new Date().toISOString(),

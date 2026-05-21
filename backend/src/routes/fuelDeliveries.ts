@@ -7,6 +7,21 @@ import { recomputeCache, recomputeDipsForTankFromDate } from '../services/stockC
 
 const router = Router();
 
+function kenyaDueDate(date: string, paymentTermsDays: number): string {
+  const dueDate = new Date(`${date}T00:00:00+03:00`);
+  dueDate.setDate(dueDate.getDate() + paymentTermsDays);
+  return dueDate.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+}
+
+function invoiceHasSettlement(invoice: any): boolean {
+  return Number(invoice.balance) < Number(invoice.amount) || invoice.status === 'partial' || invoice.status === 'paid';
+}
+
+async function supplierDueDate(trx: any, supplierId: number, date: string): Promise<string> {
+  const supplierRow = await trx('suppliers').where({ id: supplierId }).first();
+  return kenyaDueDate(date, Number(supplierRow?.payment_terms_days || 0));
+}
+
 router.get('/', async (req, res) => {
   try {
     const { from, to, tank_id } = req.query;
@@ -75,19 +90,13 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
 
       // Auto-create supplier invoice if supplier_id provided
       if (supplier_id) {
-        const supplierRow = await trx('suppliers').where({ id: supplier_id }).first();
-        const dueDays = supplierRow?.payment_terms_days || 0;
-        const dueDate = new Date(date);
-        dueDate.setDate(dueDate.getDate() + dueDays);
-
         await trx('supplier_invoices').insert({
           supplier_id,
           delivery_id: id,
           amount: total_cost,
           balance: total_cost,
           status: 'unpaid',
-          // Phase 8 fix: use Kenya timezone (was UTC)
-          due_date: dueDate.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' }),
+          due_date: await supplierDueDate(trx, supplier_id, date),
         });
       }
 
@@ -108,7 +117,7 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
 
 router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res) => {
   try {
-    const existing = await db('fuel_deliveries').where({ id: req.params.id }).first();
+    const existing = await db('fuel_deliveries').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!existing) return res.status(404).json({ success: false, error: 'Delivery not found' });
 
     const { tank_id, supplier, supplier_id: reqSupplierId, litres, cost_per_litre, date, delivery_time } = req.body;
@@ -117,6 +126,22 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     const oldTankId = existing.tank_id;
     const newTankId = parseInt(tank_id);
     const total_cost = newLitres * parseFloat(cost_per_litre);
+    const resolvedSupplierId = reqSupplierId || existing.supplier_id || null;
+    const linkedInvoice = await db('supplier_invoices')
+      .where({ delivery_id: req.params.id })
+      .whereNull('deleted_at')
+      .first();
+
+    if (linkedInvoice) {
+      const amountChanged = Math.round(Number(linkedInvoice.amount) * 100) !== Math.round(total_cost * 100);
+      const supplierChanged = resolvedSupplierId && Number(resolvedSupplierId) !== Number(linkedInvoice.supplier_id);
+      if ((amountChanged || supplierChanged) && invoiceHasSettlement(linkedInvoice)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Cannot change delivery amount or supplier after the linked supplier invoice has payments. Void/reverse the AP payment first or enter a correcting document.',
+        });
+      }
+    }
 
     // ── Guard: block litres/cost/tank changes if fuel from this batch has been sold ──
     const batch = await db('delivery_batches').where({ delivery_id: parseInt(req.params.id as string) }).first();
@@ -145,10 +170,29 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
             : null);
 
       await trx('fuel_deliveries').where({ id: req.params.id }).update({
-        tank_id: newTankId, supplier, supplier_id: reqSupplierId || existing.supplier_id,
+        tank_id: newTankId, supplier, supplier_id: resolvedSupplierId,
         litres: newLitres, cost_per_litre, total_cost, date,
         ...(newDeliveryTs !== null ? { delivery_timestamp: newDeliveryTs } : {}),
       });
+
+      if (linkedInvoice && resolvedSupplierId && !invoiceHasSettlement(linkedInvoice)) {
+        await trx('supplier_invoices').where({ id: linkedInvoice.id }).update({
+          supplier_id: resolvedSupplierId,
+          amount: total_cost,
+          balance: total_cost,
+          status: 'unpaid',
+          due_date: await supplierDueDate(trx, resolvedSupplierId, date),
+        });
+      } else if (!linkedInvoice && resolvedSupplierId) {
+        await trx('supplier_invoices').insert({
+          supplier_id: resolvedSupplierId,
+          delivery_id: parseInt(req.params.id as string),
+          amount: total_cost,
+          balance: total_cost,
+          status: 'unpaid',
+          due_date: await supplierDueDate(trx, resolvedSupplierId, date),
+        });
+      }
 
       // Update FIFO batch — handle tank change and/or litres change independently (fixes Issue 4)
       const existingBatch = await trx('delivery_batches').where({ delivery_id: parseInt(req.params.id as string) }).first();
@@ -225,8 +269,18 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
 
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
-    const delivery = await db('fuel_deliveries').where({ id: req.params.id }).first();
+    const delivery = await db('fuel_deliveries').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!delivery) return res.status(404).json({ success: false, error: 'Delivery not found' });
+    const linkedInvoice = await db('supplier_invoices')
+      .where({ delivery_id: req.params.id })
+      .whereNull('deleted_at')
+      .first();
+    if (linkedInvoice && invoiceHasSettlement(linkedInvoice)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot delete this delivery because its supplier invoice has payments. Void/reverse the AP payment first.',
+      });
+    }
 
     // Check if batch has been consumed (fuel already sold from this delivery)
     const batch = await db('delivery_batches').where({ delivery_id: parseInt(req.params.id as string) }).first();
@@ -243,6 +297,18 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     await db.transaction(async (trx) => {
       if (batch) await trx('delivery_batches').where({ id: batch.id }).delete();
       await trx('fuel_deliveries').where({ id: req.params.id }).update({ deleted_at: new Date().toISOString() });
+      if (linkedInvoice) {
+        await trx('supplier_invoices')
+          .where({ id: linkedInvoice.id })
+          .update({
+            deleted_at: new Date().toISOString(),
+            status: 'void',
+            balance: 0,
+            notes: linkedInvoice.notes
+              ? `${linkedInvoice.notes}\nVoided because linked delivery #${req.params.id} was deleted.`
+              : `Voided because linked delivery #${req.params.id} was deleted.`,
+          });
+      }
 
       const newStock = await recomputeCache(delivery.tank_id, trx);
 

@@ -48,6 +48,9 @@ export const updateReadingsSchema = z.object({
   // When the price-per-litre sanity check flags an anomaly, the client must
   // re-submit with this set true to acknowledge and proceed.
   confirm_anomaly: z.boolean().optional(),
+  // Separate from price sanity: catches mechanically plausible but operationally
+  // impossible sales volumes/amounts caused by a wrong display reading.
+  confirm_large_sale: z.boolean().optional(),
 });
 
 // --- Shift Expenses ---
@@ -103,6 +106,29 @@ export const updateTankDipSchema = z.object({
   dip_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'dip_date must be YYYY-MM-DD format').optional(),
   variance_category: z.enum(VARIANCE_CATEGORIES).nullish().optional(),
   variance_notes: optionalText(),
+});
+
+// --- Tank Stock Adjustments ---
+const TANK_ADJUSTMENT_REASONS = [
+  'stock_take',
+  'evaporation_loss',
+  'spillage_loss',
+  'leakage_loss',
+  'theft_loss',
+  'contamination_loss',
+  'calibration_loss',
+  'write_off',
+  'other_loss',
+] as const;
+
+export const createTankStockAdjustmentSchema = z.object({
+  litres_change: z.number({ error: 'litres_change is required' })
+    .refine((n) => Number.isFinite(n) && n !== 0, 'litres_change cannot be zero'),
+  reason: z.enum(TANK_ADJUSTMENT_REASONS),
+  notes: z.string().min(3, 'notes/reason details are required'),
+  adjustment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'adjustment_date must be YYYY-MM-DD format').optional(),
+  reference_dip_id: z.number().int().positive().nullish().optional(),
+  cost_per_litre: z.number().min(0, 'cost_per_litre cannot be negative').nullish().optional(),
 });
 
 // --- Suppliers ---

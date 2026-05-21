@@ -3,9 +3,9 @@ import {
   getTanks, createTank, updateTank, deleteTank,
   getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
   getTankDips, createTankDip, updateTankDip, deleteTankDip,
-  getCurrentShift, getTankLedger, getSuppliers,
+  getCurrentShift, getTankLedger, getSuppliers, getTankAdjustments, createTankAdjustment,
 } from '../services/api';
-import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen } from 'lucide-react';
+import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen, SlidersHorizontal } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
 
 const today = () => getKenyaDate();
@@ -13,6 +13,7 @@ const today = () => getKenyaDate();
 const emptyTankForm = { label: '', fuel_type: 'petrol', capacity_litres: '' };
 const emptyDeliveryForm = { tank_id: '', supplier: '', supplier_id: '', litres: '', cost_per_litre: '', date: today(), delivery_time: '' };
 const emptyDipForm = { tank_id: '', measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' };
+const emptyAdjustmentForm = { tank_id: '', litres_change: '', reason: 'stock_take', notes: '', adjustment_date: today(), cost_per_litre: '' };
 
 const VARIANCE_CATEGORIES = [
   { value: 'unclassified', label: 'Unclassified' },
@@ -20,6 +21,18 @@ const VARIANCE_CATEGORIES = [
   { value: 'operational_loss', label: 'Operational Loss (spillage/calibration)' },
   { value: 'meter_drift', label: 'Meter Drift' },
   { value: 'delivery_variance', label: 'Delivery Variance' },
+];
+
+const ADJUSTMENT_REASONS = [
+  { value: 'stock_take', label: 'Stock taking / dip reconciliation', allowPositive: true },
+  { value: 'evaporation_loss', label: 'Evaporation or temperature loss', allowPositive: false },
+  { value: 'spillage_loss', label: 'Spillage loss', allowPositive: false },
+  { value: 'leakage_loss', label: 'Leakage loss', allowPositive: false },
+  { value: 'theft_loss', label: 'Theft / unexplained loss', allowPositive: false },
+  { value: 'contamination_loss', label: 'Contamination write-down', allowPositive: false },
+  { value: 'calibration_loss', label: 'Calibration or meter test loss', allowPositive: false },
+  { value: 'write_off', label: 'Inventory write-off', allowPositive: false },
+  { value: 'other_loss', label: 'Other approved stock loss', allowPositive: false },
 ];
 
 const variancePillClass = (cat: string) => {
@@ -38,23 +51,28 @@ export default function TankStock() {
   const [tanks, setTanks] = useState<any[]>([]);
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [dips, setDips] = useState<any[]>([]);
+  const [adjustments, setAdjustments] = useState<any[]>([]);
   const [suppliersList, setSuppliersList] = useState<any[]>([]);
   const [hasOpenShift, setHasOpenShift] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips' | 'ledger'>('tanks');
+  const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips' | 'adjustments' | 'ledger'>('tanks');
   const [ledgerData, setLedgerData] = useState<any[]>([]);
   const [ledgerTankId, setLedgerTankId] = useState<string>('');
+  const [adjustmentTankId, setAdjustmentTankId] = useState<string>('');
 
   // Modal state
   const [tankModal, setTankModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
   const [deliveryModal, setDeliveryModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
   const [dipModal, setDipModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
+  const [adjustmentModal, setAdjustmentModal] = useState<{ open: boolean }>({ open: false });
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; item: any } | null>(null);
 
   const [tankForm, setTankForm] = useState(emptyTankForm);
   const [deliveryForm, setDeliveryForm] = useState(emptyDeliveryForm);
   const [dipForm, setDipForm] = useState(emptyDipForm);
+  const [adjustmentForm, setAdjustmentForm] = useState(emptyAdjustmentForm);
   const [dipWarnings, setDipWarnings] = useState<string[]>([]);
+  const [adjustmentWarnings, setAdjustmentWarnings] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -202,6 +220,48 @@ export default function TankStock() {
   }
 
   // ── Delete ─────────────────────────────────────────
+  async function loadAdjustments(tankId: string) {
+    if (!tankId) {
+      setAdjustments([]);
+      return;
+    }
+    try {
+      const res = await getTankAdjustments(parseInt(tankId));
+      setAdjustments(res.data.data || []);
+    } catch {
+      setAdjustments([]);
+    }
+  }
+
+  function openAddAdjustment() {
+    const tankId = adjustmentTankId || (tanks.length > 0 ? String(tanks[0].id) : '');
+    setAdjustmentForm({ ...emptyAdjustmentForm, tank_id: tankId, adjustment_date: today() });
+    setAdjustmentWarnings([]);
+    setError('');
+    setAdjustmentModal({ open: true });
+  }
+
+  async function handleSaveAdjustment(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true); setError(''); setAdjustmentWarnings([]);
+    try {
+      const payload: any = {
+        litres_change: parseFloat(adjustmentForm.litres_change),
+        reason: adjustmentForm.reason,
+        notes: adjustmentForm.notes,
+        adjustment_date: adjustmentForm.adjustment_date,
+      };
+      if (adjustmentForm.cost_per_litre) payload.cost_per_litre = parseFloat(adjustmentForm.cost_per_litre);
+      const res = await createTankAdjustment(parseInt(adjustmentForm.tank_id), payload);
+      setAdjustmentWarnings(res.data.warnings || []);
+      setAdjustmentModal({ open: false });
+      setAdjustmentTankId(adjustmentForm.tank_id);
+      await Promise.all([loadData(), loadAdjustments(adjustmentForm.tank_id)]);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to post adjustment');
+    } finally { setSaving(false); }
+  }
+
   async function handleDelete() {
     if (!deleteConfirm) return;
     setSaving(true); setError('');
@@ -240,6 +300,12 @@ export default function TankStock() {
 
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">{error}</div>
+      )}
+
+      {adjustmentWarnings.length > 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+          {adjustmentWarnings.map((w, i) => <p key={i}>{w}</p>)}
+        </div>
       )}
 
       {/* Stock Summary Cards */}
@@ -281,7 +347,7 @@ export default function TankStock() {
       {/* Tabs + Actions */}
       <div className="flex items-center justify-between border-b mb-4">
         <div className="flex gap-1">
-          {(['tanks', 'deliveries', 'dips', 'ledger'] as const).map(tab => (
+          {(['tanks', 'deliveries', 'dips', 'adjustments', 'ledger'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -305,6 +371,11 @@ export default function TankStock() {
           {activeTab === 'dips' && (
             <button onClick={openAddDip} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm">
               <Droplets size={16} /> Record Dip
+            </button>
+          )}
+          {activeTab === 'adjustments' && (
+            <button onClick={openAddAdjustment} disabled={hasOpenShift || tanks.length === 0} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50">
+              <SlidersHorizontal size={16} /> Post Adjustment
             </button>
           )}
         </div>
@@ -441,6 +512,53 @@ export default function TankStock() {
                 );
               })}
               {dips.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">No dip readings recorded.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Adjustments Tab */}
+      {activeTab === 'adjustments' && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          {hasOpenShift && (
+            <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 flex items-center gap-1">
+              <AlertTriangle size={12} /> Stock adjustments are disabled while a shift is open.
+            </div>
+          )}
+          <div className="p-4 border-b flex items-center gap-3">
+            <select value={adjustmentTankId} onChange={async (e) => {
+              setAdjustmentTankId(e.target.value);
+              await loadAdjustments(e.target.value);
+            }} className="border border-gray-300 rounded-lg p-2 text-sm">
+              <option value="">Select a tank...</option>
+              {tanks.map((t: any) => <option key={t.id} value={t.id}>{t.label} ({t.fuel_type})</option>)}
+            </select>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-3 font-medium text-gray-600">Date</th>
+                <th className="text-left p-3 font-medium text-gray-600">Reason</th>
+                <th className="text-right p-3 font-medium text-gray-600">Change (L)</th>
+                <th className="text-right p-3 font-medium text-gray-600">Cost/L</th>
+                <th className="text-left p-3 font-medium text-gray-600">Notes</th>
+                <th className="text-left p-3 font-medium text-gray-600">By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adjustments.map((a: any) => (
+                <tr key={a.id} className="border-t hover:bg-gray-50">
+                  <td className="p-3">{fmtDate(a.adjustment_date)}</td>
+                  <td className="p-3">{ADJUSTMENT_REASONS.find(r => r.value === a.reason)?.label || a.reason}</td>
+                  <td className={`p-3 text-right font-medium ${Number(a.litres_change) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {Number(a.litres_change) >= 0 ? '+' : ''}{Number(a.litres_change).toFixed(1)}
+                  </td>
+                  <td className="p-3 text-right">{a.cost_per_litre != null ? formatKES(Number(a.cost_per_litre)) : '—'}</td>
+                  <td className="p-3 text-xs text-gray-500">{a.notes}</td>
+                  <td className="p-3 text-xs text-gray-500">{a.created_by_name || 'System'}</td>
+                </tr>
+              ))}
+              {adjustments.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-gray-400">{adjustmentTankId ? 'No adjustments posted for this tank.' : 'Select a tank to view adjustments.'}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -674,6 +792,76 @@ export default function TankStock() {
                     {saving ? 'Saving...' : dipModal.editing ? 'Save Changes' : 'Record'}
                   </button>
                 )}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Adjustment Modal */}
+      {adjustmentModal.open && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Post Stock Adjustment</h2>
+              <button onClick={() => setAdjustmentModal({ open: false })} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+            </div>
+            {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+            <form onSubmit={handleSaveAdjustment} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tank *</label>
+                <select required value={adjustmentForm.tank_id} onChange={e => setAdjustmentForm({ ...adjustmentForm, tank_id: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2">
+                  <option value="">-- Select Tank --</option>
+                  {tanks.map((t: any) => <option key={t.id} value={t.id}>{t.label} ({t.fuel_type})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                <input type="date" required max={today()} value={adjustmentForm.adjustment_date}
+                  onChange={e => setAdjustmentForm({ ...adjustmentForm, adjustment_date: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason *</label>
+                <select required value={adjustmentForm.reason} onChange={e => {
+                  const reason = e.target.value;
+                  const meta = ADJUSTMENT_REASONS.find(r => r.value === reason);
+                  const litres = parseFloat(adjustmentForm.litres_change);
+                  setAdjustmentForm({
+                    ...adjustmentForm,
+                    reason,
+                    litres_change: meta?.allowPositive === false && litres > 0 ? String(-litres) : adjustmentForm.litres_change,
+                  });
+                }} className="w-full border border-gray-300 rounded-lg p-2">
+                  {ADJUSTMENT_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Litres Change *</label>
+                <input type="number" required step="0.01" value={adjustmentForm.litres_change}
+                  onChange={e => setAdjustmentForm({ ...adjustmentForm, litres_change: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2" placeholder="Positive only for stock taking; losses must be negative" />
+              </div>
+              {adjustmentForm.reason === 'stock_take' && parseFloat(adjustmentForm.litres_change || '0') > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cost per Litre (optional)</label>
+                  <input type="number" step="0.01" min="0" value={adjustmentForm.cost_per_litre}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, cost_per_litre: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="Leave blank to use latest batch cost" />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason Details *</label>
+                <textarea rows={3} required value={adjustmentForm.notes}
+                  onChange={e => setAdjustmentForm({ ...adjustmentForm, notes: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" placeholder="Physical dip result, incident reference, approval note..." />
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <button type="button" onClick={() => setAdjustmentModal({ open: false })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                  {saving ? 'Posting...' : 'Post Adjustment'}
+                </button>
               </div>
             </form>
           </div>

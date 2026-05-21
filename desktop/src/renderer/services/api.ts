@@ -1,12 +1,15 @@
 import axios from 'axios';
 
+const baseURL = import.meta.env.VITE_API_URL ||
+  localStorage.getItem('nexgen_api_url') ||
+  'http://localhost:3001/api';
+const desktopKey = import.meta.env.VITE_DESKTOP_KEY ||
+  (!import.meta.env.PROD ? 'nexgen-desktop-2026' : '');
+
 const api = axios.create({
-  baseURL: 'http://localhost:3001/api',
+  baseURL,
   timeout: 10000,
-  headers: {
-    // Desktop app is admin-only — bypass mobile role auth with shared key
-    'x-desktop-key': 'nexgen-desktop-2026',
-  },
+  headers: desktopKey ? { 'x-desktop-key': desktopKey } : undefined,
 });
 
 // ============ Employees ============
@@ -31,14 +34,20 @@ export const createTank = (data: any) => api.post('/tanks', data);
 export const updateTank = (id: number, data: any) => api.put(`/tanks/${id}`, data);
 export const deleteTank = (id: number) => api.delete(`/tanks/${id}`);
 export const getTankStockSummary = (id: number) => api.get(`/tanks/${id}/stock-summary`);
+export const getTankAdjustments = (tankId: number) => api.get(`/tanks/${tankId}/adjustments`);
+export const createTankAdjustment = (tankId: number, data: any) => api.post(`/tanks/${tankId}/adjustments`, data);
 
 // ============ Shifts ============
 export const getShifts = (params?: any) => api.get('/shifts', { params });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
-export const openShift = (data: { employee_id: number; shift_date?: string }) => api.post('/shifts', data);
-export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean) =>
-  api.put(`/shifts/${shiftId}/readings`, { readings, ...(confirm_anomaly ? { confirm_anomaly: true } : {}) });
+export const openShift = (data: { employee_id: number }) => api.post('/shifts', data);
+export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean, confirm_large_sale?: boolean) =>
+  api.put(`/shifts/${shiftId}/readings`, {
+    readings,
+    ...(confirm_anomaly ? { confirm_anomaly: true } : {}),
+    ...(confirm_large_sale ? { confirm_large_sale: true } : {}),
+  });
 export const setOpeningReadings = (shiftId: number, readings: any[]) =>
   api.put(`/shifts/${shiftId}/opening-readings`, { readings });
 export const updateCollections = (shiftId: number, data: any) =>

@@ -1,10 +1,12 @@
+import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
+import cors, { CorsOptionsDelegate } from 'cors';
 import path from 'path';
 import db from './database';
 import { recomputeAllDipsFromDate } from './services/stockCalculator';
 import { recomputeAllAccountBalances } from './services/accountBalance';
 import { detectDrift } from './services/driftDetector';
+import { assertAuthConfiguration, requireAdmin, requireAuth } from './middleware/requireAdmin';
 import employeesRouter from './routes/employees';
 import pumpsRouter from './routes/pumps';
 import tanksRouter from './routes/tanks';
@@ -26,27 +28,181 @@ import supplierInvoicesRouter from './routes/supplierInvoices';
 import supplierPaymentsRouter from './routes/supplierPayments';
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const PORT = Number(process.env.PORT || 3001);
+const HOST = process.env.HOST || (IS_PRODUCTION ? '127.0.0.1' : '0.0.0.0');
+const CONFIGURED_CORS_ORIGINS = new Set(
+  (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
 
-app.use(cors());
+const SENSITIVE_BODY_KEYS = [
+  'pin',
+  'password',
+  'token',
+  'authorization',
+  'secret',
+  'session_secret',
+  'desktop_key',
+  'x-desktop-key',
+];
+
+function isPrivateLanHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname.startsWith('192.168.') ||
+    hostname.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
+}
+
+function isAllowedDevOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return isPrivateLanHost(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function redactSensitiveValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSensitiveValues);
+  if (!value || typeof value !== 'object') return value;
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    const lowerKey = key.toLowerCase();
+    redacted[key] = SENSITIVE_BODY_KEYS.some((sensitiveKey) => lowerKey.includes(sensitiveKey))
+      ? '[REDACTED]'
+      : redactSensitiveValues(nestedValue);
+  }
+  return redacted;
+}
+
+const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {
+  const originHeader = req.headers.origin;
+  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
+  const allowed =
+    !origin ||
+    origin === 'null' ||
+    origin.startsWith('file://') ||
+    CONFIGURED_CORS_ORIGINS.has(origin) ||
+    (!IS_PRODUCTION && isAllowedDevOrigin(origin));
+
+  callback(null, {
+    origin: allowed && origin ? origin : false,
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'x-desktop-key'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    optionsSuccessStatus: 204,
+  });
+};
+
+app.use(cors(corsOptionsDelegate));
 app.use(express.json());
 
-// ── Request logger — prints every API call + status + duration ──────────────
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const ms = Date.now() - start;
     const level = res.statusCode >= 400 ? 'ERROR' : 'INFO';
-    console.log(`[API:${level}] ${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`);
+    console.log(`[API:${level}] ${req.method} ${req.path} -> ${res.statusCode} (${ms}ms)`);
     if (res.statusCode >= 400 && req.body && Object.keys(req.body).length) {
-      console.log(`[API:BODY]`, JSON.stringify(req.body));
+      console.log('[API:BODY]', JSON.stringify(redactSensitiveValues(req.body)));
     }
   });
   next();
 });
 
-// Routes
 app.use('/api/auth', authRouter);
+
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/health/db-stats', requireAdmin, async (_req, res) => {
+  try {
+    const tables = [
+      'employees', 'pumps', 'tanks', 'shifts', 'pump_readings',
+      'shift_collections', 'shift_expenses', 'shift_credits', 'wage_deductions',
+      'fuel_deliveries', 'delivery_batches', 'batch_consumption',
+      'tank_dips', 'tank_stock_ledger', 'shift_tank_snapshots',
+      'fuel_prices', 'mpesa_fee_config',
+      'credits', 'credit_accounts', 'credit_payments',
+      'expenses', 'staff_debts',
+      'suppliers', 'supplier_invoices', 'supplier_payments',
+      'supplier_payment_allocations',
+      'tank_stock_adjustments', 'tank_adjustment_batches', 'tank_adjustment_batch_effects',
+    ];
+    const stats: Record<string, any> = {};
+    for (const t of tables) {
+      try {
+        const total = await db(t).count('* as c').first();
+        const row: any = { total: Number(total?.c || 0) };
+        const hasDeletedAt = await db.schema.hasColumn(t, 'deleted_at');
+        if (hasDeletedAt) {
+          const active = await db(t).whereNull('deleted_at').count('* as c').first();
+          row.active = Number(active?.c || 0);
+          row.deleted = row.total - row.active;
+        }
+        stats[t] = row;
+      } catch (e: any) {
+        stats[t] = { error: e.message };
+      }
+    }
+    res.json({ success: true, data: stats, timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    console.error('[health:db-stats] ERROR', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/health/drift-check', requireAdmin, async (_req, res) => {
+  try {
+    const report = await detectDrift();
+    res.json({ success: true, ...report });
+  } catch (err: any) {
+    console.error('[health:drift-check] ERROR', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/health/backup', requireAdmin, async (_req, res) => {
+  try {
+    const fs = await import('fs');
+    const src = path.join(__dirname, '..', 'data', 'nexgen.db');
+    const dir = path.join(__dirname, '..', 'data', 'backups');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    await db.raw('PRAGMA wal_checkpoint(TRUNCATE)');
+
+    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Africa/Nairobi' })
+      .replace(/[-: ]/g, '').slice(0, 14);
+    const dest = path.join(dir, `nexgen-${now}.db`);
+    fs.copyFileSync(src, dest);
+    const { size } = fs.statSync(dest);
+    res.json({ success: true, file: path.basename(dest), size_bytes: size });
+  } catch (err: any) {
+    console.error('[health:backup] ERROR', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/health/phase1-backfill', requireAdmin, async (_req, res) => {
+  try {
+    const dipsUpdated = await recomputeAllDipsFromDate('1900-01-01');
+    const acctsUpdated = await recomputeAllAccountBalances();
+    res.json({ success: true, dips_recomputed: dipsUpdated, accounts_recomputed: acctsUpdated });
+  } catch (err: any) {
+    console.error('[health:phase1-backfill] ERROR', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.use('/api', requireAuth);
 app.use('/api/employees', employeesRouter);
 app.use('/api/pumps', pumpsRouter);
 app.use('/api/tanks', tanksRouter);
@@ -66,103 +222,6 @@ app.use('/api/suppliers', suppliersRouter);
 app.use('/api/supplier-invoices', supplierInvoicesRouter);
 app.use('/api/supplier-payments', supplierPaymentsRouter);
 
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// DB stats — row counts per table. Used to verify migrations + detect data loss
-// after each debug-sweep phase. Compare counts against golden snapshot.
-app.get('/api/health/db-stats', async (_req, res) => {
-  try {
-    const tables = [
-      'employees', 'pumps', 'tanks', 'shifts', 'pump_readings',
-      'shift_collections', 'shift_expenses', 'shift_credits', 'wage_deductions',
-      'fuel_deliveries', 'delivery_batches', 'batch_consumption',
-      'tank_dips', 'tank_stock_ledger', 'shift_tank_snapshots',
-      'fuel_prices', 'mpesa_fee_config',
-      'credits', 'credit_accounts', 'credit_payments',
-      'expenses', 'staff_debts',
-      'suppliers', 'supplier_invoices', 'supplier_payments',
-    ];
-    const stats: Record<string, any> = {};
-    for (const t of tables) {
-      try {
-        const total = await db(t).count('* as c').first();
-        const row: any = { total: Number(total?.c || 0) };
-        // For tables with deleted_at, show active vs deleted breakdown
-        const hasDeletedAt = await db.schema.hasColumn(t, 'deleted_at');
-        if (hasDeletedAt) {
-          const active = await db(t).whereNull('deleted_at').count('* as c').first();
-          row.active = Number(active?.c || 0);
-          row.deleted = row.total - row.active;
-        }
-        stats[t] = row;
-      } catch (e: any) {
-        stats[t] = { error: e.message };
-      }
-    }
-    res.json({ success: true, data: stats, timestamp: new Date().toISOString() });
-  } catch (err: any) {
-    console.error('[health:db-stats] ERROR', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Drift detector — Phase 1/11 production-readiness debug-sweep.
-// Walks every Category C cache, recomputes the truth, and reports any rows
-// whose cached value disagrees with truth. Used to detect regressions after
-// each phase. Returns ok:true when all caches are in sync.
-// Implementation lives in services/driftDetector so the dashboard can
-// embed a summary too.
-app.get('/api/health/drift-check', async (_req, res) => {
-  try {
-    const report = await detectDrift();
-    res.json({ success: true, ...report });
-  } catch (err: any) {
-    console.error('[health:drift-check] ERROR', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Phase 16 — On-demand DB backup. Copies nexgen.db to
-//   backend/data/backups/nexgen-YYYYMMDD-HHMMSS.db
-// Returns the filename. Intended to be called nightly by Windows Task
-// Scheduler (see docs/phases/PHASE14-17-OPERATIONS.md) and on-demand
-// before dangerous operations (migrations, bulk imports).
-app.post('/api/health/backup', async (_req, res) => {
-  try {
-    const fs = await import('fs');
-    const src = path.join(__dirname, '..', 'data', 'nexgen.db');
-    const dir = path.join(__dirname, '..', 'data', 'backups');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Africa/Nairobi' })
-      .replace(/[-: ]/g, '').slice(0, 14); // YYYYMMDDHHMMSS in EAT
-    const dest = path.join(dir, `nexgen-${now}.db`);
-    fs.copyFileSync(src, dest);
-    const { size } = fs.statSync(dest);
-    res.json({ success: true, file: path.basename(dest), size_bytes: size });
-  } catch (err: any) {
-    console.error('[health:backup] ERROR', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// One-time backfill — Phase 1. Recomputes all dips' book_stock_at_dip and
-// all credit_accounts.balance from source rows. Idempotent: safe to run
-// multiple times. Use after the Phase 1 wire-in to clear historical drift.
-app.post('/api/health/phase1-backfill', async (_req, res) => {
-  try {
-    const dipsUpdated = await recomputeAllDipsFromDate('1900-01-01');
-    const acctsUpdated = await recomputeAllAccountBalances();
-    res.json({ success: true, dips_recomputed: dipsUpdated, accounts_recomputed: acctsUpdated });
-  } catch (err: any) {
-    console.error('[health:phase1-backfill] ERROR', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Serve mobile app static files
 const mobileDist = path.join(__dirname, '../../mobile/dist');
 app.use('/mobile', express.static(mobileDist));
 app.get('/mobile/*', (_req, res) => {
@@ -170,12 +229,15 @@ app.get('/mobile/*', (_req, res) => {
 });
 
 async function start() {
-  // Run migrations
+  assertAuthConfiguration();
+
   await db.migrate.latest();
+  await db.raw('PRAGMA journal_mode = WAL');
+  await db.raw('PRAGMA busy_timeout = 5000');
   console.log('Database migrations complete');
 
-  app.listen(PORT as number, '0.0.0.0', () => {
-    console.log(`NexGen API running on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`NexGen API running on http://${HOST}:${PORT}`);
   });
 }
 

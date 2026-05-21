@@ -131,7 +131,11 @@ export default function ShiftDetail() {
     finally { setLoading(false); }
   }
 
-  async function handleSaveReadings(opts: { confirmAnomaly?: boolean; rolloverByPump?: Record<number, { litres?: boolean; amount?: boolean }> } = {}) {
+  async function handleSaveReadings(opts: {
+    confirmAnomaly?: boolean;
+    confirmLargeSale?: boolean;
+    rolloverByPump?: Record<number, { litres?: boolean; amount?: boolean }>;
+  } = {}) {
     setSaving(true);
     setReadingError('');
     try {
@@ -145,7 +149,7 @@ export default function ShiftDetail() {
           ...(ro.amount ? { rollover_amount: true } : {}),
         };
       });
-      const res = await updateReadings(parseInt(id!), payload, opts.confirmAnomaly);
+      const res = await updateReadings(parseInt(id!), payload, opts.confirmAnomaly, opts.confirmLargeSale);
       // Reload to sync raw inputs with new cumulative values.
       const rs = (res.data.data || []).map((r: any) => {
         const capL = Number(r.meter_capacity_litres) || 1000000;
@@ -180,6 +184,15 @@ export default function ShiftDetail() {
         ).join('\n');
         if (window.confirm(`Price-per-litre looks off:\n\n${lines}\n\nDouble-check the readings. Save anyway?`)) {
           return handleSaveReadings({ ...opts, confirmAnomaly: true });
+        }
+        return;
+      }
+      if (err?.response?.status === 409 && data?.code === 'LARGE_SALE_CONFIRMATION_REQUIRED') {
+        const lines = (data.large_sales || []).map((s: any) =>
+          `• ${s.pump_label}: ${Number(s.litres_sold).toFixed(2)} L / KES ${Number(s.amount_sold).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
+        ).join('\n');
+        if (window.confirm(`Unusually large pump sale detected:\n\n${lines}\n\nRe-check the readings. Confirm only after manager approval.`)) {
+          return handleSaveReadings({ ...opts, confirmLargeSale: true });
         }
         return;
       }
