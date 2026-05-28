@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Plus, Truck, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Truck, Pencil, Trash2, FileText } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
-import { getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery, getTanks } from '../services/api';
+import {
+  getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
+  getTanks, getSuppliers, uploadFuelDeliveryInvoiceDocument, getFuelDeliveryInvoiceDocument,
+} from '../services/api';
 import { getKenyaDate } from '../utils/timezone';
 import { useAuth } from '../context/AuthContext';
 
@@ -9,21 +12,40 @@ const today = () => getKenyaDate();
 
 const emptyForm = {
   tank_id: '',
-  supplier: '',
+  supplier_id: '',
   litres: '',
   cost_per_litre: '',
   date: today(),
+  invoice_number: '',
 };
+
+function fileToInvoicePayload(file: File): Promise<{ file_name: string; mime_type: string; data_base64: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve({
+        file_name: file.name,
+        mime_type: file.type || 'application/pdf',
+        data_base64: result.includes(',') ? result.split(',')[1] : result,
+      });
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read invoice PDF'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function FuelDeliveries() {
   const { isAdmin } = useAuth();
   const [deliveries, setDeliveries] = useState<any[]>([]);
   const [tanks, setTanks] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editDelivery, setEditDelivery] = useState<any | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -31,10 +53,11 @@ export default function FuelDeliveries() {
 
   async function loadData() {
     try {
-      const [deliveriesRes, tanksRes] = await Promise.all([getFuelDeliveries(), getTanks()]);
+      const [deliveriesRes, tanksRes, suppliersRes] = await Promise.all([getFuelDeliveries(), getTanks(), getSuppliers()]);
       setDeliveries(deliveriesRes.data.data || []);
       const tanksData = tanksRes.data.data || [];
       setTanks(tanksData);
+      setSuppliers(suppliersRes.data.data || []);
       if (tanksData.length > 0 && !form.tank_id) {
         setForm(f => ({ ...f, tank_id: String(tanksData[0].id) }));
       }
@@ -47,6 +70,7 @@ export default function FuelDeliveries() {
 
   function openAdd() {
     setForm({ ...emptyForm, tank_id: tanks.length > 0 ? String(tanks[0].id) : '', date: today() });
+    setInvoiceFile(null);
     setError('');
     setShowAdd(true);
   }
@@ -54,39 +78,64 @@ export default function FuelDeliveries() {
   function openEdit(delivery: any) {
     setForm({
       tank_id: String(delivery.tank_id),
-      supplier: delivery.supplier || '',
+      supplier_id: delivery.supplier_id ? String(delivery.supplier_id) : '',
       litres: String(delivery.litres),
       cost_per_litre: String(delivery.cost_per_litre),
       date: delivery.date,
+      invoice_number: delivery.invoice_number || '',
     });
+    setInvoiceFile(null);
     setEditDelivery(delivery);
     setError('');
   }
 
   async function handleSave() {
-    if (!form.tank_id || !form.litres || !form.cost_per_litre || !form.date) return;
+    if (!form.tank_id || !form.supplier_id || !form.litres || !form.cost_per_litre || !form.date) return;
     setSubmitting(true);
     setError('');
     try {
       const payload = {
         tank_id: parseInt(form.tank_id),
-        supplier: form.supplier,
+        supplier_id: parseInt(form.supplier_id),
         litres: parseFloat(form.litres),
         cost_per_litre: parseFloat(form.cost_per_litre),
         date: form.date,
+        invoice_number: form.invoice_number || null,
       };
+      let savedId: number | undefined;
       if (editDelivery) {
-        await updateFuelDelivery(editDelivery.id, payload);
+        const res = await updateFuelDelivery(editDelivery.id, payload);
+        savedId = res.data.data?.id || editDelivery.id;
+      } else {
+        const res = await createFuelDelivery(payload);
+        savedId = res.data.data?.id;
+      }
+      if (invoiceFile && savedId) {
+        await uploadFuelDeliveryInvoiceDocument(savedId, await fileToInvoicePayload(invoiceFile));
+      }
+      if (editDelivery) {
         setEditDelivery(null);
       } else {
-        await createFuelDelivery(payload);
         setShowAdd(false);
       }
+      setInvoiceFile(null);
       await loadData();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to save delivery');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleOpenInvoice(delivery: any) {
+    try {
+      const res = await getFuelDeliveryInvoiceDocument(delivery.id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to open invoice PDF');
     }
   }
 
@@ -123,7 +172,11 @@ export default function FuelDeliveries() {
         back
         right={
           isAdmin ? (
-            <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
+            <button
+              onClick={openAdd}
+              disabled={tanks.length === 0 || suppliers.length === 0}
+              className="p-2 bg-blue-600 text-white rounded-xl disabled:opacity-50"
+            >
               <Plus size={20} />
             </button>
           ) : undefined
@@ -136,12 +189,24 @@ export default function FuelDeliveries() {
         </div>
       )}
 
+      {isAdmin && suppliers.length === 0 && (
+        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
+          <p className="text-sm text-amber-700">Create a supplier account before recording fuel deliveries.</p>
+        </div>
+      )}
+
       {deliveries.length === 0 ? (
         <div className="text-center mt-20">
           <Truck size={48} className="mx-auto text-gray-300 mb-3" />
           <p className="text-gray-400">No deliveries recorded</p>
           {isAdmin && (
-            <button onClick={openAdd} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Record First Delivery</button>
+            <button
+              onClick={openAdd}
+              disabled={tanks.length === 0 || suppliers.length === 0}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm disabled:opacity-50"
+            >
+              Record First Delivery
+            </button>
           )}
         </div>
       ) : (
@@ -158,7 +223,19 @@ export default function FuelDeliveries() {
                     </span>
                   </div>
                   <p className="text-sm text-gray-600 ml-6">{d.tank_label}</p>
-                  {d.supplier && <p className="text-xs text-gray-400 ml-6">Supplier: {d.supplier}</p>}
+                  {(d.supplier_name || d.supplier) && <p className="text-xs text-gray-400 ml-6">Supplier: {d.supplier_name || d.supplier}</p>}
+                  <div className="flex items-center gap-2 ml-6 mt-1">
+                    <p className="text-xs text-gray-400">Invoice: {d.invoice_number || '-'}</p>
+                    {isAdmin && d.invoice_file_path && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenInvoice(d)}
+                        className="inline-flex items-center gap-1 text-xs text-blue-600"
+                      >
+                        <FileText size={12} /> PDF
+                      </button>
+                    )}
+                  </div>
                   <div className="flex items-center gap-3 ml-6 mt-1">
                     <p className="text-xs text-gray-400">{formatDate(d.date)}</p>
                     <p className="text-xs text-gray-500">@ KES {parseFloat(d.cost_per_litre).toFixed(2)}/L</p>
@@ -214,13 +291,42 @@ export default function FuelDeliveries() {
                 </select>
               </div>
               <div>
-                <label className="text-sm text-gray-600 mb-1 block">Supplier (optional)</label>
+                <label className="text-sm text-gray-600 mb-1 block">Supplier</label>
+                <select
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-100"
+                  value={form.supplier_id}
+                  onChange={e => setForm({ ...form, supplier_id: e.target.value })}
+                  disabled={suppliers.length === 0}
+                >
+                  <option value="">Select supplier account</option>
+                  {suppliers.map((s: any) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                {suppliers.length === 0 && (
+                  <p className="text-xs text-red-500 mt-1">No suppliers are configured. Add the supplier account first.</p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Invoice Number (optional)</label>
                 <input
                   className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="e.g. Total Kenya"
-                  value={form.supplier}
-                  onChange={e => setForm({ ...form, supplier: e.target.value })}
+                  placeholder="Supplier invoice number"
+                  value={form.invoice_number}
+                  onChange={e => setForm({ ...form, invoice_number: e.target.value })}
                 />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Invoice PDF (optional)</label>
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={e => setInvoiceFile(e.target.files?.[0] || null)}
+                />
+                {editDelivery?.invoice_file_name && !invoiceFile && (
+                  <p className="text-xs text-gray-400 mt-1">Current PDF: {editDelivery.invoice_file_name}</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -260,7 +366,7 @@ export default function FuelDeliveries() {
               )}
               <button
                 onClick={handleSave}
-                disabled={submitting || !form.tank_id || !form.litres || !form.cost_per_litre || !form.date}
+                disabled={submitting || !form.tank_id || !form.supplier_id || !form.litres || !form.cost_per_litre || !form.date}
                 className="w-full bg-blue-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50 mt-2"
               >
                 {submitting ? 'Saving...' : editDelivery ? 'Save Changes' : 'Record Delivery'}

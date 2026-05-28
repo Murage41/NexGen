@@ -2,16 +2,17 @@ import { useState, useEffect } from 'react';
 import {
   getTanks, createTank, updateTank, deleteTank,
   getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
+  uploadFuelDeliveryInvoiceDocument, getFuelDeliveryInvoiceDocument,
   getTankDips, createTankDip, updateTankDip, deleteTankDip,
   getCurrentShift, getTankLedger, getSuppliers, getTankAdjustments, createTankAdjustment,
 } from '../services/api';
-import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen, SlidersHorizontal } from 'lucide-react';
+import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen, SlidersHorizontal, FileText } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
 
 const today = () => getKenyaDate();
 
 const emptyTankForm = { label: '', fuel_type: 'petrol', capacity_litres: '' };
-const emptyDeliveryForm = { tank_id: '', supplier: '', supplier_id: '', litres: '', cost_per_litre: '', date: today(), delivery_time: '' };
+const emptyDeliveryForm = { tank_id: '', supplier_id: '', litres: '', cost_per_litre: '', date: today(), delivery_time: '', invoice_number: '' };
 const emptyDipForm = { tank_id: '', measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' };
 const emptyAdjustmentForm = { tank_id: '', litres_change: '', reason: 'stock_take', notes: '', adjustment_date: today(), cost_per_litre: '' };
 
@@ -47,6 +48,22 @@ const variancePillClass = (cat: string) => {
 
 const varianceLabel = (cat: string) => VARIANCE_CATEGORIES.find(c => c.value === cat)?.label.split(' (')[0] || cat;
 
+function fileToInvoicePayload(file: File): Promise<{ file_name: string; mime_type: string; data_base64: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve({
+        file_name: file.name,
+        mime_type: file.type || 'application/pdf',
+        data_base64: result.includes(',') ? result.split(',')[1] : result,
+      });
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed to read invoice PDF'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function TankStock() {
   const [tanks, setTanks] = useState<any[]>([]);
   const [deliveries, setDeliveries] = useState<any[]>([]);
@@ -69,6 +86,7 @@ export default function TankStock() {
 
   const [tankForm, setTankForm] = useState(emptyTankForm);
   const [deliveryForm, setDeliveryForm] = useState(emptyDeliveryForm);
+  const [deliveryInvoiceFile, setDeliveryInvoiceFile] = useState<File | null>(null);
   const [dipForm, setDipForm] = useState(emptyDipForm);
   const [adjustmentForm, setAdjustmentForm] = useState(emptyAdjustmentForm);
   const [dipWarnings, setDipWarnings] = useState<string[]>([]);
@@ -130,13 +148,13 @@ export default function TankStock() {
   // ── Deliveries ─────────────────────────────────────
   function openAddDelivery() {
     setDeliveryForm({ ...emptyDeliveryForm, tank_id: tanks.length > 0 ? String(tanks[0].id) : '', date: today() });
+    setDeliveryInvoiceFile(null);
     setError('');
     setDeliveryModal({ open: true, editing: null });
   }
   function openEditDelivery(d: any) {
     setDeliveryForm({
       tank_id: String(d.tank_id),
-      supplier: d.supplier || '',
       supplier_id: d.supplier_id ? String(d.supplier_id) : '',
       litres: String(d.litres),
       cost_per_litre: String(d.cost_per_litre),
@@ -144,7 +162,9 @@ export default function TankStock() {
       delivery_time: d.delivery_timestamp
         ? String(d.delivery_timestamp).slice(11, 16)
         : '',
+      invoice_number: d.invoice_number || '',
     });
+    setDeliveryInvoiceFile(null);
     setError('');
     setDeliveryModal({ open: true, editing: d });
   }
@@ -152,25 +172,47 @@ export default function TankStock() {
     e.preventDefault();
     setSaving(true); setError('');
     try {
+      if (!deliveryForm.supplier_id) {
+        throw new Error('Select an existing supplier account before recording a delivery.');
+      }
       const payload: any = {
         tank_id: parseInt(deliveryForm.tank_id),
-        supplier: deliveryForm.supplier || null,
+        supplier_id: parseInt(deliveryForm.supplier_id),
         litres: parseFloat(deliveryForm.litres),
         cost_per_litre: parseFloat(deliveryForm.cost_per_litre),
         date: deliveryForm.date,
+        invoice_number: deliveryForm.invoice_number || null,
         ...(deliveryForm.delivery_time ? { delivery_time: deliveryForm.delivery_time } : {}),
       };
-      if (deliveryForm.supplier_id) payload.supplier_id = parseInt(deliveryForm.supplier_id);
+      let savedId: number | undefined;
       if (deliveryModal.editing) {
-        await updateFuelDelivery(deliveryModal.editing.id, payload);
+        const res = await updateFuelDelivery(deliveryModal.editing.id, payload);
+        savedId = res.data.data?.id || deliveryModal.editing.id;
       } else {
-        await createFuelDelivery(payload);
+        const res = await createFuelDelivery(payload);
+        savedId = res.data.data?.id;
+      }
+      if (deliveryInvoiceFile && savedId) {
+        await uploadFuelDeliveryInvoiceDocument(savedId, await fileToInvoicePayload(deliveryInvoiceFile));
       }
       setDeliveryModal({ open: false, editing: null });
+      setDeliveryInvoiceFile(null);
       loadData();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to save delivery');
+      setError(err.response?.data?.error || err.message || 'Failed to save delivery');
     } finally { setSaving(false); }
+  }
+
+  async function handleOpenDeliveryInvoice(d: any) {
+    try {
+      const res = await getFuelDeliveryInvoiceDocument(d.id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to open invoice PDF');
+    }
   }
 
   // ── Dips ───────────────────────────────────────────
@@ -364,7 +406,12 @@ export default function TankStock() {
             </button>
           )}
           {activeTab === 'deliveries' && (
-            <button onClick={openAddDelivery} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm">
+            <button
+              onClick={openAddDelivery}
+              disabled={tanks.length === 0 || suppliersList.length === 0}
+              title={suppliersList.length === 0 ? 'Create a supplier account first' : undefined}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+            >
               <Truck size={16} /> Record Delivery
             </button>
           )}
@@ -428,6 +475,11 @@ export default function TankStock() {
       {/* Deliveries Tab */}
       {activeTab === 'deliveries' && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
+          {suppliersList.length === 0 && (
+            <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 flex items-center gap-1">
+              <AlertTriangle size={12} /> Create a supplier account before recording fuel deliveries.
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
@@ -437,6 +489,7 @@ export default function TankStock() {
                 <th className="text-right p-3 font-medium text-gray-600">Cost/L</th>
                 <th className="text-right p-3 font-medium text-gray-600">Total Cost</th>
                 <th className="text-left p-3 font-medium text-gray-600">Supplier</th>
+                <th className="text-left p-3 font-medium text-gray-600">Invoice</th>
                 <th className="p-3 w-20"></th>
               </tr>
             </thead>
@@ -449,6 +502,20 @@ export default function TankStock() {
                   <td className="p-3 text-right">{formatKES(d.cost_per_litre)}</td>
                   <td className="p-3 text-right font-medium">{formatKES(d.total_cost)}</td>
                   <td className="p-3 text-gray-600">{d.supplier_name || d.supplier || '—'}</td>
+                  <td className="p-3 text-gray-600">
+                    <div className="flex items-center gap-2">
+                      <span>{d.invoice_number || '-'}</span>
+                      {d.invoice_file_path && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDeliveryInvoice(d)}
+                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          <FileText size={13} /> PDF
+                        </button>
+                      )}
+                    </div>
+                  </td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-end">
                       <button onClick={() => openEditDelivery(d)} className="p-1 text-gray-400 hover:text-blue-600 rounded"><Pencil size={14} /></button>
@@ -457,7 +524,7 @@ export default function TankStock() {
                   </td>
                 </tr>
               ))}
-              {deliveries.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-gray-400">No deliveries recorded.</td></tr>}
+              {deliveries.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">No deliveries recorded.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -701,30 +768,39 @@ export default function TankStock() {
                 </div>
               )}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
-                {suppliersList.length > 0 ? (
-                  <select value={deliveryForm.supplier_id}
-                    onChange={e => {
-                      const sid = e.target.value;
-                      const s = suppliersList.find((s: any) => String(s.id) === sid);
-                      setDeliveryForm({ ...deliveryForm, supplier_id: sid, supplier: s?.name || '' });
-                    }}
-                    className="w-full border border-gray-300 rounded-lg p-2">
-                    <option value="">— Select Supplier —</option>
-                    {suppliersList.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                ) : (
-                  <input type="text" value={deliveryForm.supplier} onChange={e => setDeliveryForm({ ...deliveryForm, supplier: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. Total Kenya" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Supplier *</label>
+                <select required value={deliveryForm.supplier_id}
+                  onChange={e => setDeliveryForm({ ...deliveryForm, supplier_id: e.target.value })}
+                  disabled={suppliersList.length === 0}
+                  className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100">
+                  <option value="">-- Select Supplier --</option>
+                  {suppliersList.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Deliveries must be tied to an existing supplier account and AP invoice.</p>
+                {suppliersList.length === 0 && (
+                  <p className="text-xs text-red-500 mt-1">No suppliers are configured. Add the supplier account first.</p>
                 )}
-                <p className="text-xs text-gray-400 mt-1">Selecting a supplier auto-creates an AP invoice.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Number (optional)</label>
+                <input type="text" value={deliveryForm.invoice_number} onChange={e => setDeliveryForm({ ...deliveryForm, invoice_number: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2" placeholder="Supplier invoice number" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Invoice PDF (optional)</label>
+                <input type="file" accept="application/pdf,.pdf" onChange={e => setDeliveryInvoiceFile(e.target.files?.[0] || null)}
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+                {deliveryModal.editing?.invoice_file_name && !deliveryInvoiceFile && (
+                  <p className="text-xs text-gray-500 mt-1">Current PDF: {deliveryModal.editing.invoice_file_name}</p>
+                )}
+                <p className="text-xs text-gray-400 mt-1">You can edit the delivery later to add the scanned invoice.</p>
               </div>
               {deliveryModal.editing && (
                 <p className="text-xs text-amber-600 bg-amber-50 rounded p-2">⚠️ Editing will adjust the tank's stock balance accordingly.</p>
               )}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setDeliveryModal({ open: false, editing: null })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                <button type="submit" disabled={saving || !deliveryForm.supplier_id} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
                   {saving ? 'Saving...' : deliveryModal.editing ? 'Save Changes' : 'Record'}
                 </button>
               </div>

@@ -102,7 +102,7 @@ const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {
 };
 
 app.use(cors(corsOptionsDelegate));
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '12mb' }));
 
 app.use((req, res, next) => {
   const start = Date.now();

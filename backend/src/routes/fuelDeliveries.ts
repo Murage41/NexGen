@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import fs from 'fs/promises';
+import path from 'path';
 import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
@@ -15,6 +17,42 @@ function kenyaDueDate(date: string, paymentTermsDays: number): string {
 
 function invoiceHasSettlement(invoice: any): boolean {
   return Number(invoice.balance) < Number(invoice.amount) || invoice.status === 'partial' || invoice.status === 'paid';
+}
+
+const BACKEND_ROOT = path.resolve(__dirname, '..', '..');
+const INVOICE_STORAGE_DIR = path.join(BACKEND_ROOT, 'data', 'invoice-documents', 'fuel-deliveries');
+const MAX_INVOICE_PDF_BYTES = 8 * 1024 * 1024;
+
+function routeError(message: string, status = 400): Error & { status?: number } {
+  const err = new Error(message) as Error & { status?: number };
+  err.status = status;
+  return err;
+}
+
+async function requireSupplierAccount(trx: any, supplierId: number): Promise<any> {
+  const supplier = await trx('suppliers')
+    .where({ id: supplierId })
+    .whereNull('deleted_at')
+    .first();
+  if (!supplier) {
+    throw routeError('Supplier account is required. Create the supplier account first, then select it on the delivery.');
+  }
+  return supplier;
+}
+
+function sanitizeInvoiceFileName(fileName: string): string {
+  const clean = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+  return clean || 'supplier-invoice.pdf';
+}
+
+function resolveStoredInvoicePath(storedPath: string | null | undefined): string | null {
+  if (!storedPath) return null;
+  const fullPath = path.resolve(BACKEND_ROOT, storedPath.replace(/\//g, path.sep));
+  const basePath = path.resolve(INVOICE_STORAGE_DIR);
+  const lowerFull = fullPath.toLowerCase();
+  const lowerBase = basePath.toLowerCase();
+  if (!lowerFull.startsWith(`${lowerBase}${path.sep}`)) return null;
+  return fullPath;
 }
 
 async function supplierDueDate(trx: any, supplierId: number, date: string): Promise<string> {
@@ -41,9 +79,112 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/:id/invoice-document', requireAdmin, async (req, res) => {
+  try {
+    const delivery = await db('fuel_deliveries')
+      .where({ id: req.params.id })
+      .whereNull('deleted_at')
+      .first();
+    if (!delivery) return res.status(404).json({ success: false, error: 'Delivery not found' });
+
+    const fullPath = resolveStoredInvoicePath(delivery.invoice_file_path);
+    if (!fullPath) return res.status(404).json({ success: false, error: 'Invoice PDF not found for this delivery' });
+
+    try {
+      await fs.access(fullPath);
+    } catch {
+      return res.status(404).json({ success: false, error: 'Invoice PDF file is missing on disk' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${delivery.invoice_file_name || 'supplier-invoice.pdf'}"`);
+    return res.sendFile(fullPath);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/:id/invoice-document', requireAdmin, async (req, res) => {
+  try {
+    const delivery = await db('fuel_deliveries')
+      .where({ id: req.params.id })
+      .whereNull('deleted_at')
+      .first();
+    if (!delivery) return res.status(404).json({ success: false, error: 'Delivery not found' });
+
+    const { file_name, mime_type, data_base64 } = req.body || {};
+    if (typeof file_name !== 'string' || !file_name.trim()) {
+      return res.status(400).json({ success: false, error: 'PDF file_name is required' });
+    }
+    if (!file_name.toLowerCase().endsWith('.pdf')) {
+      return res.status(400).json({ success: false, error: 'Only PDF invoice files are allowed' });
+    }
+    if (mime_type && mime_type !== 'application/pdf') {
+      return res.status(400).json({ success: false, error: 'Only application/pdf invoice files are allowed' });
+    }
+    if (typeof data_base64 !== 'string' || !data_base64.trim()) {
+      return res.status(400).json({ success: false, error: 'PDF data_base64 is required' });
+    }
+
+    const rawBase64 = data_base64.includes(',') ? data_base64.split(',').pop() || '' : data_base64;
+    const fileBuffer = Buffer.from(rawBase64, 'base64');
+    if (fileBuffer.length === 0) {
+      return res.status(400).json({ success: false, error: 'Invoice PDF is empty' });
+    }
+    if (fileBuffer.length > MAX_INVOICE_PDF_BYTES) {
+      return res.status(400).json({ success: false, error: 'Invoice PDF is too large. Maximum size is 8 MB.' });
+    }
+    if (fileBuffer.subarray(0, 4).toString() !== '%PDF') {
+      return res.status(400).json({ success: false, error: 'Uploaded file is not a valid PDF' });
+    }
+
+    await fs.mkdir(INVOICE_STORAGE_DIR, { recursive: true });
+    const safeName = sanitizeInvoiceFileName(file_name);
+    const storedName = `delivery-${delivery.id}-${Date.now()}-${safeName}`;
+    const fullPath = path.join(INVOICE_STORAGE_DIR, storedName);
+    await fs.writeFile(fullPath, fileBuffer, { flag: 'wx' });
+
+    const relativePath = path.relative(BACKEND_ROOT, fullPath).replace(/\\/g, '/');
+    const uploadedAt = new Date().toISOString();
+    const previousPath = resolveStoredInvoicePath(delivery.invoice_file_path);
+
+    const updated = await db.transaction(async (trx) => {
+      await trx('fuel_deliveries').where({ id: delivery.id }).update({
+        invoice_file_name: safeName,
+        invoice_file_path: relativePath,
+        invoice_uploaded_at: uploadedAt,
+      });
+
+      await trx('supplier_invoices')
+        .where({ delivery_id: delivery.id })
+        .whereNull('deleted_at')
+        .update({
+          invoice_file_name: safeName,
+          invoice_file_path: relativePath,
+          invoice_uploaded_at: uploadedAt,
+        });
+
+      return trx('fuel_deliveries')
+        .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
+        .leftJoin('suppliers', 'fuel_deliveries.supplier_id', 'suppliers.id')
+        .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type', 'suppliers.name as supplier_name')
+        .where('fuel_deliveries.id', delivery.id)
+        .first();
+    });
+
+    if (previousPath && previousPath !== fullPath) {
+      await fs.unlink(previousPath).catch(() => undefined);
+    }
+
+    res.json({ success: true, data: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) => {
   try {
-    const { tank_id, supplier, supplier_id, litres, cost_per_litre, date, delivery_time } = req.body;
+    const { tank_id, supplier_id, litres, cost_per_litre, date, delivery_time, invoice_number } = req.body;
     const total_cost = litres * cost_per_litre;
 
     // Effective real-world delivery time. If caller provided HH:MM, build
@@ -54,13 +195,23 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
       : nowSqlite;
 
     const delivery = await db.transaction(async (trx) => {
+      const supplier = await requireSupplierAccount(trx, supplier_id);
+      const tank = await trx('tanks').where({ id: tank_id }).select('fuel_type').first();
+      if (!tank) throw routeError('Tank not found', 404);
+
       const [id] = await trx('fuel_deliveries').insert({
-        tank_id, supplier, supplier_id: supplier_id || null,
-        litres, cost_per_litre, total_cost, date, delivery_timestamp,
+        tank_id,
+        supplier: supplier.name,
+        supplier_id,
+        litres,
+        cost_per_litre,
+        total_cost,
+        date,
+        delivery_timestamp,
+        invoice_number: invoice_number || null,
       });
 
       // Create FIFO batch
-      const tank = await trx('tanks').where({ id: tank_id }).select('fuel_type').first();
       await trx('delivery_batches').insert({
         delivery_id: id,
         tank_id,
@@ -85,20 +236,18 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
         reference_id: id,
         litres_change: parseFloat(litres),
         balance_after: newStock,
-        notes: `Delivery from ${supplier || 'supplier'}: ${parseFloat(litres).toFixed(1)} L (date: ${date})`,
+        notes: `Delivery from ${supplier.name}: ${parseFloat(litres).toFixed(1)} L (date: ${date})`,
       });
 
-      // Auto-create supplier invoice if supplier_id provided
-      if (supplier_id) {
-        await trx('supplier_invoices').insert({
-          supplier_id,
-          delivery_id: id,
-          amount: total_cost,
-          balance: total_cost,
-          status: 'unpaid',
-          due_date: await supplierDueDate(trx, supplier_id, date),
-        });
-      }
+      await trx('supplier_invoices').insert({
+        supplier_id,
+        delivery_id: id,
+        invoice_number: invoice_number || null,
+        amount: total_cost,
+        balance: total_cost,
+        status: 'unpaid',
+        due_date: await supplierDueDate(trx, supplier_id, date),
+      });
 
       return trx('fuel_deliveries')
         .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
@@ -111,7 +260,7 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
     res.status(201).json({ success: true, data: delivery });
   } catch (err: any) {
     console.error('[deliveries:create] ERROR', err.message, err.stack);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -120,13 +269,14 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     const existing = await db('fuel_deliveries').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!existing) return res.status(404).json({ success: false, error: 'Delivery not found' });
 
-    const { tank_id, supplier, supplier_id: reqSupplierId, litres, cost_per_litre, date, delivery_time } = req.body;
+    const { tank_id, supplier_id: reqSupplierId, litres, cost_per_litre, date, delivery_time, invoice_number } = req.body;
     const newLitres = parseFloat(litres);
     const oldLitres = parseFloat(existing.litres);
     const oldTankId = existing.tank_id;
     const newTankId = parseInt(tank_id);
     const total_cost = newLitres * parseFloat(cost_per_litre);
-    const resolvedSupplierId = reqSupplierId || existing.supplier_id || null;
+    const resolvedSupplierId = reqSupplierId;
+    const supplier = await requireSupplierAccount(db, resolvedSupplierId);
     const linkedInvoice = await db('supplier_invoices')
       .where({ delivery_id: req.params.id })
       .whereNull('deleted_at')
@@ -134,7 +284,7 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
 
     if (linkedInvoice) {
       const amountChanged = Math.round(Number(linkedInvoice.amount) * 100) !== Math.round(total_cost * 100);
-      const supplierChanged = resolvedSupplierId && Number(resolvedSupplierId) !== Number(linkedInvoice.supplier_id);
+      const supplierChanged = Number(resolvedSupplierId) !== Number(linkedInvoice.supplier_id);
       if ((amountChanged || supplierChanged) && invoiceHasSettlement(linkedInvoice)) {
         return res.status(400).json({
           success: false,
@@ -170,23 +320,37 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
             : null);
 
       await trx('fuel_deliveries').where({ id: req.params.id }).update({
-        tank_id: newTankId, supplier, supplier_id: resolvedSupplierId,
-        litres: newLitres, cost_per_litre, total_cost, date,
+        tank_id: newTankId,
+        supplier: supplier.name,
+        supplier_id: resolvedSupplierId,
+        litres: newLitres,
+        cost_per_litre,
+        total_cost,
+        date,
+        invoice_number: invoice_number || null,
         ...(newDeliveryTs !== null ? { delivery_timestamp: newDeliveryTs } : {}),
       });
 
-      if (linkedInvoice && resolvedSupplierId && !invoiceHasSettlement(linkedInvoice)) {
-        await trx('supplier_invoices').where({ id: linkedInvoice.id }).update({
-          supplier_id: resolvedSupplierId,
-          amount: total_cost,
-          balance: total_cost,
-          status: 'unpaid',
-          due_date: await supplierDueDate(trx, resolvedSupplierId, date),
-        });
-      } else if (!linkedInvoice && resolvedSupplierId) {
+      if (linkedInvoice) {
+        const invoiceUpdate: any = { invoice_number: invoice_number || null };
+        if (!invoiceHasSettlement(linkedInvoice)) {
+          Object.assign(invoiceUpdate, {
+            supplier_id: resolvedSupplierId,
+            amount: total_cost,
+            balance: total_cost,
+            status: 'unpaid',
+            due_date: await supplierDueDate(trx, resolvedSupplierId, date),
+          });
+        }
+        await trx('supplier_invoices').where({ id: linkedInvoice.id }).update(invoiceUpdate);
+      } else {
         await trx('supplier_invoices').insert({
           supplier_id: resolvedSupplierId,
           delivery_id: parseInt(req.params.id as string),
+          invoice_number: invoice_number || null,
+          invoice_file_name: existing.invoice_file_name || null,
+          invoice_file_path: existing.invoice_file_path || null,
+          invoice_uploaded_at: existing.invoice_uploaded_at || null,
           amount: total_cost,
           balance: total_cost,
           status: 'unpaid',
@@ -263,7 +427,7 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     res.json({ success: true, data: delivery });
   } catch (err: any) {
     console.error('[deliveries:update] ERROR', err.message, err.stack);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 

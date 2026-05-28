@@ -11,12 +11,12 @@ const optionalText = () => z.string().nullish().optional();
 // --- Fuel Deliveries ---
 export const createDeliverySchema = z.object({
   tank_id: z.number({ error: 'tank_id is required' }).int().positive(),
-  supplier: optionalText(),
-  supplier_id: z.number().int().positive().nullish().optional(),
+  supplier_id: z.number({ error: 'supplier_id is required' }).int().positive(),
   litres: z.number({ error: 'litres is required' }).positive('litres must be greater than 0'),
   cost_per_litre: z.number({ error: 'cost_per_litre is required' }).positive('cost_per_litre must be greater than 0'),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD format'),
   delivery_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'delivery_time must be HH:MM format').optional(),
+  invoice_number: optionalText(),
 });
 
 export const updateDeliverySchema = createDeliverySchema;

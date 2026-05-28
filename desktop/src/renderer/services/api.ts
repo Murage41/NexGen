@@ -150,6 +150,10 @@ export const getFuelDeliveries = (params?: any) => api.get('/fuel-deliveries', {
 export const createFuelDelivery = (data: any) => api.post('/fuel-deliveries', data);
 export const updateFuelDelivery = (id: number, data: any) => api.put(`/fuel-deliveries/${id}`, data);
 export const deleteFuelDelivery = (id: number) => api.delete(`/fuel-deliveries/${id}`);
+export const uploadFuelDeliveryInvoiceDocument = (id: number, data: any) =>
+  api.post(`/fuel-deliveries/${id}/invoice-document`, data);
+export const getFuelDeliveryInvoiceDocument = (id: number) =>
+  api.get(`/fuel-deliveries/${id}/invoice-document`, { responseType: 'blob' });
 
 // ============ Tank Dips ============
 export const getTankDips = (params?: any) => api.get('/tank-dips', { params });
