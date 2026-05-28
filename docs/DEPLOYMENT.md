@@ -113,6 +113,19 @@ Generate strong values for:
 - `SESSION_SECRET`
 - `DESKTOP_KEY`, required for the current desktop app unless running mobile-only
 
+Mobile sessions expire automatically. The recommended single-station default is:
+
+```env
+SESSION_TTL_HOURS=12
+LOGIN_MAX_ATTEMPTS=5
+LOGIN_WINDOW_MINUTES=15
+LOGIN_LOCK_MINUTES=15
+```
+
+This covers a normal long shift while forcing a fresh login after the shift/day.
+Repeated wrong PINs lock that employee/IP combination briefly to slow brute-force
+attempts.
+
 If `DESKTOP_KEY` is set, build the desktop app with the same value as
 `VITE_DESKTOP_KEY`.
 
@@ -205,7 +218,7 @@ from a controlled local script.
 - Replace desktop shared-key bypass with proper admin login.
 - Stop exposing active employee names publicly for mobile login; use staff
   code/PIN or username/PIN instead.
-- Add rate limiting to login and sensitive endpoints.
+- Add rate limiting to remaining sensitive endpoints beyond login.
 - Add structured audit log entries for login, backup, restore, and config
   changes.
 - Add a one-click backup verification/restore test command.

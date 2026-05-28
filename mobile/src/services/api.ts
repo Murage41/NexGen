@@ -24,6 +24,21 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const url = String(error?.config?.url || '');
+    if (status === 401 && !url.includes('/auth/login')) {
+      localStorage.removeItem('nexgen_token');
+      localStorage.removeItem('nexgen_user');
+      localStorage.removeItem('nexgen_session_expires_at');
+      window.dispatchEvent(new Event('nexgen:session-expired'));
+    }
+    return Promise.reject(error);
+  },
+);
+
 // Auth
 export const getAuthEmployees = () => api.get('/auth/employees');
 export const login = (employee_id: number, pin: string) => api.post('/auth/login', { employee_id, pin });

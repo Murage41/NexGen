@@ -21,7 +21,7 @@ function getDesktopKey(): string | null {
   return null;
 }
 
-function getSessionTtlMs(): number {
+export function getSessionTtlMs(): number {
   const ttlHours = Number(process.env.SESSION_TTL_HOURS || DEFAULT_SESSION_TTL_HOURS);
   const safeTtlHours = Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : DEFAULT_SESSION_TTL_HOURS;
   return safeTtlHours * 60 * 60 * 1000;

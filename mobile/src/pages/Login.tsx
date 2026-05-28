@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Fuel } from 'lucide-react';
 
 export default function Login() {
-  const { setUser } = useAuth();
+  const { setSession } = useAuth();
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [pin, setPin] = useState('');
@@ -18,9 +18,12 @@ export default function Login() {
       .finally(() => setLoading(false));
   }, []);
 
-  function storeSession(data: any, token?: string) {
-    if (token) localStorage.setItem('nexgen_token', token);
-    setUser(data);
+  function storeSession(data: any, token?: string, expiresAt?: string) {
+    if (!token || !expiresAt) {
+      setError('Login response did not include a valid session. Please update the server and try again.');
+      return;
+    }
+    setSession(data, token, expiresAt);
   }
 
   async function handleLogin() {
@@ -28,7 +31,7 @@ export default function Login() {
     setError('');
     try {
       const res = await apiLogin(selectedId, pin);
-      storeSession(res.data.data, res.data.token);
+      storeSession(res.data.data, res.data.token, res.data.session?.expires_at);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Login failed');
     }
@@ -43,7 +46,7 @@ export default function Login() {
         setTimeout(() => {
           setError('');
           apiLogin(selectedId, newPin)
-            .then(res => storeSession(res.data.data, res.data.token))
+            .then(res => storeSession(res.data.data, res.data.token, res.data.session?.expires_at))
             .catch((err: any) => {
               setError(err.response?.data?.error || 'Login failed');
               setPin('');
@@ -85,7 +88,7 @@ export default function Login() {
                   }`}
                 >
                   {emp.name}
-                  <span className="block text-xs text-gray-400 mt-0.5">{emp.role}</span>
+                  {emp.role && <span className="block text-xs text-gray-400 mt-0.5">{emp.role}</span>}
                 </button>
               ))}
               {employees.length === 0 && (
