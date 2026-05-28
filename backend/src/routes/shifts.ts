@@ -15,6 +15,13 @@ function toSqliteDateTime(value: string): string {
   return String(value).slice(0, 19).replace('T', ' ');
 }
 
+function excludeOpenShiftCredits(query: any, trx: any) {
+  query.where(function (this: any) {
+    this.whereNull('shift_id')
+      .orWhereNotIn('shift_id', trx('shifts').select('id').where({ status: 'open' }));
+  });
+}
+
 /** Guard: reject modifications to closed shifts */
 async function requireOpenShift(req: any, res: any): Promise<boolean> {
   const shift = await db('shifts').where({ id: req.params.id }).select('status').first();
@@ -946,8 +953,10 @@ router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftO
 /**
  * POST /shifts/:id/credit-receipts
  *
- * Record a debt payment received DURING an open shift.
+ * Record a prior debt payment received DURING an open shift.
  * The cash (or M-Pesa) goes straight into the shift drawer.
+ * Credits issued by an open shift are deliberately excluded: same-shift
+ * give-and-collect creates false comfort in the drawer reconciliation.
  *
  * Accounting treatment:
  *   - Reduces credit_accounts.balance (receivable decreases)
@@ -1005,6 +1014,28 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
     const today = getKenyaDate();
 
     const receipt = await db.transaction(async (trx) => {
+      const openCredits = await trx('credits')
+        .where({ account_id })
+        .whereNull('deleted_at')
+        .whereNot('status', 'paid')
+        .where('balance', '>', 0)
+        .modify((query: any) => excludeOpenShiftCredits(query, trx))
+        .orderBy('created_at', 'asc');
+      const eligibleBalance = Math.round(
+        openCredits.reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0) * 100,
+      ) / 100;
+
+      if (pay > eligibleBalance) {
+        throw Object.assign(
+          new Error(
+            eligibleBalance > 0
+              ? `Payment KES ${pay} exceeds prior closed-shift debt KES ${eligibleBalance}. Credit issued in an open shift must be collected after that shift is closed.`
+              : 'No prior closed-shift debt is available for collection. Credit issued in an open shift must be collected after that shift is closed.',
+          ),
+          { http: 400 },
+        );
+      }
+
       // 1. Record credit payment linked to this shift
       const [paymentId] = await trx('credit_payments').insert({
         account_id,
@@ -1019,12 +1050,6 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
 
       // 2. FIFO settle oldest individual credit line items
       let remaining = pay;
-      const openCredits = await trx('credits')
-        .where({ account_id })
-        .whereNull('deleted_at')
-        .whereNot('status', 'paid')
-        .where('balance', '>', 0)
-        .orderBy('created_at', 'asc');
       for (const credit of openCredits) {
         if (remaining <= 0) break;
         const apply = Math.min(remaining, Number(credit.balance));
@@ -1074,7 +1099,7 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
 
     res.status(201).json({ success: true, data: receipt });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 

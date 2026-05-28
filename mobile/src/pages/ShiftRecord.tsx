@@ -1,9 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt } from '../services/api';
+import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
 import { Save, Plus, Trash2, Search, UserPlus, Banknote } from 'lucide-react';
+
+const PREDEFINED_EXPENSE_CATEGORIES = [
+  'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
+  'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
+  'Cleaning', 'Insurance', 'Accounting', 'Other',
+];
 
 export default function ShiftRecord() {
   const { id } = useParams();
@@ -27,13 +33,23 @@ export default function ShiftRecord() {
   const [loading, setLoading] = useState(true);
   // Credit account search
   const [creditAccounts, setCreditAccounts] = useState<any[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<string[]>(PREDEFINED_EXPENSE_CATEGORIES);
   const [accountSearch, setAccountSearch] = useState('');
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
-  useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); }, [id]);
+  useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
+
+  async function loadExpenseCategories() {
+    try {
+      const res = await getExpenseCategories();
+      setExpenseCategories(res.data.data || PREDEFINED_EXPENSE_CATEGORIES);
+    } catch {
+      setExpenseCategories(PREDEFINED_EXPENSE_CATEGORIES);
+    }
+  }
 
   async function loadCurrentPrices() {
     try {
@@ -758,14 +774,18 @@ export default function ShiftRecord() {
           ))}
           <div className="bg-white rounded-xl p-4 shadow-sm">
             <p className="text-sm font-medium text-gray-700 mb-2">Add Expense</p>
-            <input value={newExp.category} onChange={e => setNewExp({ ...newExp, category: e.target.value })}
-              placeholder="Category (e.g. Wages, Fuel)" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
+            <select value={newExp.category} onChange={e => setNewExp({ ...newExp, category: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm bg-white">
+              <option value="">Select category...</option>
+              {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
             <input value={newExp.description} onChange={e => setNewExp({ ...newExp, description: e.target.value })}
               placeholder="Description (optional)" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
             <input type="number" value={newExp.amount} onChange={e => setNewExp({ ...newExp, amount: e.target.value })}
               placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
             <button onClick={handleAddExpense}
-              className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1">
+              disabled={!newExp.category || !newExp.amount}
+              className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50">
               <Plus size={16} /> Add Expense
             </button>
           </div>

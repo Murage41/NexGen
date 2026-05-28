@@ -6,6 +6,13 @@ import { recomputeAccountBalance } from '../services/accountBalance';
 
 const router = Router();
 
+function excludeOpenShiftCredits(query: any, trx: any) {
+  query.where(function (this: any) {
+    this.whereNull('shift_id')
+      .orWhereNotIn('shift_id', trx('shifts').select('id').where({ status: 'open' }));
+  });
+}
+
 // GET / - List all credit accounts with running balance
 router.get('/', async (req, res) => {
   try {
@@ -214,6 +221,27 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
     const notes = req.body.notes || null;
 
     const result = await db.transaction(async (trx) => {
+      const openCredits = await trx('credits')
+        .where({ account_id: account.id })
+        .whereNull('deleted_at')
+        .whereNot('status', 'paid')
+        .where('balance', '>', 0)
+        .modify((query: any) => excludeOpenShiftCredits(query, trx))
+        .orderBy('created_at', 'asc');
+      const eligibleBalance = Math.round(
+        openCredits.reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0) * 100,
+      ) / 100;
+
+      if (amount > eligibleBalance) {
+        throw Object.assign(
+          new Error(
+            eligibleBalance > 0
+              ? `Payment amount (${amount}) exceeds closed-shift debt (${eligibleBalance}). Credits issued in open shifts can be paid after their shifts are closed.`
+              : 'This account only has open-shift credit. Close the shift before recording a payment against it.',
+          ),
+          { http: 400 },
+        );
+      }
       // 1. Record the payment against the account (credit_id is null — it's an account-level payment)
       const [paymentId] = await trx('credit_payments').insert({
         credit_id: null,
@@ -227,12 +255,6 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
 
       // 2. Auto-settle outstanding credits FIFO so individual rows stay consistent.
       let remaining = amount;
-      const openCredits = await trx('credits')
-        .where({ account_id: account.id })
-        .whereNull('deleted_at')
-        .whereNot('status', 'paid')
-        .orderBy('created_at', 'asc');
-
       for (const credit of openCredits) {
         if (remaining <= 0) break;
         const creditBalance = Number(credit.balance);
@@ -264,7 +286,7 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
     });
   } catch (err: any) {
     console.error('[creditAccounts:payment] ERROR', err.message, err.stack);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 

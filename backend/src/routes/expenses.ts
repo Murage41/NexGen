@@ -65,9 +65,12 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 // GET categories (distinct used + predefined)
 router.get('/categories', async (_req, res) => {
   try {
-    const rows = await db('expenses').whereNull('deleted_at').distinct('category').orderBy('category');
-    const used = rows.map((r: any) => r.category).filter(Boolean);
-    // Merge predefined with any user-created categories
+    const [generalRows, shiftRows] = await Promise.all([
+      db('expenses').whereNull('deleted_at').distinct('category'),
+      db('shift_expenses').whereNull('deleted_at').distinct('category'),
+    ]);
+    const used = [...generalRows, ...shiftRows].map((r: any) => r.category).filter(Boolean);
+    // Merge predefined with any used categories from general and shift expenses.
     const all = [...new Set([...EXPENSE_CATEGORIES, ...used])].sort();
     res.json({ success: true, data: all });
   } catch (err: any) {

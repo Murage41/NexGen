@@ -4,9 +4,15 @@ import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
   repayDebt, getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
-  addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices,
+  addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories,
 } from '../services/api';
 import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets } from 'lucide-react';
+
+const PREDEFINED_EXPENSE_CATEGORIES = [
+  'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
+  'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
+  'Cleaning', 'Insurance', 'Accounting', 'Other',
+];
 
 export default function ShiftDetail() {
   const { id } = useParams();
@@ -49,6 +55,7 @@ export default function ShiftDetail() {
   const [showReceiptAccountDropdown, setShowReceiptAccountDropdown] = useState(false);
   const [collectingReceipt, setCollectingReceipt] = useState(false);
   const [readingError, setReadingError] = useState('');
+  const [expenseCategories, setExpenseCategories] = useState<string[]>(PREDEFINED_EXPENSE_CATEGORIES);
   // Current per-fuel-type prices, used to surface KES/L anomalies on the readings table.
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
@@ -67,7 +74,16 @@ export default function ShiftDetail() {
     return { cumulative: Math.round(((rolloversSoFar + 1) * capacity + raw) * 100) / 100, rolledOver: true };
   }
 
-  useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); }, [id]);
+  useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
+
+  async function loadExpenseCategories() {
+    try {
+      const res = await getExpenseCategories();
+      setExpenseCategories(res.data.data || PREDEFINED_EXPENSE_CATEGORIES);
+    } catch {
+      setExpenseCategories(PREDEFINED_EXPENSE_CATEGORIES);
+    }
+  }
 
   async function loadCurrentPrices() {
     try {
@@ -974,8 +990,11 @@ export default function ShiftDetail() {
           <div className="flex gap-2 items-end">
             <div className="flex-1">
               <label className="block text-xs text-gray-500 mb-1">Category</label>
-              <input value={newExpense.category} onChange={e => setNewExpense({ ...newExpense, category: e.target.value })}
-                placeholder="e.g. Generator Fuel, Cleaning" className="w-full border border-gray-300 rounded p-2 text-sm" />
+              <select value={newExpense.category} onChange={e => setNewExpense({ ...newExpense, category: e.target.value })}
+                className="w-full border border-gray-300 rounded p-2 text-sm bg-white">
+                <option value="">Select category...</option>
+                {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
             <div className="flex-1">
               <label className="block text-xs text-gray-500 mb-1">Description</label>
@@ -987,7 +1006,7 @@ export default function ShiftDetail() {
               <input type="number" step="0.01" value={newExpense.amount} onChange={e => setNewExpense({ ...newExpense, amount: e.target.value })}
                 placeholder="0.00" className="w-full border border-gray-300 rounded p-2 text-sm" />
             </div>
-            <button onClick={handleAddExpense} className="bg-gray-800 text-white px-3 py-2 rounded text-sm hover:bg-gray-900 flex items-center gap-1">
+            <button onClick={handleAddExpense} disabled={!newExpense.category || !newExpense.amount} className="bg-gray-800 text-white px-3 py-2 rounded text-sm hover:bg-gray-900 flex items-center gap-1 disabled:opacity-50">
               <Plus size={14} /> Add
             </button>
           </div>

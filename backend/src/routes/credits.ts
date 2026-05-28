@@ -80,6 +80,15 @@ router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => 
     if (credit.status === 'paid') {
       return res.status(400).json({ success: false, error: 'Credit is already fully paid' });
     }
+    if (credit.shift_id) {
+      const shift = await db('shifts').where({ id: credit.shift_id }).select('status').first();
+      if (shift?.status === 'open') {
+        return res.status(400).json({
+          success: false,
+          error: 'Credit issued in an open shift cannot be collected until that shift is closed.',
+        });
+      }
+    }
 
     if (amount > credit.balance) {
       return res.status(400).json({
