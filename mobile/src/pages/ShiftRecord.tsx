@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices } from '../services/api';
+import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
-import { Save, Plus, Trash2, Search, UserPlus } from 'lucide-react';
+import { Save, Plus, Trash2, Search, UserPlus, Banknote } from 'lucide-react';
 
 export default function ShiftRecord() {
   const { id } = useParams();
@@ -13,10 +13,12 @@ export default function ShiftRecord() {
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
+  const [creditReceipts, setCreditReceipts] = useState<any[]>([]);
   const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [newExp, setNewExp] = useState({ category: '', description: '', amount: '' });
   const [newCredit, setNewCredit] = useState({ customer_name: '', amount: '', description: '', account_id: null as number | null });
+  const [newReceipt, setNewReceipt] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
   // Phase 3B: invoice-mode form — shown only when the selected account is invoice-mode
   const [newInvoice, setNewInvoice] = useState({ fuel_type: 'petrol' as 'petrol' | 'diesel', litres: '' });
   const [selectedBillingMode, setSelectedBillingMode] = useState<'money' | 'invoice' | null>(null);
@@ -85,6 +87,7 @@ export default function ShiftRecord() {
       setReadings(rs);
       if (d.collections) setCollections({ cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount });
       setShiftCredits(d.shift_credits || []);
+      setCreditReceipts(d.credit_receipts || []);
       setInvoiceConsumption(d.invoice_consumption || []);
       setExpenses(d.expenses || []);
     } catch (err) { console.error(err); }
@@ -215,6 +218,25 @@ export default function ShiftRecord() {
     }
   }
 
+  async function handleAddCreditReceipt() {
+    const amount = parseFloat(newReceipt.amount);
+    if (!newReceipt.account_id || !Number.isFinite(amount) || amount <= 0) return;
+    try {
+      await addShiftCreditReceipt(parseInt(id!), {
+        account_id: parseInt(newReceipt.account_id),
+        amount,
+        payment_method: newReceipt.payment_method,
+        notes: newReceipt.notes || undefined,
+      });
+      setNewReceipt({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
+      await loadShift();
+      await loadCreditAccounts();
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to record payment';
+      alert(msg);
+    }
+  }
+
   // Phase 3B: add a litre consumption entry for an invoice-mode customer.
   // No amount is collected — server computes retail_amount from fuel_prices.
   async function handleAddInvoice() {
@@ -271,7 +293,7 @@ export default function ShiftRecord() {
   }
 
   const filteredAccounts = creditAccounts.filter(a =>
-    a.name.toLowerCase().includes(accountSearch.toLowerCase())
+    a.type === 'customer' && a.name.toLowerCase().includes(accountSearch.toLowerCase())
   );
 
   async function handleDeleteCredit(creditId: number) {
@@ -336,7 +358,16 @@ export default function ShiftRecord() {
   ] as const;
 
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
+  const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
   const totalInvoice = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
+  const receiptAccounts = creditAccounts.filter((a: any) =>
+    a.type === 'customer' &&
+    ((a.billing_mode || 'money') === 'money') &&
+    Number(a.outstanding_balance ?? a.balance ?? 0) > 0
+  );
+  const selectedReceiptAccount = receiptAccounts.find((a: any) => String(a.id) === String(newReceipt.account_id));
+  const selectedReceiptBalance = Number(selectedReceiptAccount?.outstanding_balance ?? selectedReceiptAccount?.balance ?? 0);
+  const receiptAmount = parseFloat(newReceipt.amount) || 0;
 
   return (
     <div className="pb-6">
@@ -507,6 +538,98 @@ export default function ShiftRecord() {
               <span>KES {(totalCredits + totalInvoice).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
             </div>
           )}
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                <Banknote size={15} /> Debt Payments Received
+              </p>
+              {totalCreditReceipts > 0 && (
+                <span className="text-sm font-bold text-green-700">
+                  KES {totalCreditReceipts.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                </span>
+              )}
+            </div>
+
+            {creditReceipts.length > 0 && (
+              <div className="space-y-2 mb-3">
+                {creditReceipts.map((r: any) => (
+                  <div key={r.id} className="bg-green-50 rounded-lg p-2 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">{r.account_name}</p>
+                      <p className="text-xs text-green-700 capitalize">{r.payment_method}</p>
+                    </div>
+                    <span className="text-sm font-semibold text-green-700">
+                      KES {Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {receiptAccounts.length === 0 ? (
+              <p className="text-xs text-gray-400">No money-mode customer balances available for collection.</p>
+            ) : (
+              <div className="space-y-2">
+                <select
+                  value={newReceipt.account_id}
+                  onChange={e => setNewReceipt({ ...newReceipt, account_id: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-3 text-sm bg-white"
+                >
+                  <option value="">Select customer balance...</option>
+                  {receiptAccounts.map((a: any) => {
+                    const balance = Number(a.outstanding_balance ?? a.balance ?? 0);
+                    return (
+                      <option key={a.id} value={a.id}>
+                        {a.name} - KES {balance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newReceipt.amount}
+                  onChange={e => setNewReceipt({ ...newReceipt, amount: e.target.value })}
+                  placeholder="Payment amount"
+                  className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+                />
+                {selectedReceiptAccount && (
+                  <p className={`text-xs ${receiptAmount > selectedReceiptBalance ? 'text-red-600' : 'text-gray-400'}`}>
+                    Max payable: KES {selectedReceiptBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                  </p>
+                )}
+
+                <div className="grid grid-cols-2 gap-2">
+                  {['cash', 'mpesa'].map(method => (
+                    <button
+                      key={method}
+                      type="button"
+                      onClick={() => setNewReceipt({ ...newReceipt, payment_method: method })}
+                      className={`py-2.5 rounded-lg text-sm font-medium capitalize border ${newReceipt.payment_method === method ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                    >
+                      {method === 'mpesa' ? 'M-Pesa' : 'Cash'}
+                    </button>
+                  ))}
+                </div>
+
+                <input
+                  value={newReceipt.notes}
+                  onChange={e => setNewReceipt({ ...newReceipt, notes: e.target.value })}
+                  placeholder="Notes (optional)"
+                  className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+                />
+
+                <button
+                  onClick={handleAddCreditReceipt}
+                  disabled={!newReceipt.account_id || !newReceipt.amount || receiptAmount > selectedReceiptBalance}
+                  className="w-full bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50"
+                >
+                  <Plus size={16} /> Record Payment
+                </button>
+              </div>
+            )}
+          </div>
           <div className="bg-white rounded-xl p-4 shadow-sm">
             <p className="text-sm font-medium text-gray-700 mb-2">Add Credit</p>
 

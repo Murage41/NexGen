@@ -35,8 +35,11 @@ export default function ShiftDetail() {
 
   async function loadCreditAccounts() {
     try {
-      const res = await getCreditAccounts();
-      setCreditAccounts(res.data.data || res.data || []);
+      const res = await getCreditAccounts({ billing_mode: 'money' });
+      const rows = res.data.data || res.data || [];
+      setCreditAccounts(rows.filter((a: any) =>
+        a.type === 'customer' && Number(a.outstanding_balance ?? a.balance ?? 0) > 0
+      ));
     } catch { setCreditAccounts([]); }
   }
 
@@ -589,7 +592,7 @@ export default function ShiftDetail() {
                 <option value="">Select account...</option>
                 {creditAccounts.map((a: any) => (
                   <option key={a.id} value={a.id}>
-                    {a.name} (Bal: KES {Number(a.balance).toLocaleString('en-KE', { minimumFractionDigits: 2 })})
+                    {a.name} (Bal: KES {Number(a.outstanding_balance ?? a.balance ?? 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })})
                   </option>
                 ))}
               </select>

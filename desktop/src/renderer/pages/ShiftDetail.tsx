@@ -1163,7 +1163,12 @@ export default function ShiftDetail() {
                 {showReceiptAccountDropdown && (
                   <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                     {creditAccounts
-                      .filter(a => !receiptAccountSearch || a.name?.toLowerCase().includes(receiptAccountSearch.toLowerCase()))
+                      .filter(a =>
+                        a.type === 'customer' &&
+                        ((a.billing_mode || 'money') === 'money') &&
+                        Number(a.outstanding_balance ?? a.balance ?? 0) > 0 &&
+                        (!receiptAccountSearch || a.name?.toLowerCase().includes(receiptAccountSearch.toLowerCase()))
+                      )
                       .map((a: any) => (
                         <button key={a.id} type="button"
                           className="w-full text-left px-3 py-2 hover:bg-gray-100 text-sm flex justify-between items-center"
@@ -1174,7 +1179,7 @@ export default function ShiftDetail() {
                             setShowReceiptAccountDropdown(false);
                           }}>
                           <span className="font-medium">{a.name}</span>
-                          <span className="text-xs text-gray-400">Bal: {formatKES(Number(a.balance))}</span>
+                          <span className="text-xs text-gray-400">Bal: {formatKES(Number(a.outstanding_balance ?? a.balance ?? 0))}</span>
                         </button>
                       ))}
                   </div>

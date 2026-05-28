@@ -25,7 +25,7 @@ export default function Credits() {
 
   async function loadAccounts() {
     try {
-      const res = await getCreditAccounts();
+      const res = await getCreditAccounts({ billing_mode: 'money' });
       setAccounts(res.data.data || res.data);
     } catch (err) {
       console.error(err);

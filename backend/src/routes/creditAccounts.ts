@@ -189,6 +189,13 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
       });
     }
 
+    if ((account.billing_mode || 'money') !== 'money') {
+      return res.status(400).json({
+        success: false,
+        error: `Account "${account.name}" is invoice-mode. Use customer invoice payments instead.`,
+      });
+    }
+
     const amount = Number(req.body.amount);
     if (!amount || amount <= 0) {
       return res.status(400).json({ success: false, error: 'Amount must be positive' });

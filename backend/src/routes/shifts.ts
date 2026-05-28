@@ -962,9 +962,18 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
   try {
     const shiftId = parseInt(req.params.id as string);
     const { account_id, amount, payment_method, notes } = req.body;
+    const pay = Math.round(Number(amount) * 100) / 100;
 
-    if (!account_id || !amount || amount <= 0) {
+    if (!account_id || !Number.isFinite(pay) || pay <= 0) {
       return res.status(400).json({ success: false, error: 'account_id and a positive amount are required' });
+    }
+
+    const method = payment_method || 'cash';
+    if (!['cash', 'mpesa'].includes(method)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Shift credit receipts must be cash or M-Pesa because they affect shift collections',
+      });
     }
 
     const account = await db('credit_accounts')
@@ -972,9 +981,20 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
       .whereNull('deleted_at')
       .first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
+    if (account.type !== 'customer') {
+      return res.status(400).json({
+        success: false,
+        error: 'Shift credit receipts can only be recorded for customer accounts',
+      });
+    }
+    if ((account.billing_mode || 'money') !== 'money') {
+      return res.status(400).json({
+        success: false,
+        error: `Account "${account.name}" is invoice-mode. Record invoice payments from Customer Invoices instead.`,
+      });
+    }
 
     const balance = Number(account.balance);
-    const pay = Math.round(Number(amount) * 100) / 100;
     if (pay > balance) {
       return res.status(400).json({
         success: false,
@@ -982,7 +1002,6 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
       });
     }
 
-    const method = payment_method || 'cash';
     const today = getKenyaDate();
 
     const receipt = await db.transaction(async (trx) => {
