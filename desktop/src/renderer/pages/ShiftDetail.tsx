@@ -353,7 +353,12 @@ export default function ShiftDetail() {
       setReceiptAccountSearch('');
       await loadShift();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to record payment');
+      if (err?.code === 'ECONNABORTED') {
+        await loadShift();
+      }
+      alert(err?.code === 'ECONNABORTED'
+        ? 'Payment request timed out. The shift has been refreshed; check the debt payments list before trying again.'
+        : err.response?.data?.error || 'Failed to record payment');
     } finally {
       setCollectingReceipt(false);
     }
@@ -389,13 +394,25 @@ export default function ShiftDetail() {
   const expectedSales = readings.reduce((s: number, r: any) => s + (parseFloat(r.amount_sold) || 0), 0);
   const totalCash = parseFloat(String(collections.cash_amount)) || 0;
   const totalMpesa = parseFloat(String(collections.mpesa_amount)) || 0;
-  const totalCredits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
+  const totalCredits = shiftCredits.reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
   const totalInvoiceConsumption = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
-  const totalExpenses = expenses.reduce((s: number, e: any) => s + e.amount, 0);
+  const totalExpenses = expenses.reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
   const employeeWage = shift.employee_wage || 0;
-  const totalAccounted = totalCash + totalMpesa + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
-  const variance = totalAccounted - expectedSales;
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
+  const creditReceiptsCash = creditReceipts
+    .filter((r: any) => (r.payment_method || 'cash') !== 'mpesa')
+    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const creditReceiptsMpesa = creditReceipts
+    .filter((r: any) => r.payment_method === 'mpesa')
+    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const salesCash = totalCash;
+  const salesMpesa = totalMpesa;
+  const salesCollections = salesCash + salesMpesa;
+  const drawerCash = salesCash + creditReceiptsCash;
+  const drawerMpesa = salesMpesa + creditReceiptsMpesa;
+  const drawerTotal = drawerCash + drawerMpesa;
+  const totalAccounted = salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
+  const variance = totalAccounted - expectedSales;
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
@@ -446,11 +463,11 @@ export default function ShiftDetail() {
           <div></div>
 
           <div className="flex justify-between">
-            <span className="text-gray-500">Cash</span>
+            <span className="text-gray-500">Sales Cash</span>
             <span className="font-medium">{formatKES(totalCash)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">M-Pesa</span>
+            <span className="text-gray-500">Sales M-Pesa</span>
             <span className="font-medium">{formatKES(totalMpesa)}</span>
           </div>
           {totalMpesa > 0 && mpesaFee > 0 && (
@@ -460,9 +477,15 @@ export default function ShiftDetail() {
             </div>
           )}
           {totalCreditReceipts > 0 && (
-            <div className="flex justify-between text-xs text-green-600 -mt-1">
-              <span className="pl-3">↳ incl. {formatKES(totalCreditReceipts)} debt collected</span>
-              <span></span>
+            <div className="col-span-2 grid grid-cols-2 gap-x-8 rounded border border-green-100 bg-white/70 px-3 py-2 text-xs">
+              <div className="flex justify-between text-green-700">
+                <span>Prior debt receipts</span>
+                <span>{formatKES(totalCreditReceipts)}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Expected physical handover</span>
+                <span>{formatKES(drawerTotal)}</span>
+              </div>
             </div>
           )}
           <div className="flex justify-between">
@@ -486,7 +509,7 @@ export default function ShiftDetail() {
         </div>
         <div className="border-t pt-2 flex justify-between items-center">
           <div className="flex justify-between flex-1 mr-8">
-            <span className="font-semibold text-gray-700">Total Accounted</span>
+            <span className="font-semibold text-gray-700">Sales Accounted</span>
             <span className="font-bold text-gray-800">{formatKES(totalAccounted)}</span>
           </div>
           <div className="text-right">
@@ -682,10 +705,10 @@ export default function ShiftDetail() {
         </table>
       </div>
 
-      {/* Collections */}
+      {/* Sales Collections */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold text-gray-700">Collections</h2>
+          <h2 className="text-lg font-semibold text-gray-700">Sales Collections</h2>
           {isOpen && (
             <button onClick={handleSaveCollections} disabled={saving} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
               <Save size={14} /> Save
@@ -694,24 +717,36 @@ export default function ShiftDetail() {
         </div>
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Cash (KES)</label>
+            <label className="block text-sm text-gray-600 mb-1">Sales Cash (KES)</label>
             <input type="number" step="0.01" value={numVal(collections.cash_amount)} disabled={!isOpen}
               onChange={e => setCollections({ ...collections, cash_amount: parseFloat(e.target.value) || 0 })}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">M-Pesa (KES)</label>
+            <label className="block text-sm text-gray-600 mb-1">Sales M-Pesa (KES)</label>
             <input type="number" step="0.01" value={numVal(collections.mpesa_amount)} disabled={!isOpen}
               onChange={e => setCollections({ ...collections, mpesa_amount: parseFloat(e.target.value) || 0 })}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Total (Cash + M-Pesa)</label>
+            <label className="block text-sm text-gray-600 mb-1">Sales Cash + M-Pesa</label>
             <div className="w-full border border-gray-200 rounded-lg p-2 bg-gray-50 font-bold text-lg">
-              {formatKES(totalCash + totalMpesa)}
+              {formatKES(salesCollections)}
             </div>
+            {totalCreditReceipts > 0 && (
+              <div className="mt-2 space-y-1 text-xs text-gray-500">
+                <div className="flex justify-between">
+                  <span>Prior debt receipts</span>
+                  <span>{formatKES(totalCreditReceipts)}</span>
+                </div>
+                <div className="flex justify-between font-medium text-gray-700">
+                  <span>Expected handover</span>
+                  <span>{formatKES(drawerTotal)}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

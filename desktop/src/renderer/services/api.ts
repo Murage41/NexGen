@@ -8,7 +8,7 @@ const desktopKey = import.meta.env.VITE_DESKTOP_KEY ||
 
 const api = axios.create({
   baseURL,
-  timeout: 10000,
+  timeout: 30000,
   headers: desktopKey ? { 'x-desktop-key': desktopKey } : undefined,
 });
 

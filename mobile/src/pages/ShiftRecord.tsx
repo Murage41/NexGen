@@ -193,7 +193,7 @@ export default function ShiftRecord() {
         mpesa_amount: parseFloat(String(collections.mpesa_amount)) || 0,
         credits_amount: creditsTotal,
       });
-      alert('Collections saved');
+      alert('Sales collections saved');
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.message || 'Failed to save collections';
       alert(msg);
@@ -248,7 +248,13 @@ export default function ShiftRecord() {
       await loadShift();
       await loadCreditAccounts();
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || 'Failed to record payment';
+      if (err?.code === 'ECONNABORTED') {
+        await loadShift();
+        await loadCreditAccounts();
+      }
+      const msg = err?.code === 'ECONNABORTED'
+        ? 'Payment request timed out. The shift has been refreshed; check the debt payments list before trying again.'
+        : err?.response?.data?.error || err?.message || 'Failed to record payment';
       alert(msg);
     }
   }
@@ -368,13 +374,21 @@ export default function ShiftRecord() {
 
   const tabs = [
     { key: 'readings', label: 'Readings' },
-    { key: 'collections', label: 'Money In' },
+    { key: 'collections', label: 'Sales Money' },
     { key: 'credits', label: 'Credits' },
     { key: 'expenses', label: 'Money Out' },
   ] as const;
 
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
+  const creditReceiptsCash = creditReceipts
+    .filter((r: any) => (r.payment_method || 'cash') !== 'mpesa')
+    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const creditReceiptsMpesa = creditReceipts
+    .filter((r: any) => r.payment_method === 'mpesa')
+    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+  const salesCollections = (Number(collections.cash_amount) || 0) + (Number(collections.mpesa_amount) || 0);
+  const drawerTotal = salesCollections + totalCreditReceipts;
   const totalInvoice = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
   const receiptAccounts = creditAccounts.filter((a: any) =>
     a.type === 'customer' &&
@@ -485,14 +499,14 @@ export default function ShiftRecord() {
         <div className="space-y-3">
           <div className="bg-white rounded-xl p-4 shadow-sm space-y-3">
             <div>
-              <label className="text-sm text-gray-600 mb-1 block">Cash Collected (KES)</label>
+              <label className="text-sm text-gray-600 mb-1 block">Sales Cash (KES)</label>
               <input type="number" step="0.01" value={numVal(collections.cash_amount)}
                 onChange={e => setCollections({ ...collections, cash_amount: parseFloat(e.target.value) || 0 })}
                 onFocus={selectOnFocus} placeholder="0.00"
                 className="w-full border border-gray-300 rounded-lg p-3 text-base" />
             </div>
             <div>
-              <label className="text-sm text-gray-600 mb-1 block">M-Pesa Received (KES)</label>
+              <label className="text-sm text-gray-600 mb-1 block">Sales M-Pesa (KES)</label>
               <input type="number" step="0.01" value={numVal(collections.mpesa_amount)}
                 onChange={e => setCollections({ ...collections, mpesa_amount: parseFloat(e.target.value) || 0 })}
                 onFocus={selectOnFocus} placeholder="0.00"
@@ -500,11 +514,31 @@ export default function ShiftRecord() {
             </div>
             <div className="pt-2 border-t">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Total (Cash + M-Pesa)</span>
+                <span className="text-gray-500">Sales Cash + M-Pesa</span>
                 <span className="font-bold text-lg">
-                  KES {((collections.cash_amount || 0) + (collections.mpesa_amount || 0)).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                  KES {salesCollections.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                 </span>
               </div>
+              {totalCreditReceipts > 0 && (
+                <div className="mt-2 rounded-lg bg-green-50 p-2 space-y-1 text-xs">
+                  <div className="flex justify-between text-green-700">
+                    <span>Prior debt receipts</span>
+                    <span>KES {totalCreditReceipts.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-500">
+                    <span>Cash receipts</span>
+                    <span>KES {creditReceiptsCash.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-500">
+                    <span>M-Pesa receipts</span>
+                    <span>KES {creditReceiptsMpesa.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-gray-700 border-t border-green-100 pt-1">
+                    <span>Expected handover</span>
+                    <span>KES {drawerTotal.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <button onClick={saveCollections} disabled={saving}

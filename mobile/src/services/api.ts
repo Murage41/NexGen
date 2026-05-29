@@ -9,7 +9,7 @@ const baseURL = isViteDev
 
 const api = axios.create({
   baseURL,
-  timeout: 10000,
+  timeout: 30000,
   headers: {
     'ngrok-skip-browser-warning': 'true',
   },

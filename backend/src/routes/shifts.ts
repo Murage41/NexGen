@@ -22,6 +22,91 @@ function excludeOpenShiftCredits(query: any, trx: any) {
   });
 }
 
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function sumMoney(rows: any[], selector: (row: any) => any): number {
+  return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
+}
+
+function splitCreditReceipts(creditReceipts: any[]) {
+  const credit_receipts_cash = sumMoney(
+    creditReceipts.filter((receipt: any) => (receipt.payment_method || 'cash') !== 'mpesa'),
+    (receipt: any) => receipt.amount,
+  );
+  const credit_receipts_mpesa = sumMoney(
+    creditReceipts.filter((receipt: any) => receipt.payment_method === 'mpesa'),
+    (receipt: any) => receipt.amount,
+  );
+  const total_credit_receipts = roundMoney(credit_receipts_cash + credit_receipts_mpesa);
+
+  return {
+    credit_receipts_cash,
+    credit_receipts_mpesa,
+    total_credit_receipts,
+  };
+}
+
+function computeShiftAccountability({
+  readings,
+  collections,
+  shiftCredits,
+  invoiceConsumption,
+  creditReceipts,
+  expenses,
+  employee_wage,
+}: {
+  readings: any[];
+  collections: any;
+  shiftCredits: any[];
+  invoiceConsumption: any[];
+  creditReceipts: any[];
+  expenses: any[];
+  employee_wage: number;
+}) {
+  const expected_sales = sumMoney(readings, (reading: any) => reading.amount_sold);
+  const total_cash = roundMoney(collections ? Number(collections.cash_amount || 0) : 0);
+  const total_mpesa = roundMoney(collections ? Number(collections.mpesa_amount || 0) : 0);
+  const total_credits = sumMoney(shiftCredits, (credit: any) => credit.amount);
+  const total_invoice_consumption = sumMoney(invoiceConsumption, (entry: any) => entry.retail_amount);
+  const total_expenses = sumMoney(expenses, (expense: any) => expense.amount);
+  const normalized_wage = roundMoney(Number(employee_wage || 0));
+  const { credit_receipts_cash, credit_receipts_mpesa, total_credit_receipts } = splitCreditReceipts(creditReceipts);
+
+  const sales_cash = total_cash;
+  const sales_mpesa = total_mpesa;
+  const sales_collections = roundMoney(sales_cash + sales_mpesa);
+  const drawer_cash = roundMoney(sales_cash + credit_receipts_cash);
+  const drawer_mpesa = roundMoney(sales_mpesa + credit_receipts_mpesa);
+  const drawer_total = roundMoney(drawer_cash + drawer_mpesa);
+  const total_accounted = roundMoney(
+    sales_collections + total_credits + total_invoice_consumption + total_expenses + normalized_wage,
+  );
+  const variance = roundMoney(total_accounted - expected_sales);
+
+  return {
+    expected_sales,
+    total_cash,
+    total_mpesa,
+    drawer_total,
+    credit_receipts_cash,
+    credit_receipts_mpesa,
+    total_credit_receipts,
+    sales_cash,
+    sales_mpesa,
+    sales_collections,
+    drawer_cash,
+    drawer_mpesa,
+    total_credits,
+    total_invoice_consumption,
+    total_expenses,
+    employee_wage: normalized_wage,
+    total_accounted,
+    variance,
+  };
+}
+
 /** Guard: reject modifications to closed shifts */
 async function requireOpenShift(req: any, res: any): Promise<boolean> {
   const shift = await db('shifts').where({ id: req.params.id }).select('status').first();
@@ -150,7 +235,6 @@ router.get('/:id', async (req, res) => {
       .whereNull('credit_payments.deleted_at')
       .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone')
       .orderBy('credit_payments.date', 'asc');
-    const total_credit_receipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
 
     // Get employee's outstanding debt
     const outstandingDebts = await db('staff_debts')
@@ -158,26 +242,19 @@ router.get('/:id', async (req, res) => {
       .orderBy('created_at', 'asc');
     const total_outstanding_debt = outstandingDebts.reduce((sum: number, d: any) => sum + d.balance, 0);
 
-    const expected_sales = readings.reduce((sum: number, r: any) => sum + r.amount_sold, 0);
-    const total_cash = collections ? collections.cash_amount : 0;
-    const total_mpesa = collections ? collections.mpesa_amount : 0;
-    const total_credits = shiftCredits.reduce((sum: number, c: any) => sum + c.amount, 0);
-    const total_expenses = expenses.reduce((sum: number, e: any) => sum + e.amount, 0);
-    // Phase 3B: invoice-mode consumption counts toward shift balance at retail price
-    // (like a credit from the shift's POV). Pricing delta vs agreed invoice price is
-    // a separate concern reported in the pricing-variance report.
-    const total_invoice_consumption = invoiceConsumption.reduce(
-      (sum: number, c: any) => sum + Number(c.retail_amount || 0),
-      0,
-    );
     // For closed shifts, use the stored wage_paid; for open shifts, show daily_wage as preview
     const employee_wage = shift.status === 'closed'
       ? (shift.wage_paid ?? shift.employee_wage ?? 0)
       : (shift.employee_wage || 0);
-    // Accounted = everything the attendant used the sales money for (including wages taken from drawer)
-    const total_accounted =
-      total_cash + total_mpesa + total_credits + total_invoice_consumption + total_expenses + employee_wage;
-    const variance = total_accounted - expected_sales;
+    const accountability = computeShiftAccountability({
+      readings,
+      collections,
+      shiftCredits,
+      invoiceConsumption,
+      creditReceipts,
+      expenses,
+      employee_wage,
+    });
 
     res.json({
       success: true,
@@ -192,16 +269,7 @@ router.get('/:id', async (req, res) => {
         wage_deduction: wageDeduction || null,
         outstanding_debts: outstandingDebts,
         total_outstanding_debt,
-        expected_sales,
-        total_cash,
-        total_mpesa,
-        total_credits,
-        total_invoice_consumption,
-        total_credit_receipts,
-        total_expenses,
-        employee_wage,
-        total_accounted,
-        variance,
+        ...accountability,
       },
     });
   } catch (err: any) {
@@ -960,11 +1028,10 @@ router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftO
  *
  * Accounting treatment:
  *   - Reduces credit_accounts.balance (receivable decreases)
- *   - Increases shift_collections.cash_amount or mpesa_amount (cash in drawer increases)
+ *   - Leaves shift_collections as current-shift sales collections only
  *   - Records credit_payments row linked to this shift_id
- *   - Does NOT touch revenue / pump_readings — no double-counting
- *   - The shift may show a positive variance (cash > today's sales) which is correct
- *     because old debt was collected; the UI labels this as "debt collected"
+ *   - Does NOT touch revenue / pump_readings
+ *   - Appears in drawer/bank movement totals, but not sales accountability variance
  */
 router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   if (!(await requireOpenShift(req, res))) return;
@@ -1064,32 +1131,8 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
       // 3. Recompute account balance from source rows (Phase 1 stale-cache fix)
       await recomputeAccountBalance(account_id, trx);
 
-      // 4. Add to shift collections (cash or mpesa)
-      let collections = await trx('shift_collections').where({ shift_id: shiftId }).first();
-      if (!collections) {
-        await trx('shift_collections').insert({ shift_id: shiftId, cash_amount: 0, mpesa_amount: 0, credits_amount: 0, total_collected: 0 });
-        collections = await trx('shift_collections').where({ shift_id: shiftId }).first();
-      }
-
-      if (method === 'mpesa') {
-        const { fee, net } = await computeMpesaFee(pay, today);
-        const newMpesa = Math.round((Number(collections.mpesa_amount) + pay) * 100) / 100;
-        const newFee = Math.round(((Number(collections.mpesa_fee) || 0) + fee) * 100) / 100;
-        const newNet = Math.round(((Number(collections.mpesa_net) || 0) + net) * 100) / 100;
-        await trx('shift_collections').where({ shift_id: shiftId }).update({
-          mpesa_amount: newMpesa,
-          mpesa_fee: newFee,
-          mpesa_net: newNet,
-          total_collected: Number(collections.cash_amount) + newMpesa + Number(collections.credits_amount),
-        });
-      } else {
-        const newCash = Math.round((Number(collections.cash_amount) + pay) * 100) / 100;
-        await trx('shift_collections').where({ shift_id: shiftId }).update({
-          cash_amount: newCash,
-          total_collected: newCash + Number(collections.mpesa_amount) + Number(collections.credits_amount),
-        });
-      }
-
+      // 4. Return the receipt. Shift collections remain sales-only; drawer totals
+      // are derived by adding these receipts on read.
       return trx('credit_payments')
         .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
         .where('credit_payments.id', paymentId)
@@ -1185,27 +1228,27 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
       const collections = await trx('shift_collections').where({ shift_id: shift.id }).first();
       const expenses = await trx('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
       const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
+      const creditReceipts = await trx('credit_payments')
+        .where({ shift_id: shift.id })
+        .whereNull('deleted_at');
       // Phase 3B: invoice-mode consumption — retail_amount enters the balance math
       // exactly like a credit. Agreed-price delta is reconciled at invoice time.
       const invoiceConsumption = await trx('invoice_consumption')
         .where({ shift_id: shift.id })
         .whereNull('deleted_at');
 
-      const expected_sales = readings.reduce((s: number, r: any) => s + r.amount_sold, 0);
-      const total_cash = collections ? collections.cash_amount : 0;
-      const total_mpesa = collections ? collections.mpesa_amount : 0;
-      const total_credits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
-      const total_invoice_consumption = invoiceConsumption.reduce(
-        (s: number, c: any) => s + Number(c.retail_amount || 0),
-        0,
-      );
-      const total_expenses = expenses.reduce((s: number, e: any) => s + e.amount, 0);
       const employee_wage = (submittedWage !== undefined && submittedWage !== null)
         ? Number(submittedWage)
         : (shift.daily_wage || 0);
-      const total_accounted =
-        total_cash + total_mpesa + total_credits + total_invoice_consumption + total_expenses + employee_wage;
-      const variance = total_accounted - expected_sales;
+      const { variance } = computeShiftAccountability({
+        readings,
+        collections,
+        shiftCredits,
+        invoiceConsumption,
+        creditReceipts,
+        expenses,
+        employee_wage,
+      });
 
       // Handle deficit and deductions
       if (variance < 0) {

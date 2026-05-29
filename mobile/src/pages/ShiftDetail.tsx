@@ -124,7 +124,12 @@ export default function ShiftDetail() {
       setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
       await loadShift();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to record payment');
+      if (err?.code === 'ECONNABORTED') {
+        await loadShift();
+      }
+      alert(err?.code === 'ECONNABORTED'
+        ? 'Payment request timed out. The shift has been refreshed; check the debt payments list before trying again.'
+        : err.response?.data?.error || 'Failed to record payment');
     } finally {
       setCollectingReceipt(false);
     }
@@ -142,11 +147,31 @@ export default function ShiftDetail() {
   const totalInvoiceConsumption = shift.total_invoice_consumption || 0;
   const totalExpenses = shift.total_expenses || 0;
   const employeeWage = shift.employee_wage || 0;
-  const totalAccounted = totalCash + totalMpesa + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
-  const variance = totalAccounted - expected;
 
   const totalDebt = debts.reduce((s: number, d: any) => s + (d.balance || 0), 0);
-  const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
+  const totalCreditReceipts = Number(
+    shift.total_credit_receipts ?? creditReceipts.reduce((s: number, r: any) => s + Number(r.amount || 0), 0),
+  );
+  const creditReceiptsCash = Number(
+    shift.credit_receipts_cash ?? creditReceipts
+      .filter((r: any) => (r.payment_method || 'cash') !== 'mpesa')
+      .reduce((s: number, r: any) => s + Number(r.amount || 0), 0),
+  );
+  const creditReceiptsMpesa = Number(
+    shift.credit_receipts_mpesa ?? creditReceipts
+      .filter((r: any) => r.payment_method === 'mpesa')
+      .reduce((s: number, r: any) => s + Number(r.amount || 0), 0),
+  );
+  const salesCash = Number(shift.sales_cash ?? totalCash);
+  const salesMpesa = Number(shift.sales_mpesa ?? totalMpesa);
+  const salesCollections = Number(shift.sales_collections ?? (salesCash + salesMpesa));
+  const drawerCash = Number(shift.drawer_cash ?? (salesCash + creditReceiptsCash));
+  const drawerMpesa = Number(shift.drawer_mpesa ?? (salesMpesa + creditReceiptsMpesa));
+  const drawerTotal = Number(shift.drawer_total ?? (drawerCash + drawerMpesa));
+  const totalAccounted = Number(
+    shift.total_accounted ?? (salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage),
+  );
+  const variance = Number(shift.variance ?? (totalAccounted - expected));
 
   return (
     <div className="pb-6">
@@ -195,11 +220,11 @@ export default function ShiftDetail() {
 
         <div className="border-t border-gray-200 pt-1 mt-1 space-y-0.5 text-sm">
           <div className="flex justify-between">
-            <span className="text-gray-400">Cash</span>
+            <span className="text-gray-400">Sales Cash</span>
             <span>{fmt(totalCash)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-400">M-Pesa</span>
+            <span className="text-gray-400">Sales M-Pesa</span>
             <span>{fmt(totalMpesa)}</span>
           </div>
           {shift.collections && Number(shift.collections.mpesa_fee) > 0 && (
@@ -209,9 +234,15 @@ export default function ShiftDetail() {
             </div>
           )}
           {totalCreditReceipts > 0 && (
-            <div className="flex justify-between text-xs text-green-600 -mt-0.5">
-              <span className="pl-3">↳ incl. {fmt(totalCreditReceipts)} debt collected</span>
-              <span></span>
+            <div className="rounded-lg border border-green-100 bg-white/70 p-2 text-xs space-y-1">
+              <div className="flex justify-between text-green-700">
+                <span>Prior debt receipts</span>
+                <span>{fmt(totalCreditReceipts)}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Expected handover</span>
+                <span>{fmt(drawerTotal)}</span>
+              </div>
             </div>
           )}
           <div className="flex justify-between">
@@ -229,7 +260,7 @@ export default function ShiftDetail() {
         </div>
 
         <div className="border-t border-gray-200 pt-1 mt-1 flex justify-between text-sm">
-          <span className="font-semibold text-gray-700">Total Accounted</span>
+          <span className="font-semibold text-gray-700">Sales Accounted</span>
           <span className="font-bold">{fmt(totalAccounted)}</span>
         </div>
 
@@ -310,16 +341,26 @@ export default function ShiftDetail() {
 
       {/* Collections */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-        <p className="font-semibold text-gray-700 mb-2">Collections</p>
+        <p className="font-semibold text-gray-700 mb-2">Sales Collections</p>
         {shift.collections ? (
           <div className="space-y-1 text-sm">
-            <div className="flex justify-between"><span className="text-gray-500">Cash</span><span>{fmt(shift.collections.cash_amount)}</span></div>
-            <div className="flex justify-between"><span className="text-gray-500">M-Pesa</span><span>{fmt(shift.collections.mpesa_amount)}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Sales Cash</span><span>{fmt(shift.collections.cash_amount)}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Sales M-Pesa</span><span>{fmt(shift.collections.mpesa_amount)}</span></div>
             {Number(shift.collections.mpesa_fee) > 0 && (
               <div className="flex justify-between text-xs text-gray-400">
                 <span className="pl-3">↳ fee {fmt(Number(shift.collections.mpesa_fee))} · net {fmt(Number(shift.collections.mpesa_net))}</span>
                 <span></span>
               </div>
+            )}
+            {totalCreditReceipts > 0 && (
+              <>
+                <div className="flex justify-between text-xs text-green-700">
+                  <span>Prior debt receipts</span><span>{fmt(totalCreditReceipts)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-medium text-gray-700">
+                  <span>Expected handover</span><span>{fmt(drawerTotal)}</span>
+                </div>
+              </>
             )}
           </div>
         ) : <p className="text-sm text-gray-400">Not recorded yet</p>}
@@ -489,9 +530,15 @@ export default function ShiftDetail() {
                 <span className="font-semibold">{fmt(expected)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Total Accounted</span>
+                <span className="text-gray-500">Sales Accounted</span>
                 <span className="font-semibold">{fmt(totalAccounted)}</span>
               </div>
+              {totalCreditReceipts > 0 && (
+                <div className="flex justify-between text-xs text-green-700">
+                  <span>Prior debt receipts excluded</span>
+                  <span>{fmt(totalCreditReceipts)}</span>
+                </div>
+              )}
               <div className={`flex justify-between font-bold ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 <span>Variance</span>
                 <span>{variance >= 0 ? '+' : ''}{fmt(variance)}</span>
