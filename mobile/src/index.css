@@ -15,6 +15,30 @@ body {
 /* Safe area for bottom nav */
 .pb-safe { padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
 
+.mobile-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.5);
+  z-index: 70;
+}
+
+.mobile-bottom-sheet {
+  background: white;
+  width: 100%;
+  max-height: calc(100vh - 0.75rem);
+  max-height: calc(100dvh - 0.75rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+}
+
+.mobile-dialog-card {
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;

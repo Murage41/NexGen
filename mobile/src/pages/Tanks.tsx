@@ -201,8 +201,8 @@ export default function Tanks() {
 
       {/* Add / Edit Modal */}
       {(showAdd || editTank) && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => { setShowAdd(false); setEditTank(null); }}>
-          <div className="bg-white w-full rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
+        <div className="mobile-modal-overlay flex items-end" onClick={() => { setShowAdd(false); setEditTank(null); }}>
+          <div className="mobile-bottom-sheet rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
             <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
             <h2 className="text-lg font-bold text-gray-800 mb-4">{editTank ? 'Edit Tank' : 'Add Tank'}</h2>
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
@@ -252,8 +252,8 @@ export default function Tanks() {
 
       {/* Delete Confirmation */}
       {deleteTarget && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-6">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+        <div className="mobile-modal-overlay flex items-center justify-center px-6">
+          <div className="mobile-dialog-card bg-white rounded-2xl p-6 w-full max-w-sm">
             <h3 className="text-lg font-bold text-gray-800 mb-2">Delete Tank?</h3>
             <p className="text-sm text-gray-500 mb-4">
               Delete <strong>{deleteTarget.label}</strong>? This cannot be undone. Any pumps linked to this tank must be reassigned first.

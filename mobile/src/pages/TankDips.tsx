@@ -276,8 +276,8 @@ export default function TankDips() {
 
       {/* Add / Edit Modal */}
       {(showAdd || editDip) && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => { setShowAdd(false); setEditDip(null); }}>
-          <div className="bg-white w-full rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
+        <div className="mobile-modal-overlay flex items-end" onClick={() => { setShowAdd(false); setEditDip(null); }}>
+          <div className="mobile-bottom-sheet rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
             <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
             <h2 className="text-lg font-bold text-gray-800 mb-4">{editDip ? 'Edit Dip Reading' : 'Record Dip Reading'}</h2>
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
@@ -358,8 +358,8 @@ export default function TankDips() {
 
       {/* Delete Confirmation */}
       {deleteTarget && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-6">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+        <div className="mobile-modal-overlay flex items-center justify-center px-6">
+          <div className="mobile-dialog-card bg-white rounded-2xl p-6 w-full max-w-sm">
             <h3 className="text-lg font-bold text-gray-800 mb-2">Delete Dip Reading?</h3>
             <p className="text-sm text-gray-500 mb-4">
               Delete the dip reading of <strong>{parseFloat(deleteTarget.measured_litres).toLocaleString()} L</strong> on <strong>{formatDate(deleteTarget.dip_date)}</strong>? This cannot be undone.

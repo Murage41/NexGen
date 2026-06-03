@@ -505,8 +505,8 @@ export default function ShiftDetail() {
 
       {/* Close Shift Modal */}
       {showCloseModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
-          <div className="bg-white w-full max-w-lg rounded-t-2xl p-5 max-h-[85vh] overflow-y-auto">
+        <div className="mobile-modal-overlay flex items-end justify-center">
+          <div className="mobile-bottom-sheet max-w-lg rounded-t-2xl p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-800">Close Shift #{shift.id}</h3>
               <button onClick={() => setShowCloseModal(false)} className="p-1 text-gray-400">
@@ -622,8 +622,8 @@ export default function ShiftDetail() {
 
       {/* Collect Receipt Modal */}
       {showReceiptModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
-          <div className="bg-white w-full max-w-lg rounded-t-2xl p-5 max-h-[85vh] overflow-y-auto">
+        <div className="mobile-modal-overlay flex items-end justify-center">
+          <div className="mobile-bottom-sheet max-w-lg rounded-t-2xl p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-800">Collect Debt Payment</h3>
               <button onClick={() => { setShowReceiptModal(false); setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' }); }}
@@ -684,8 +684,8 @@ export default function ShiftDetail() {
 
       {/* Debt Repay Modal */}
       {showDebtModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
-          <div className="bg-white w-full max-w-lg rounded-t-2xl p-5">
+        <div className="mobile-modal-overlay flex items-end justify-center">
+          <div className="mobile-bottom-sheet max-w-lg rounded-t-2xl p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-800">Repay Staff Debt</h3>
               <button onClick={() => setShowDebtModal(false)} className="p-1 text-gray-400">

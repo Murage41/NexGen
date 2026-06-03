@@ -39,8 +39,8 @@ export default function Shifts() {
       } />
 
       {showNew && (
-        <div className="fixed inset-0 bg-black/50 flex items-end z-50">
-          <div className="bg-white w-full rounded-t-2xl p-5">
+        <div className="mobile-modal-overlay flex items-end">
+          <div className="mobile-bottom-sheet rounded-t-2xl p-5">
             <h2 className="text-lg font-semibold mb-3">Open New Shift</h2>
             <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)}
               className="w-full border border-gray-300 rounded-lg p-3 mb-3 text-base">

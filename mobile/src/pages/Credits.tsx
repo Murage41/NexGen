@@ -250,8 +250,8 @@ export default function Credits() {
 
         {/* Record Payment Modal */}
         {showPayment && paymentAccount && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end" onClick={() => { setShowPayment(false); setPaymentAccount(null); }}>
-            <div className="bg-white w-full rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
+          <div className="mobile-modal-overlay flex items-end" onClick={() => { setShowPayment(false); setPaymentAccount(null); }}>
+            <div className="mobile-bottom-sheet rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
               <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
               <h2 className="text-lg font-bold text-gray-800 mb-1">Record Payment</h2>
               <p className="text-sm text-gray-500 mb-4">

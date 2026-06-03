@@ -149,6 +149,72 @@ export default function Suppliers() {
 
   if (loading) return <div className="text-gray-500">Loading...</div>;
 
+  const supplierFormModal = supplierModal.open && (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-lg">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">{supplierModal.editing ? 'Edit Supplier' : 'Add Supplier'}</h2>
+          <button onClick={() => setSupplierModal({ open: false, editing: null })} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+        </div>
+        {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+        <form onSubmit={handleSave} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+              <input type="text" required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. Mache Petroleum" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <input type="text" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2" placeholder="0712 345 678" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2" />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+              <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
+              <input type="text" value={form.bank_name} onChange={e => setForm({ ...form, bank_name: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bank Account #</label>
+              <input type="text" value={form.bank_account} onChange={e => setForm({ ...form, bank_account: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms (days)</label>
+              <input type="number" min="0" value={form.payment_terms_days}
+                onChange={e => setForm({ ...form, payment_terms_days: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2" />
+              <p className="text-xs text-gray-400 mt-1">0 = Cash on Delivery</p>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+              <textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <button type="button" onClick={() => setSupplierModal({ open: false, editing: null })}
+              className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {saving ? 'Saving...' : supplierModal.editing ? 'Save Changes' : 'Add Supplier'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
   // ─── Detail View ───
   if (view === 'detail' && detail) {
     const unpaidInvoices = (detail.invoices || []).filter((i: any) => i.status !== 'paid' && !i.deleted_at);
@@ -349,6 +415,7 @@ export default function Suppliers() {
             </div>
           </div>
         )}
+        {supplierFormModal}
       </div>
     );
   }
@@ -404,71 +471,7 @@ export default function Suppliers() {
       </div>
 
       {/* Supplier Add/Edit Modal */}
-      {supplierModal.open && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-lg">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">{supplierModal.editing ? 'Edit Supplier' : 'Add Supplier'}</h2>
-              <button onClick={() => setSupplierModal({ open: false, editing: null })} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
-            </div>
-            {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
-            <form onSubmit={handleSave} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                  <input type="text" required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. Mache Petroleum" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                  <input type="text" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="0712 345 678" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                  <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
-                  <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
-                  <input type="text" value={form.bank_name} onChange={e => setForm({ ...form, bank_name: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Bank Account #</label>
-                  <input type="text" value={form.bank_account} onChange={e => setForm({ ...form, bank_account: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms (days)</label>
-                  <input type="number" min="0" value={form.payment_terms_days}
-                    onChange={e => setForm({ ...form, payment_terms_days: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" />
-                  <p className="text-xs text-gray-400 mt-1">0 = Cash on Delivery</p>
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                  <textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
-                </div>
-              </div>
-              <div className="flex gap-2 justify-end pt-2">
-                <button type="button" onClick={() => setSupplierModal({ open: false, editing: null })}
-                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                <button type="submit" disabled={saving}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-                  {saving ? 'Saving...' : supplierModal.editing ? 'Save Changes' : 'Add Supplier'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {supplierFormModal}
 
       {/* Delete Confirmation */}
       {deleteConfirm && (
