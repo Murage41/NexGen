@@ -238,8 +238,11 @@ After `npm run dev`, or after background startup:
 The live database is ignored by Git, so normal code updates should not overwrite
 station data.
 
-When you push new ERP changes from the development PC, update the station PC
-like this:
+Before updating the station PC, first confirm the development PC has committed
+and pushed the change to `origin/main`. The update command should pull only a
+clean fast-forward history; do not use a force pull on the live station PC.
+
+Update the station PC like this:
 
 ```cmd
 cd /d E:\NexGen
