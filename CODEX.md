@@ -11,3 +11,7 @@ When a code or documentation change is intended to be pulled onto the station PC
 
 Use `git pull --ff-only` in station PC instructions. If it fails, stop and review
 the station PC's local changes instead of forcing, rebasing, or resetting.
+
+Include `npm run build:mobile` in station PC update commands before restarting
+the dev stack. The ngrok/backend mobile URL serves `/mobile` from `mobile/dist`,
+so mobile UI changes are not visible there until the mobile bundle is rebuilt.

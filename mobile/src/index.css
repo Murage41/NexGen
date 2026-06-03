@@ -19,7 +19,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgb(0 0 0 / 0.5);
-  z-index: 70;
+  z-index: 9999;
 }
 
 .mobile-bottom-sheet {
@@ -29,7 +29,7 @@ body {
   max-height: calc(100dvh - 0.75rem);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(5.25rem + env(safe-area-inset-bottom, 0px));
 }
 
 .mobile-dialog-card {

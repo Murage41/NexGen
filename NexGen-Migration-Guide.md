@@ -249,9 +249,15 @@ cd /d E:\NexGen
 npm run dev:stop
 git pull --ff-only
 npm install
+npm run build:mobile
 npm run dev:bg
 npm run dev:status
 ```
+
+`npm run build:mobile` is required for the ngrok/backend mobile URL because the
+backend serves `/mobile` from `mobile/dist`. The separate mobile Vite dev server
+on port `5174` updates from source, but the public domain path uses the built
+files.
 
 If `git pull --ff-only` fails, do not force it. It means the station PC has
 local code changes that need review first.
