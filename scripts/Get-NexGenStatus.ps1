@@ -2,6 +2,9 @@ $ErrorActionPreference = "SilentlyContinue"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
+Write-Host "Expected station mode ports: backend 3001, desktop 5173, ngrok inspector 4040."
+Write-Host "Port 5174 is the mobile Vite dev server and is only expected in full dev mode.`n"
+
 Write-Host "Ports"
 Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
   Where-Object { $_.LocalPort -in 3001, 4040, 5173, 5174 } |

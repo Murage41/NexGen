@@ -157,11 +157,12 @@ Task Scheduler. A service is better than a logged-in terminal window.
 
 ## Current Background Startup
 
-For the current development/migration phase, the repo includes Windows helper
-scripts that run the full dev stack in the background:
+For the current station setup, the repo includes Windows helper scripts that run
+the lighter station stack in the background: backend, desktop Vite, and ngrok.
+Mobile is served by the backend from the built `/mobile` files.
 
 ```cmd
-npm run dev:bg
+npm run station:bg
 npm run dev:status
 npm run dev:stop
 ```
@@ -173,10 +174,10 @@ npm run startup:install
 npm run startup:uninstall
 ```
 
-The installed task is named `NexGen ERP Dev Stack`. It starts the backend,
-desktop Vite server, mobile Vite server, and ngrok tunnel after the Windows
-user logs in. Install it while signed in as the Windows user that will run
-NexGen on the station PC. It does not run before login.
+The installed task is named `NexGen ERP Station Stack`. It starts the backend,
+desktop Vite server, and ngrok tunnel after the Windows user logs in. Install it
+while signed in as the Windows user that will run NexGen on the station PC. It
+does not run before login.
 
 For final production, prefer running only the compiled backend plus the built
 mobile app from `/mobile`; the desktop app should be launched as a normal user

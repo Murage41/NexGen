@@ -13,5 +13,10 @@ Use `git pull --ff-only` in station PC instructions. If it fails, stop and revie
 the station PC's local changes instead of forcing, rebasing, or resetting.
 
 Include `npm run build:mobile` in station PC update commands before restarting
-the dev stack. The ngrok/backend mobile URL serves `/mobile` from `mobile/dist`,
-so mobile UI changes are not visible there until the mobile bundle is rebuilt.
+the station stack. The ngrok/backend mobile URL serves `/mobile` from
+`mobile/dist`, so mobile UI changes are not visible there until the mobile
+bundle is rebuilt.
+
+Use `npm run station:bg` for normal station operation. It runs backend, desktop,
+and ngrok only. The full `npm run dev:bg` stack also starts the mobile Vite dev
+server and should be reserved for development/testing.

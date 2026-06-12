@@ -150,26 +150,27 @@ After migration, enter the production opening setup from the physical station:
 
 ## Step 7 — Run the Application
 
-From the root directory, one command starts the development stack (backend + desktop + mobile):
+From the root directory, one command starts the station stack:
 
 ```cmd
 cd /d E:\NexGen
-npm run dev
+npm run station:tunnel
 ```
 
-You will see three colour-coded outputs in the same terminal:
+You will see colour-coded outputs in the same terminal:
 - **BACKEND** — API server on port 3001
-- **DESKTOP** — Electron app opens automatically
-- **MOBILE** — Web app on port 5174
-- **NGROK/TUNNEL** — only when started separately with `npm run dev:tunnel`
+- **DESKTOP** — Desktop web app on port 5173
+- **NGROK/TUNNEL** — Public tunnel to the backend on port 3001
 
-For temporary tunnel access, start:
-```cmd
-npm run dev:tunnel
+Mobile is served by the backend from the built `mobile/dist` folder:
+
+```text
+http://localhost:3001/mobile/
+https://your-ngrok-domain/mobile/
 ```
 
-Then use the tunnel URL shown by ngrok. For production mobile access, use the
-LAN, Tailscale, or Cloudflare Tunnel guidance in `docs/DEPLOYMENT.md`.
+The mobile Vite server on port `5174` is only needed for full development mode
+with `npm run dev` or `npm run dev:tunnel`.
 
 The old development tunnel was:
 ```
@@ -193,13 +194,13 @@ cd /d E:\NexGen
 npm run startup:install
 ```
 
-Start it immediately without waiting for the next login:
+Start station mode immediately without waiting for the next login:
 
 ```cmd
-npm run dev:bg
+npm run station:bg
 ```
 
-Check whether backend, mobile, desktop dev server, and ngrok are running:
+Check whether backend, desktop dev server, and ngrok are running:
 
 ```cmd
 npm run dev:status
@@ -217,7 +218,7 @@ Remove the startup task:
 npm run startup:uninstall
 ```
 
-The scheduled task is named `NexGen ERP Dev Stack`. It runs on user login, not
+The scheduled task is named `NexGen ERP Station Stack`. It runs on user login, not
 before login. If you later change the Windows user that operates the station,
 run `npm run startup:install` again while logged in as the new user.
 
@@ -225,7 +226,7 @@ run `npm run startup:install` again while logged in as the new user.
 
 ## Verify Everything Works
 
-After `npm run dev`, or after background startup:
+After `npm run station:tunnel`, or after background startup:
 
 1. Run `npm run dev:status` and confirm backend health is `ok`
 2. Open the desktop app/dev page and check the **Dashboard**
@@ -250,14 +251,13 @@ npm run dev:stop
 git pull --ff-only
 npm install
 npm run build:mobile
-npm run dev:bg
+npm run station:bg
 npm run dev:status
 ```
 
 `npm run build:mobile` is required for the ngrok/backend mobile URL because the
 backend serves `/mobile` from `mobile/dist`. The separate mobile Vite dev server
-on port `5174` updates from source, but the public domain path uses the built
-files.
+on port `5174` is not started in station mode.
 
 If `git pull --ff-only` fails, do not force it. It means the station PC has
 local code changes that need review first.

@@ -1,12 +1,17 @@
 $ErrorActionPreference = "Stop"
 
-$TaskName = "NexGen ERP Dev Stack"
-$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+$TaskNames = @("NexGen ERP Station Stack", "NexGen ERP Dev Stack")
+$removed = $false
 
-if (-not $task) {
-  Write-Host "Startup task not found: $TaskName"
-  exit 0
+foreach ($TaskName in $TaskNames) {
+  $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  if ($task) {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    Write-Host "Removed startup task: $TaskName"
+    $removed = $true
+  }
 }
 
-Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-Write-Host "Removed startup task: $TaskName"
+if (-not $removed) {
+  Write-Host "No NexGen startup task found."
+}
