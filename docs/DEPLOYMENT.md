@@ -82,6 +82,9 @@ WAN traffic on the router. Do not port-forward `3001` to the internet.
 Use Tailscale when the owner/admin wants private access from known devices.
 Grant access only to the station PC and required ports.
 
+See `docs/TAILSCALE.md` for the station setup, phone setup, MagicDNS URL, and
+starter ACL policy.
+
 ### 4. Browser Remote Access With Identity
 
 Use Cloudflare Tunnel + Cloudflare Access when you want a domain such as:

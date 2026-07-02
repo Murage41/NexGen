@@ -28,7 +28,8 @@
     "service:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Install-NexGenBackendService.ps1",
     "service:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Uninstall-NexGenBackendService.ps1",
     "service:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenProductionStatus.ps1",
-    "backup:verify": "node backend/scripts/verifyBackup.js"
+    "backup:verify": "node backend/scripts/verifyBackup.js",
+    "tailscale:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenTailscaleStatus.ps1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
