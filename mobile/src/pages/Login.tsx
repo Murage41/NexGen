@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Fuel } from 'lucide-react';
-import { getAuthEmployees, login as apiLogin } from '../services/api';
+import { getAuthEmployees, getConfiguredApiUrl, login as apiLogin, setConfiguredApiUrl } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
@@ -11,13 +11,19 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [serverUrl, setServerUrl] = useState(() => getConfiguredApiUrl());
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  function loadEmployees() {
+    setLoading(true);
     getAuthEmployees()
       .then((res) => setEmployees(res.data.data))
       .catch(() => setError('Cannot connect to server'))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadEmployees();
   }, []);
 
   function storeSession(data: any, token?: string, expiresAt?: string) {
@@ -68,6 +74,14 @@ export default function Login() {
     setError('');
   }
 
+  function saveServerUrl() {
+    setConfiguredApiUrl(serverUrl);
+    setSelectedId(null);
+    setPin('');
+    setError('');
+    loadEmployees();
+  }
+
   const canEnterPin = selectedId || (useUsername && username.trim());
 
   return (
@@ -83,6 +97,26 @@ export default function Login() {
           <p className="text-center text-gray-500">Connecting...</p>
         ) : (
           <>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-600 mb-2">Station server</label>
+              <div className="flex gap-2">
+                <input
+                  value={serverUrl}
+                  onChange={(event) => setServerUrl(event.target.value)}
+                  placeholder="http://nexgen-station:3001"
+                  className="min-w-0 flex-1 rounded-lg border-2 border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-600"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                />
+                <button
+                  onClick={saveServerUrl}
+                  className="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 active:bg-gray-200"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2 mb-4">
               <button
                 onClick={() => switchMode(false)}

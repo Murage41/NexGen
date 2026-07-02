@@ -1,11 +1,21 @@
 import axios from 'axios';
 
+const API_URL_KEY = 'nexgen_api_url';
+
+function normalizeApiUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+}
+
 // When running under Vite dev server (5173/5174), call the local backend on :3001.
 // Otherwise (served from backend directly, or via ngrok) use same origin.
 const isViteDev = window.location.port === '5173' || window.location.port === '5174';
-const baseURL = isViteDev
+const storedApiUrl = normalizeApiUrl(localStorage.getItem(API_URL_KEY) || '');
+const fallbackBaseURL = isViteDev
   ? import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3001/api`
   : `${window.location.origin}/api`;
+const baseURL = storedApiUrl || fallbackBaseURL;
 
 const api = axios.create({
   baseURL,
@@ -14,6 +24,22 @@ const api = axios.create({
     'ngrok-skip-browser-warning': 'true',
   },
 });
+
+export function getConfiguredApiUrl(): string {
+  return localStorage.getItem(API_URL_KEY) || '';
+}
+
+export function setConfiguredApiUrl(value: string): string {
+  const normalized = normalizeApiUrl(value);
+  if (normalized) {
+    localStorage.setItem(API_URL_KEY, normalized);
+    api.defaults.baseURL = normalized;
+  } else {
+    localStorage.removeItem(API_URL_KEY);
+    api.defaults.baseURL = fallbackBaseURL;
+  }
+  return normalized;
+}
 
 // Attach session token to every request
 api.interceptors.request.use((config) => {
