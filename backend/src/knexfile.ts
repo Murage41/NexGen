@@ -1,10 +1,10 @@
-import path from 'path';
 import type { Knex } from 'knex';
+import { getDatabasePath, getMigrationExtension, getMigrationsDir } from './runtimePaths';
 
 const config: Knex.Config = {
   client: 'sqlite3',
   connection: {
-    filename: path.join(__dirname, '..', 'data', 'nexgen.db'),
+    filename: getDatabasePath(),
   },
   pool: {
     afterCreate: (conn: any, done: (err: Error | null, conn?: any) => void) => {
@@ -18,11 +18,11 @@ const config: Knex.Config = {
   },
   useNullAsDefault: true,
   migrations: {
-    directory: path.join(__dirname, '..', 'migrations'),
-    extension: 'ts',
+    directory: getMigrationsDir(),
+    extension: getMigrationExtension(),
   },
   seeds: {
-    directory: path.join(__dirname, '..', 'seeds'),
+    directory: process.env.NEXGEN_SEEDS_DIR,
     extension: 'ts',
   },
 };

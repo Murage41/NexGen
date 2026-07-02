@@ -1,10 +1,10 @@
 import knex from 'knex';
 import config from './knexfile';
-import path from 'path';
 import fs from 'fs';
+import { getDataDir } from './runtimePaths';
 
 // Ensure data directory exists
-const dataDir = path.join(__dirname, '..', 'data');
+const dataDir = getDataDir();
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }

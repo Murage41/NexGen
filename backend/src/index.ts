@@ -3,6 +3,7 @@ import express from 'express';
 import cors, { CorsOptionsDelegate } from 'cors';
 import path from 'path';
 import db from './database';
+import { getBackupsDir, getDatabasePath, getMobileDistDir } from './runtimePaths';
 import { recomputeAllDipsFromDate } from './services/stockCalculator';
 import { recomputeAllAccountBalances } from './services/accountBalance';
 import { detectDrift } from './services/driftDetector';
@@ -173,8 +174,8 @@ app.get('/api/health/drift-check', requireAdmin, async (_req, res) => {
 app.post('/api/health/backup', requireAdmin, async (_req, res) => {
   try {
     const fs = await import('fs');
-    const src = path.join(__dirname, '..', 'data', 'nexgen.db');
-    const dir = path.join(__dirname, '..', 'data', 'backups');
+    const src = getDatabasePath();
+    const dir = getBackupsDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     await db.raw('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -222,7 +223,7 @@ app.use('/api/suppliers', suppliersRouter);
 app.use('/api/supplier-invoices', supplierInvoicesRouter);
 app.use('/api/supplier-payments', supplierPaymentsRouter);
 
-const mobileDist = path.join(__dirname, '../../mobile/dist');
+const mobileDist = getMobileDistDir();
 app.use('/mobile', express.static(mobileDist));
 app.get('/mobile/*', (_req, res) => {
   res.sendFile(path.join(mobileDist, 'index.html'));

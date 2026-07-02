@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.migrations.json",
     "start": "node dist/index.js",
     "migrate": "knex migrate:latest --knexfile src/knexfile.ts",
     "migrate:make": "knex migrate:make --knexfile src/knexfile.ts",
