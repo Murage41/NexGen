@@ -7,8 +7,34 @@
   "scripts": {
     "dev": "vite",
     "dev:electron": "ELECTRON=true vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "set CSC_IDENTITY_AUTO_DISCOVERY=false&& tsc && vite build && electron-builder",
     "preview": "vite preview"
+  },
+  "build": {
+    "appId": "co.ke.nexgen.station",
+    "productName": "NexGen ERP",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "NexGen-ERP-Setup-${version}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
     "axios": "^1.7.9",
@@ -24,7 +50,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "electron": "^33.2.0",
+    "electron": "33.4.11",
     "electron-builder": "^25.1.8",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",

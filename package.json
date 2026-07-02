@@ -21,7 +21,13 @@
     "startup:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Install-NexGenStartupTask.ps1 -WithTunnel",
     "startup:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Uninstall-NexGenStartupTask.ps1",
     "machine:spec": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenMachineSpec.ps1",
-    "build:mobile": "cd mobile && npm run build"
+    "build:mobile": "cd mobile && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "build:desktop": "cd desktop && npm run build",
+    "prod:build": "npm run build:mobile && npm run build:backend && npm run build:desktop",
+    "service:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Install-NexGenBackendService.ps1",
+    "service:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Uninstall-NexGenBackendService.ps1",
+    "service:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenProductionStatus.ps1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

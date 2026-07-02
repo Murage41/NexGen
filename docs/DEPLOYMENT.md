@@ -152,8 +152,49 @@ cd D:\NexGen\backend
 npm start
 ```
 
-For production, run the backend as a Windows service using NSSM, PM2, or
-Task Scheduler. A service is better than a logged-in terminal window.
+For production, run the backend as a Windows service. The repo includes an
+NSSM-based installer script:
+
+```cmd
+cd /d D:\NexGen
+npm run build:mobile
+npm run build:backend
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Install-NexGenBackendService.ps1 -Start
+```
+
+The service defaults to:
+
+```text
+Service: NexGenBackend
+Data:    C:\ProgramData\NexGen\data
+Env:     C:\ProgramData\NexGen\backend.env
+Logs:    C:\ProgramData\NexGen\logs
+```
+
+NSSM must be installed or passed explicitly with `-NssmPath`. The installer
+creates strong local secrets if `SESSION_SECRET` and `DESKTOP_KEY` are not
+provided.
+
+Check production status with:
+
+```cmd
+npm run service:status
+```
+
+Stop and remove the service with:
+
+```cmd
+npm run service:uninstall
+```
+
+The desktop app now builds as an unsigned Windows installer:
+
+```cmd
+npm run build:desktop
+```
+
+The installer output is written under `desktop\release`. A signed installer is
+still required before broad external distribution.
 
 ## Current Background Startup
 
