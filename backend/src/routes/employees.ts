@@ -2,17 +2,33 @@ import { Router } from 'express';
 import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { hashPin, validatePin } from '../services/pinSecurity';
+import { ensureEmployeeLoginUser } from '../services/userAccounts';
 
 const router = Router();
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Columns safe to expose in list/detail responses (never leak PIN)
-const SAFE_COLUMNS = ['id', 'name', 'daily_wage', 'phone', 'active', 'role', 'created_at'];
+const SAFE_COLUMNS = [
+  'employees.id',
+  'employees.name',
+  'employees.daily_wage',
+  'employees.phone',
+  'employees.active',
+  'employees.role',
+  'employees.created_at',
+  'app_users.username as login_username',
+];
+
+function safeEmployeeQuery() {
+  return db('employees')
+    .leftJoin('app_users', 'app_users.employee_id', 'employees.id')
+    .select(SAFE_COLUMNS);
+}
 
 // GET all employees
 router.get('/', async (_req, res) => {
   try {
-    const employees = await db('employees').select(SAFE_COLUMNS).orderBy('name');
+    const employees = await safeEmployeeQuery().orderBy('employees.name');
     res.json({ success: true, data: employees });
   } catch (err: any) {
     console.error('[employees:list] ERROR', err.message, err.stack);
@@ -23,7 +39,7 @@ router.get('/', async (_req, res) => {
 // GET active employees
 router.get('/active', async (_req, res) => {
   try {
-    const employees = await db('employees').select(SAFE_COLUMNS).where({ active: true }).orderBy('name');
+    const employees = await safeEmployeeQuery().where({ 'employees.active': true }).orderBy('employees.name');
     res.json({ success: true, data: employees });
   } catch (err: any) {
     console.error('[employees:list-active] ERROR', err.message, err.stack);
@@ -34,7 +50,7 @@ router.get('/active', async (_req, res) => {
 // GET single employee
 router.get('/:id', async (req, res) => {
   try {
-    const employee = await db('employees').select(SAFE_COLUMNS).where({ id: req.params.id }).first();
+    const employee = await safeEmployeeQuery().where({ 'employees.id': req.params.id }).first();
     if (!employee) return res.status(404).json({ success: false, error: 'Employee not found' });
     res.json({ success: true, data: employee });
   } catch (err: any) {
@@ -63,7 +79,9 @@ router.post('/', requireAdmin, async (req, res) => {
       pin: hashPin(submittedPin),
       role: role || 'attendant',
     });
-    const employee = await db('employees').select(SAFE_COLUMNS).where({ id }).first();
+    const employeeWithPin = await db('employees').where({ id }).first();
+    await ensureEmployeeLoginUser(employeeWithPin);
+    const employee = await safeEmployeeQuery().where({ 'employees.id': id }).first();
     res.status(201).json({ success: true, data: employee });
   } catch (err: any) {
     console.error('[employees:create] ERROR', err.message, err.stack);
@@ -87,7 +105,9 @@ router.put('/:id', requireAdmin, async (req, res) => {
     }
     if (role !== undefined) updates.role = role;
     await db('employees').where({ id: req.params.id }).update(updates);
-    const employee = await db('employees').select(SAFE_COLUMNS).where({ id: req.params.id }).first();
+    const employeeWithPin = await db('employees').where({ id: req.params.id }).first();
+    await ensureEmployeeLoginUser(employeeWithPin);
+    const employee = await safeEmployeeQuery().where({ 'employees.id': req.params.id }).first();
     res.json({ success: true, data: employee });
   } catch (err: any) {
     console.error('[employees:update] ERROR', err.message, err.stack);
@@ -99,6 +119,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     await db('employees').where({ id: req.params.id }).update({ active: false });
+    await db('app_users').where({ employee_id: req.params.id }).update({ active: false, updated_at: db.fn.now() });
     res.json({ success: true });
   } catch (err: any) {
     console.error('[employees:delete] ERROR', err.message, err.stack);

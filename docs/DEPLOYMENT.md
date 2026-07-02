@@ -129,6 +129,22 @@ attempts.
 If `DESKTOP_KEY` is set, build the desktop app with the same value as
 `VITE_DESKTOP_KEY`.
 
+## Mobile Login Model
+
+Production login now separates login identities from employee records:
+
+- `employees` remain the operational records for shifts, wages, shortages, and
+  accountability.
+- `app_users` are login identities with username, PIN, role, and optional
+  employee link.
+- Existing employee name/PIN login still works for convenience.
+- The mobile app also accepts a staff code/username, useful for admins and
+  future paired devices.
+
+When employees are created or updated, NexGen automatically creates or syncs a
+login user. Generated usernames are returned as `login_username` in employee
+list/detail responses.
+
 ## Build And Run
 
 Build mobile first so the backend can serve it:

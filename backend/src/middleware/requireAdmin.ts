@@ -53,13 +53,25 @@ export function assertAuthConfiguration() {
   }
 }
 
-export function generateToken(employeeId: number, role: string): string {
-  const payload = Buffer.from(JSON.stringify({ id: employeeId, role, ts: Date.now() })).toString('base64');
+export function generateToken(employeeId: number, role: string, userId?: number | null): string {
+  const payload = Buffer.from(JSON.stringify({
+    id: employeeId,
+    employee_id: employeeId,
+    user_id: userId ?? null,
+    role,
+    ts: Date.now(),
+  })).toString('base64');
   const sig = crypto.createHmac('sha256', getSessionSecret()).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
 
-export function verifyToken(token: string): { id: number; role: string; ts: number } | null {
+export function verifyToken(token: string): {
+  id: number;
+  employee_id?: number;
+  user_id?: number | null;
+  role: string;
+  ts: number;
+} | null {
   try {
     const dotIndex = token.lastIndexOf('.');
     if (dotIndex === -1) return null;
@@ -78,6 +90,8 @@ export function verifyToken(token: string): { id: number; role: string; ts: numb
       return null;
     }
 
+    if (decoded.employee_id !== undefined && typeof decoded.employee_id !== 'number') return null;
+    if (decoded.user_id !== undefined && decoded.user_id !== null && typeof decoded.user_id !== 'number') return null;
     if (decoded.ts > Date.now() + 5 * 60 * 1000) return null;
     if (Date.now() - decoded.ts > getSessionTtlMs()) return null;
 

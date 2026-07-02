@@ -2,6 +2,9 @@ import { createContext, useContext, useCallback, useEffect, useState, type React
 
 interface User {
   id: number;
+  user_id?: number | null;
+  employee_id?: number | null;
+  username?: string | null;
   name: string;
   role: 'admin' | 'attendant';
   daily_wage: number;

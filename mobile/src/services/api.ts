@@ -41,7 +41,12 @@ api.interceptors.response.use(
 
 // Auth
 export const getAuthEmployees = () => api.get('/auth/employees');
-export const login = (employee_id: number, pin: string) => api.post('/auth/login', { employee_id, pin });
+export const login = (employee_id: number | null, pin: string, username?: string) =>
+  api.post('/auth/login', {
+    pin,
+    ...(employee_id ? { employee_id } : {}),
+    ...(username ? { username } : {}),
+  });
 
 // Dashboard
 export const getDashboard = () => api.get('/dashboard');

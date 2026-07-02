@@ -2,6 +2,7 @@ import { Router } from 'express';
 import db from '../database';
 import { generateToken, getSessionTtlMs } from '../middleware/requireAdmin';
 import { hashPin, isHashedPin, verifyPin } from '../services/pinSecurity';
+import { ensureEmployeeLoginUser, normalizeUsername } from '../services/userAccounts';
 
 const router = Router();
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
@@ -11,10 +12,10 @@ const LOGIN_LOCK_MS = (Number.isFinite(LOGIN_LOCK_MINUTES) && LOGIN_LOCK_MINUTES
 const LOGIN_WINDOW_MS = (Number.isFinite(LOGIN_WINDOW_MINUTES) && LOGIN_WINDOW_MINUTES > 0 ? LOGIN_WINDOW_MINUTES : 15) * 60 * 1000;
 const loginAttempts = new Map<string, { failures: number; firstFailureAt: number; lockedUntil: number }>();
 
-function getLoginKey(req: any, employeeId: unknown): string {
+function getLoginKey(req: any, subject: unknown): string {
   const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   const ip = forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
-  return `${ip}:${employeeId || 'unknown'}`;
+  return `${ip}:${subject || 'unknown'}`;
 }
 
 function getLoginLockSeconds(key: string): number {
@@ -49,7 +50,9 @@ function clearLoginFailures(key: string) {
 router.post('/login', async (req, res) => {
   try {
     const { employee_id, pin } = req.body;
-    const loginKey = getLoginKey(req, employee_id);
+    const username = normalizeUsername(req.body?.username);
+    const loginSubject = username || employee_id;
+    const loginKey = getLoginKey(req, loginSubject);
     const lockSeconds = getLoginLockSeconds(loginKey);
     if (lockSeconds > 0) {
       return res.status(429).json({
@@ -60,34 +63,73 @@ router.post('/login', async (req, res) => {
     }
 
     const submittedPin = typeof pin === 'string' ? pin : '';
-    if (!employee_id || !submittedPin) {
-      return res.status(400).json({ success: false, error: 'Employee ID and PIN are required' });
+    if ((!employee_id && !username) || !submittedPin) {
+      return res.status(400).json({ success: false, error: 'Username or employee ID and PIN are required' });
     }
 
-    const employee = await db('employees')
-      .where({ id: employee_id, active: true })
-      .first();
+    let employee: any = null;
+    let loginUser: any = null;
+    let storedPin = '';
 
-    if (!employee) {
+    if (username) {
+      loginUser = await db('app_users')
+        .where({ username, active: true })
+        .first();
+
+      if (loginUser?.employee_id) {
+        employee = await db('employees')
+          .where({ id: loginUser.employee_id, active: true })
+          .first();
+      }
+
+      storedPin = loginUser?.pin || '';
+    } else {
+      employee = await db('employees')
+        .where({ id: employee_id, active: true })
+        .first();
+      if (employee) {
+        loginUser = await ensureEmployeeLoginUser(employee);
+        storedPin = employee.pin || '';
+      }
+    }
+
+    if (!loginUser && !employee) {
       recordLoginFailure(loginKey);
       return res.status(401).json({ success: false, error: 'Invalid employee or PIN' });
     }
 
-    if (!verifyPin(submittedPin, employee.pin)) {
+    if (!verifyPin(submittedPin, storedPin)) {
       recordLoginFailure(loginKey);
       return res.status(401).json({ success: false, error: 'Invalid employee or PIN' });
     }
 
-    if (!isHashedPin(employee.pin)) {
-      await db('employees').where({ id: employee.id }).update({ pin: hashPin(submittedPin) });
+    if (!isHashedPin(storedPin)) {
+      const hashedPin = hashPin(submittedPin);
+      if (employee?.id) await db('employees').where({ id: employee.id }).update({ pin: hashedPin });
+      if (loginUser?.id) await db('app_users').where({ id: loginUser.id }).update({ pin: hashedPin });
+      storedPin = hashedPin;
     }
 
-    // Return employee data without pin, plus a session token
+    if (loginUser?.id) {
+      await db('app_users').where({ id: loginUser.id }).update({ last_login_at: db.fn.now() });
+    }
+
+    // Return user data without pin, plus a session token
     clearLoginFailures(loginKey);
-    const { pin: _pin, ...employeeData } = employee;
+    const employeeId = employee?.id || loginUser?.employee_id || 0;
+    const role = loginUser?.role || employee?.role || 'attendant';
+    const employeeData = {
+      id: employeeId,
+      user_id: loginUser?.id || null,
+      employee_id: employeeId || null,
+      username: loginUser?.username || null,
+      name: loginUser?.display_name || employee?.name || 'Admin',
+      role,
+      daily_wage: employee?.daily_wage || 0,
+    };
     const issuedAt = new Date();
     const ttlMs = getSessionTtlMs();
-    const token = generateToken(employee.id, employee.role);
+    const token = generateToken(employeeId, role, loginUser?.id || null);
     res.json({
       success: true,
       data: employeeData,
@@ -107,10 +149,15 @@ router.post('/login', async (req, res) => {
 // GET all employees (for login selection - minimal data)
 router.get('/employees', async (_req, res) => {
   try {
-    const employees = await db('employees')
-      .where({ active: true })
-      .select('id', 'name')
-      .orderBy('name');
+    const employees = await db('app_users as u')
+      .leftJoin('employees as e', 'u.employee_id', 'e.id')
+      .where('u.active', true)
+      .whereNotNull('u.employee_id')
+      .where((builder) => {
+        builder.whereNull('e.id').orWhere('e.active', true);
+      })
+      .select('e.id as id', 'u.display_name as name', 'u.role')
+      .orderBy('u.display_name');
     res.json({ success: true, data: employees });
   } catch (err: any) {
     console.error('[auth:list-employees] ERROR', err.message, err.stack);
