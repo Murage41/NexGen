@@ -29,7 +29,9 @@
     "service:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Uninstall-NexGenBackendService.ps1",
     "service:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenProductionStatus.ps1",
     "backup:verify": "node backend/scripts/verifyBackup.js",
-    "tailscale:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenTailscaleStatus.ps1"
+    "tailscale:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenTailscaleStatus.ps1",
+    "android:sync": "cd mobile && npm run android:sync",
+    "android:open": "cd mobile && npm run android:open"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

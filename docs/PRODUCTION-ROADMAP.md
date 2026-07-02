@@ -48,6 +48,7 @@ This is the agreed production track for NexGen.
    - Capacitor wrapper for the existing mobile app.
    - QR/server pairing flow.
    - Secure storage for server address and device token.
+   - Release signing, icon, and splash assets before broad distribution.
 
 7. Optional cloud/domain phase
    - Domain only when branded public access, app links, or cloud sync is needed.

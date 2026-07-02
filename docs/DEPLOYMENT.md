@@ -215,6 +215,19 @@ npm run build:desktop
 The installer output is written under `desktop\release`. A signed installer is
 still required before broad external distribution.
 
+## Android Build
+
+The mobile app has a Capacitor Android wrapper. See `docs/ANDROID.md`.
+
+Basic sync command:
+
+```cmd
+npm run android:sync
+```
+
+The Android APK uses the login screen's `Station server` field to point at the
+station backend over LAN or Tailscale.
+
 ## Current Background Startup
 
 For the current station setup, the repo includes Windows helper scripts that run
