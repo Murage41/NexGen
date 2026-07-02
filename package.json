@@ -27,7 +27,8 @@
     "prod:build": "npm run build:mobile && npm run build:backend && npm run build:desktop",
     "service:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Install-NexGenBackendService.ps1",
     "service:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Uninstall-NexGenBackendService.ps1",
-    "service:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenProductionStatus.ps1"
+    "service:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Get-NexGenProductionStatus.ps1",
+    "backup:verify": "node backend/scripts/verifyBackup.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

@@ -261,6 +261,18 @@ Minimum backup policy:
 For a stronger setup, use SQLite's online backup tooling or `VACUUM INTO`
 from a controlled local script.
 
+Verify a backup file with:
+
+```cmd
+npm run backup:verify -- C:\ProgramData\NexGen\data\backups\nexgen-YYYYMMDDHHMMSS.db
+```
+
+The verifier opens the database read-only, runs `PRAGMA integrity_check`, and
+confirms the migrations table is present.
+
+Login attempts and backup outcomes are written to the append-only
+`audit_logs` table.
+
 ## Operational Requirements
 
 - Put the station PC on a UPS.

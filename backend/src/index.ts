@@ -4,6 +4,7 @@ import cors, { CorsOptionsDelegate } from 'cors';
 import path from 'path';
 import db from './database';
 import { getBackupsDir, getDatabasePath, getMobileDistDir } from './runtimePaths';
+import { writeAuditLog } from './services/auditLog';
 import { recomputeAllDipsFromDate } from './services/stockCalculator';
 import { recomputeAllAccountBalances } from './services/accountBalance';
 import { detectDrift } from './services/driftDetector';
@@ -185,9 +186,20 @@ app.post('/api/health/backup', requireAdmin, async (_req, res) => {
     const dest = path.join(dir, `nexgen-${now}.db`);
     fs.copyFileSync(src, dest);
     const { size } = fs.statSync(dest);
+    await writeAuditLog(_req, {
+      action: 'backup.created',
+      target_type: 'backup',
+      target_id: path.basename(dest),
+      details: { file: path.basename(dest), size_bytes: size },
+    });
     res.json({ success: true, file: path.basename(dest), size_bytes: size });
   } catch (err: any) {
     console.error('[health:backup] ERROR', err.message);
+    await writeAuditLog(_req, {
+      action: 'backup.failed',
+      target_type: 'backup',
+      details: { error: err.message },
+    });
     res.status(500).json({ success: false, error: err.message });
   }
 });

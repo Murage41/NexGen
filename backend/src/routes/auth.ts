@@ -3,6 +3,7 @@ import db from '../database';
 import { generateToken, getSessionTtlMs } from '../middleware/requireAdmin';
 import { hashPin, isHashedPin, verifyPin } from '../services/pinSecurity';
 import { ensureEmployeeLoginUser, normalizeUsername } from '../services/userAccounts';
+import { writeAuditLog } from '../services/auditLog';
 
 const router = Router();
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
@@ -64,6 +65,10 @@ router.post('/login', async (req, res) => {
 
     const submittedPin = typeof pin === 'string' ? pin : '';
     if ((!employee_id && !username) || !submittedPin) {
+      await writeAuditLog(req, {
+        action: 'auth.login_failed',
+        details: { reason: 'missing_credentials', subject: loginSubject || null },
+      });
       return res.status(400).json({ success: false, error: 'Username or employee ID and PIN are required' });
     }
 
@@ -95,11 +100,22 @@ router.post('/login', async (req, res) => {
 
     if (!loginUser && !employee) {
       recordLoginFailure(loginKey);
+      await writeAuditLog(req, {
+        action: 'auth.login_failed',
+        details: { reason: 'unknown_user', subject: loginSubject || null },
+      });
       return res.status(401).json({ success: false, error: 'Invalid employee or PIN' });
     }
 
     if (!verifyPin(submittedPin, storedPin)) {
       recordLoginFailure(loginKey);
+      await writeAuditLog(req, {
+        action: 'auth.login_failed',
+        user_id: loginUser?.id || null,
+        employee_id: employee?.id || loginUser?.employee_id || null,
+        role: loginUser?.role || employee?.role || null,
+        details: { reason: 'invalid_pin', subject: loginSubject || null },
+      });
       return res.status(401).json({ success: false, error: 'Invalid employee or PIN' });
     }
 
@@ -130,6 +146,13 @@ router.post('/login', async (req, res) => {
     const issuedAt = new Date();
     const ttlMs = getSessionTtlMs();
     const token = generateToken(employeeId, role, loginUser?.id || null);
+    await writeAuditLog(req, {
+      action: 'auth.login',
+      user_id: loginUser?.id || null,
+      employee_id: employeeId || null,
+      role,
+      details: { method: username ? 'username' : 'employee_id', username: loginUser?.username || null },
+    });
     res.json({
       success: true,
       data: employeeData,
