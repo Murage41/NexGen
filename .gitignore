@@ -36,6 +36,7 @@ backend/dist/
 # Keep the data directory but not its contents
 backend/data/*
 !backend/data/.gitkeep
+backend/.test-data/
 
 # -----------------------------------------------------------------------------
 # Environment Variables

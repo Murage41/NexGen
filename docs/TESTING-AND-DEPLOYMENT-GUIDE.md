@@ -3,6 +3,34 @@
 Start here. Follow the steps in order. Do not start with Android or Tailscale;
 first prove the backend, database, desktop, and mobile web build are solid.
 
+## How To Read This Guide
+
+Each step now says:
+
+- `Where`: which machine and folder to use.
+- `Backend state`: whether the backend should be stopped or running.
+- `Terminal`: whether to use the same terminal or open another one.
+
+There are two tracks:
+
+- Local testing on this dev PC: use `D:\NexGen`, run backend manually with
+  `npm start`, and stop it with `Ctrl+C`.
+- Station deployment: use the station PC folder, usually `E:\NexGen`, install
+  the backend as a Windows service, then install the desktop program.
+
+Backend state rules:
+
+| Step | Backend state |
+|------|---------------|
+| Build commands | Stopped is preferred, but not required |
+| Local smoke test | Running manually in Terminal A |
+| Functional tests | Running |
+| Installing Windows service | Manual backend must be stopped |
+| Installing desktop program | Backend service should be running |
+| LAN/Tailscale/mobile tests | Backend service should be running |
+| Building Android APK | Backend not required |
+| Testing Android APK login | Backend must be running |
+
 ## 0. Safety Rules
 
 - Do all first tests on a dev PC or staging station PC, not the live station.
@@ -13,7 +41,15 @@ first prove the backend, database, desktop, and mobile web build are solid.
 
 ## 1. Dev PC Build Check
 
-Run this on the development machine:
+Where: dev PC.
+
+Folder: `D:\NexGen`.
+
+Backend state: stopped is preferred.
+
+Terminal: normal PowerShell or Command Prompt.
+
+Run:
 
 ```cmd
 cd /d D:\NexGen
@@ -40,7 +76,13 @@ not installed, `gradlew.bat assembleDebug` will fail with a `JAVA_HOME` error.
 This proves the compiled backend can run like a service without using the live
 database.
 
-Open PowerShell:
+Where: dev PC.
+
+Folder: `D:\NexGen`.
+
+Backend state: this step starts the backend manually.
+
+Terminal A: open PowerShell and leave it running.
 
 ```powershell
 cd D:\NexGen
@@ -54,7 +96,13 @@ cd backend
 npm start
 ```
 
-In another terminal:
+Do not close Terminal A while testing. The backend is running if you see:
+
+```text
+NexGen API running on http://127.0.0.1:3001
+```
+
+Terminal B: open a second PowerShell or Command Prompt.
 
 ```cmd
 curl.exe http://127.0.0.1:3001/api/health
@@ -78,7 +126,12 @@ Then open:
 http://127.0.0.1:3001/mobile
 ```
 
-After testing, stop the backend with `Ctrl+C`. The temporary test data is in:
+If you are continuing to the functional tests, keep Terminal A running.
+
+If you are finished with local testing, stop the backend in Terminal A with
+`Ctrl+C`.
+
+Temporary test data is in:
 
 ```text
 D:\NexGen\backend\.test-data
@@ -86,7 +139,34 @@ D:\NexGen\backend\.test-data
 
 ## 3. Functional Test Checklist
 
-Use a fresh staging database.
+Where: dev PC or staging station PC.
+
+Backend state: running. If you just finished Step 2, keep Terminal A running.
+
+Browser: use `http://127.0.0.1:3001/mobile` for local testing.
+
+Important: a fresh database has no employees, so seed the first admin before
+using the mobile login screen.
+
+Terminal B PowerShell:
+
+```powershell
+$DesktopKey = "replace-with-24-plus-random-characters"
+$headers = @{ "x-desktop-key" = $DesktopKey }
+$body = @{
+  name = "Owner Admin"
+  daily_wage = 0
+  phone = ""
+  pin = "1234"
+  role = "admin"
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:3001/api/employees" -Headers $headers -ContentType "application/json" -Body $body
+```
+
+Use the same value as `DESKTOP_KEY` from Step 2. If you changed it, update
+`$DesktopKey` here.
+
+Then test:
 
 1. Create the first admin employee.
 2. Confirm the employee response shows `login_username`.
@@ -109,6 +189,13 @@ Use a fresh staging database.
 19. Stop and restart backend.
 20. Confirm all data remains.
 
+For item 19, stop Terminal A with `Ctrl+C`, then start it again:
+
+```powershell
+cd D:\NexGen\backend
+npm start
+```
+
 Backup verification:
 
 ```cmd
@@ -128,6 +215,12 @@ Test these before station rollout:
 - `audit_logs` records login and backup events.
 
 ## 5. Station PC Preparation
+
+Where: station PC.
+
+Backend state: stopped.
+
+Terminal: PowerShell or Command Prompt on the station PC.
 
 On the station PC:
 
@@ -158,6 +251,10 @@ git pull --ff-only
 
 ## 6. Production Secrets
 
+Where: station PC.
+
+Backend state: stopped.
+
 The desktop production build still uses `VITE_DESKTOP_KEY`, so the desktop key
 must match the backend `DESKTOP_KEY`.
 
@@ -181,6 +278,13 @@ HOST=0.0.0.0
 ```
 
 ## 7. Build For Station Deployment
+
+Where: station PC.
+
+Folder: `E:\NexGen` in these examples. If your station repo is somewhere else,
+replace `E:\NexGen` with the real folder.
+
+Backend state: stopped is preferred.
 
 Build mobile and backend:
 
@@ -206,6 +310,14 @@ E:\NexGen\desktop\release\NexGen-ERP-Setup-1.0.0.exe
 
 ## 8. Install Backend As Windows Service
 
+Where: station PC.
+
+Folder: `E:\NexGen`.
+
+Backend state: manual backend must be stopped. If you previously ran
+`npm start`, stop it with `Ctrl+C` before installing the service. Port `3001`
+must be free.
+
 For desktop-only testing:
 
 ```powershell
@@ -226,6 +338,12 @@ Check status:
 npm run service:status
 ```
 
+Expected:
+
+- Service `NexGenBackend` is installed.
+- Service status is `Running`.
+- Backend health returns `status: ok`.
+
 If phones cannot connect over LAN/Tailscale, add a Windows Firewall rule from
 an elevated PowerShell:
 
@@ -235,10 +353,22 @@ New-NetFirewallRule -DisplayName "NexGen Backend 3001" -Direction Inbound -Proto
 
 ## 9. Install Desktop App
 
-Run:
+Where: station PC.
+
+Backend state: backend service should be running.
+
+Folder: no terminal required unless you are launching from PowerShell.
+
+Run the installer:
 
 ```text
 E:\NexGen\desktop\release\NexGen-ERP-Setup-1.0.0.exe
+```
+
+If Windows SmartScreen warns because the installer is unsigned, choose:
+
+```text
+More info -> Run anyway
 ```
 
 Then open NexGen ERP from the Start Menu or desktop shortcut.
@@ -251,6 +381,12 @@ Test:
 - Reports load.
 
 ## 10. Test Mobile Web Over LAN
+
+Where: station PC and phone.
+
+Backend state: backend service must be running.
+
+Backend setting: service should have been installed with `-HostAddress 0.0.0.0`.
 
 Find the station PC IP:
 
@@ -267,6 +403,12 @@ http://STATION-PC-IP:3001/mobile
 Test employee login and admin login.
 
 ## 11. Test Tailscale Access
+
+Where: station PC and phone.
+
+Backend state: backend service must be running.
+
+Backend setting: service should have been installed with `-HostAddress 0.0.0.0`.
 
 On the station PC:
 
@@ -304,6 +446,11 @@ Save, then log in.
 
 ## 12. Build Android APK
 
+Where: dev PC or station PC with Android Studio installed.
+
+Backend state: not required for building. Backend is required later when you
+open the app and log in.
+
 Install Android Studio and set `JAVA_HOME` first.
 
 Then:
@@ -321,6 +468,31 @@ Debug APK output:
 mobile\android\app\build\outputs\apk\debug\app-debug.apk
 ```
 
+### Install Debug APK On Android
+
+Option A: install with USB debugging and Android Platform Tools:
+
+```cmd
+adb install -r mobile\android\app\build\outputs\apk\debug\app-debug.apk
+```
+
+Option B: copy the APK to the phone and tap it:
+
+1. Copy `app-debug.apk` to the phone by USB, Drive, WhatsApp, or another file
+   transfer method.
+2. Open the APK on the phone.
+3. Allow installation from that source when Android asks.
+4. Open `NexGen`.
+5. In `Station server`, enter the LAN or Tailscale server address:
+
+```text
+http://STATION-PC-IP:3001
+http://nexgen-station:3001
+http://100.x.y.z:3001
+```
+
+6. Save, then log in.
+
 For real distribution, still add:
 
 - App icon and splash branding.
@@ -328,6 +500,10 @@ For real distribution, still add:
 - Signed APK or AAB build.
 
 ## 13. Backup And Recovery Test
+
+Where: station PC.
+
+Backend state: backend service must be running.
 
 Trigger a backup from an authenticated admin session or API client:
 
