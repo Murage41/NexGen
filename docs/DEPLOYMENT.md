@@ -1,5 +1,8 @@
 # NexGen Deployment, Hosting, and Access
 
+For a step-by-step testing and rollout path, start with
+`docs/TESTING-AND-DEPLOYMENT-GUIDE.md`.
+
 This is the recommended production shape for a single filling station ERP.
 The goal is simple: the station keeps working even if the internet is down,
 remote access is deliberate, and the SQLite database is treated as the
@@ -302,9 +305,12 @@ Login attempts and backup outcomes are written to the append-only
 ## Remaining Hardening Work
 
 - Replace desktop shared-key bypass with proper admin login.
-- Stop exposing active employee names publicly for mobile login; use staff
-  code/PIN or username/PIN instead.
+- Add QR station pairing for Android so users do not type server URLs.
+- Add device/session management and remote logout.
+- Add scheduled encrypted/offsite backups.
+- Add desktop installer code signing.
+- Add Android release signing, app icon, and splash branding.
+- Consider staff-code-only login if employee name selection becomes too exposed
+  for a specific deployment.
 - Add rate limiting to remaining sensitive endpoints beyond login.
-- Add structured audit log entries for login, backup, restore, and config
-  changes.
-- Add a one-click backup verification/restore test command.
+- Expand audit logs to restore, config, price, and shift edit events.
