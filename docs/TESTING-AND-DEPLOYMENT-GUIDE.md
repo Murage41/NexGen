@@ -57,7 +57,13 @@ npm start
 In another terminal:
 
 ```cmd
-curl http://127.0.0.1:3001/api/health
+curl.exe http://127.0.0.1:3001/api/health
+```
+
+Or in PowerShell:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:3001/api/health
 ```
 
 Expected:
