@@ -3,7 +3,7 @@ import db from '../database';
 import { validate } from '../middleware/validate';
 import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema } from '../schemas';
 import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
-import { compensate } from '../services/meterRollover';
+import { compensate, toDisplay } from '../services/meterRollover';
 import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
 import { requireAdmin, requireAuth, requireOwnShiftOrAdmin } from '../middleware/requireAdmin';
@@ -24,6 +24,15 @@ function excludeOpenShiftCredits(query: any, trx: any) {
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function nearlyEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) < 0.005;
+}
+
+function shouldKeepOpeningForBlankZero(rawClosing: number, opening: number, capacity: number, rolloverConfirmed?: boolean): boolean {
+  if (rolloverConfirmed || !nearlyEqual(rawClosing, 0)) return false;
+  return toDisplay(opening, capacity) > 0;
 }
 
 function sumMoney(rows: any[], selector: (row: any) => any): number {
@@ -467,42 +476,52 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
       const oA = Number(existing.opening_amount);
       const capL = Number(existing.meter_capacity_litres) || 1000000;
       const capA = Number(existing.meter_capacity_amount) || 1000000;
+      const rawClosingLitres = r.raw_closing_litres !== undefined ? Number(r.raw_closing_litres) : undefined;
+      const rawClosingAmount = r.raw_closing_amount !== undefined ? Number(r.raw_closing_amount) : undefined;
 
       // Resolve cumulative closing_litres: prefer raw input (compensated for
       // rollover) over direct cumulative input.
       let cL: number;
-      if (r.raw_closing_litres !== undefined) {
-        const out = compensate(oL, Number(r.raw_closing_litres), capL);
-        if (!out.ok) {
-          errors.push(`Pump ${existing.pump_label}: ${out.reason}`);
-          continue;
+      if (rawClosingLitres !== undefined) {
+        if (shouldKeepOpeningForBlankZero(rawClosingLitres, oL, capL, r.rollover_litres)) {
+          cL = oL;
+        } else {
+          const out = compensate(oL, rawClosingLitres, capL);
+          if (!out.ok) {
+            errors.push(`Pump ${existing.pump_label}: ${out.reason}`);
+            continue;
+          }
+          if (out.rolledOver && !r.rollover_litres) {
+            rolloverConfirms.push({
+              pump_id: r.pump_id, pump_label: existing.pump_label, field: 'litres',
+              raw: rawClosingLitres, cumulative: out.cumulative,
+            });
+          }
+          cL = out.cumulative;
         }
-        if (out.rolledOver && !r.rollover_litres) {
-          rolloverConfirms.push({
-            pump_id: r.pump_id, pump_label: existing.pump_label, field: 'litres',
-            raw: Number(r.raw_closing_litres), cumulative: out.cumulative,
-          });
-        }
-        cL = out.cumulative;
       } else {
         cL = Number(r.closing_litres);
       }
 
       // Same for amount.
       let cA: number;
-      if (r.raw_closing_amount !== undefined) {
-        const out = compensate(oA, Number(r.raw_closing_amount), capA);
-        if (!out.ok) {
-          errors.push(`Pump ${existing.pump_label}: ${out.reason}`);
-          continue;
+      if (rawClosingAmount !== undefined) {
+        if (shouldKeepOpeningForBlankZero(rawClosingAmount, oA, capA, r.rollover_amount)) {
+          cA = oA;
+        } else {
+          const out = compensate(oA, rawClosingAmount, capA);
+          if (!out.ok) {
+            errors.push(`Pump ${existing.pump_label}: ${out.reason}`);
+            continue;
+          }
+          if (out.rolledOver && !r.rollover_amount) {
+            rolloverConfirms.push({
+              pump_id: r.pump_id, pump_label: existing.pump_label, field: 'amount',
+              raw: rawClosingAmount, cumulative: out.cumulative,
+            });
+          }
+          cA = out.cumulative;
         }
-        if (out.rolledOver && !r.rollover_amount) {
-          rolloverConfirms.push({
-            pump_id: r.pump_id, pump_label: existing.pump_label, field: 'amount',
-            raw: Number(r.raw_closing_amount), cumulative: out.cumulative,
-          });
-        }
-        cA = out.cumulative;
       } else {
         cA = Number(r.closing_amount);
       }

@@ -85,6 +85,12 @@ export default function ShiftRecord() {
     }
     return { cumulative: Math.round(((rolloversSoFar + 1) * capacity + raw) * 100) / 100, rolledOver: true };
   }
+  function parseDisplayInput(value: any, opening: number, capacity: number): number {
+    const fallback = displayMod(opening, capacity);
+    if (String(value ?? '').trim() === '') return fallback;
+    const parsed = parseFloat(String(value));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
 
   async function loadShift() {
     try {
@@ -119,10 +125,12 @@ export default function ShiftRecord() {
     try {
       const payload = readings.map(r => {
         const ro = opts.rolloverByPump?.[r.pump_id] || {};
+        const capL = Number(r.meter_capacity_litres) || 1000000;
+        const capA = Number(r.meter_capacity_amount) || 1000000;
         return {
           pump_id: r.pump_id,
-          raw_closing_litres: parseFloat(r.raw_l_input) || 0,
-          raw_closing_amount: parseFloat(r.raw_a_input) || 0,
+          raw_closing_litres: parseDisplayInput(r.raw_l_input, Number(r.opening_litres) || 0, capL),
+          raw_closing_amount: parseDisplayInput(r.raw_a_input, Number(r.opening_amount) || 0, capA),
           ...(ro.litres ? { rollover_litres: true } : {}),
           ...(ro.amount ? { rollover_amount: true } : {}),
         };
@@ -331,8 +339,8 @@ export default function ShiftRecord() {
     const oA = parseFloat(row.opening_amount) || 0;
     const capL = Number(row.meter_capacity_litres) || 1000000;
     const capA = Number(row.meter_capacity_amount) || 1000000;
-    const rawL = parseFloat(row.raw_l_input) || 0;
-    const rawA = parseFloat(row.raw_a_input) || 0;
+    const rawL = parseDisplayInput(row.raw_l_input, oL, capL);
+    const rawA = parseDisplayInput(row.raw_a_input, oA, capA);
     const cL = compensateClient(oL, rawL, capL);
     const cA = compensateClient(oA, rawA, capA);
     row.closing_litres = cL.cumulative;
