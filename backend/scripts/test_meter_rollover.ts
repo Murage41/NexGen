@@ -9,6 +9,7 @@ const cases: Array<[number, number, number, boolean, string]> = [
   [999900.00,        50.00, 1000050.00, true,  'rollover crossing 1M'],
   [3999900.00,       50.00, 4000050.00, true,  'rollover crossing 4M'],
   [834336.84,   834336.84, 834336.84,  false, 'same value (no sales)'],
+  [3069970.99,   69970.99, 3069970.99, false, 'same wrapped amount display (no sales)'],
   [834336.84,        0.00, 1000000.00, true,  'edge: rolled exactly to 0'],
   [0,             123.45,    123.45,   false, 'fresh meter, first reading'],
 ];

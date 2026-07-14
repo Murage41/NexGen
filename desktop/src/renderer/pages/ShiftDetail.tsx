@@ -67,7 +67,7 @@ export default function ShiftDetail() {
   function compensateClient(opening: number, raw: number, capacity: number): { cumulative: number; rolledOver: boolean } {
     if (!(capacity > 0)) return { cumulative: raw, rolledOver: false };
     const rolloversSoFar = Math.floor(opening / capacity);
-    const openingDisplay = opening - rolloversSoFar * capacity;
+    const openingDisplay = displayMod(opening, capacity);
     if (raw >= openingDisplay) {
       return { cumulative: Math.round((rolloversSoFar * capacity + raw) * 100) / 100, rolledOver: false };
     }
