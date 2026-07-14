@@ -39,7 +39,7 @@ export function compensate(
   }
 
   const rolloversSoFar = Math.floor(opening / capacity);
-  const openingDisplay = opening - rolloversSoFar * capacity;
+  const openingDisplay = toDisplay(opening, capacity);
 
   if (rawClosing >= openingDisplay) {
     // No new rollover. Same number of wraps as opening, raw appended.
