@@ -9,7 +9,12 @@ import { getKenyaDate } from '../utils/timezone';
 const router = Router();
 
 const ADJUSTMENT_REASON_LABELS: Record<string, string> = {
-  stock_take: 'Stock taking / dip reconciliation',
+  stock_take: 'Physical dip found stock above book',
+  delivery_correction_gain: 'Approved delivery correction gain',
+  meter_calibration_gain: 'Meter or calibration correction gain',
+  opening_balance_correction_gain: 'Opening balance correction gain',
+  other_gain: 'Other approved stock gain',
+  dip_reconciliation_loss: 'Physical dip found stock below book',
   evaporation_loss: 'Evaporation or temperature loss',
   spillage_loss: 'Spillage loss',
   leakage_loss: 'Leakage loss',
@@ -20,14 +25,34 @@ const ADJUSTMENT_REASON_LABELS: Record<string, string> = {
   other_loss: 'Other approved stock loss',
 };
 
+const POSITIVE_ADJUSTMENT_REASONS = new Set([
+  'stock_take',
+  'delivery_correction_gain',
+  'meter_calibration_gain',
+  'opening_balance_correction_gain',
+  'other_gain',
+]);
+
+const NEGATIVE_ADJUSTMENT_REASONS = new Set([
+  'dip_reconciliation_loss',
+  'evaporation_loss',
+  'spillage_loss',
+  'leakage_loss',
+  'theft_loss',
+  'contamination_loss',
+  'calibration_loss',
+  'write_off',
+  'other_loss',
+]);
+
+function roundLitres(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 // Helper: check if any shift is currently open
 async function hasOpenShift(): Promise<boolean> {
   const open = await db('shifts').where({ status: 'open' }).first();
   return !!open;
-}
-
-function nowSqlite(): string {
-  return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
 async function latestCostPerLitre(tankId: number, trx: any): Promise<number | null> {
@@ -184,6 +209,10 @@ router.get('/:id/stock-summary', async (req, res) => {
     const dips = await db('tank_dips')
       .where({ tank_id: req.params.id })
       .whereNull('deleted_at')
+      .select(
+        'tank_dips.*',
+        db.raw('(SELECT id FROM tank_stock_adjustments WHERE reference_dip_id = tank_dips.id LIMIT 1) as adjustment_id'),
+      )
       .orderByRaw('dip_date DESC, timestamp DESC')
       .limit(10);
 
@@ -233,6 +262,8 @@ router.get('/:id/adjustments', async (req, res) => {
         'tank_stock_adjustments.*',
         'employees.name as created_by_name',
         'tank_dips.measured_litres as reference_dip_litres',
+        'tank_dips.dip_date as reference_dip_date',
+        'tank_dips.timestamp as reference_dip_timestamp',
       )
       .orderBy('tank_stock_adjustments.adjustment_timestamp', 'desc');
 
@@ -256,47 +287,58 @@ router.post('/:id/adjustments', requireAdmin, validate(createTankStockAdjustment
     const tank = await db('tanks').where({ id: req.params.id }).first();
     if (!tank) return res.status(404).json({ success: false, error: 'Tank not found' });
 
-    const today = getKenyaDate();
-    const adjustmentDate = req.body.adjustment_date || today;
-    if (adjustmentDate > today) {
-      return res.status(400).json({ success: false, error: 'Adjustment date cannot be in the future.' });
-    }
-
-    const litresChange = Math.round(Number(req.body.litres_change) * 100) / 100;
     const reason = req.body.reason;
     const notes = String(req.body.notes || '').trim();
-
-    if (litresChange > 0 && reason !== 'stock_take') {
-      return res.status(400).json({
-        success: false,
-        error: 'Positive stock adjustments are only allowed for stock-taking/dip reconciliation.',
-      });
-    }
-    if (litresChange >= 0 && reason !== 'stock_take') {
-      return res.status(400).json({
-        success: false,
-        error: `${ADJUSTMENT_REASON_LABELS[reason] || reason} can only reduce stock.`,
-      });
-    }
-
-    const adjustmentTimestamp = adjustmentDate === today ? nowSqlite() : `${adjustmentDate} 23:59:59`;
     const warnings: string[] = [];
 
     const adjustment = await db.transaction(async (trx) => {
-      if (req.body.reference_dip_id) {
-        const dip = await trx('tank_dips')
-          .where({ id: req.body.reference_dip_id, tank_id: tank.id })
-          .whereNull('deleted_at')
-          .first();
-        if (!dip) {
-          const err: any = new Error('Referenced dip reading was not found for this tank.');
-          err.httpStatus = 400;
-          throw err;
-        }
+      const dip = await trx('tank_dips')
+        .where({ id: req.body.reference_dip_id, tank_id: tank.id })
+        .whereNull('deleted_at')
+        .first();
+      if (!dip) {
+        const err: any = new Error('Referenced dip reading was not found for this tank.');
+        err.httpStatus = 400;
+        throw err;
       }
 
+      const existingDipAdjustment = await trx('tank_stock_adjustments')
+        .where({ reference_dip_id: dip.id })
+        .first();
+      if (existingDipAdjustment) {
+        const err: any = new Error(`Dip #${dip.id} is already linked to stock adjustment #${existingDipAdjustment.id}.`);
+        err.httpStatus = 400;
+        throw err;
+      }
+
+      const today = getKenyaDate();
+      const adjustmentDate = dip.dip_date || today;
+      if (adjustmentDate > today) {
+        const err: any = new Error('Cannot adjust stock from a future-dated dip.');
+        err.httpStatus = 400;
+        throw err;
+      }
+      const adjustmentTimestamp = dip.timestamp || `${adjustmentDate} 23:59:59`;
+
       const currentBook = await computeBookStock(tank.id, adjustmentTimestamp, trx);
-      const projected = Math.round((currentBook + litresChange) * 100) / 100;
+      const measuredLitres = roundLitres(Number(dip.measured_litres));
+      const litresChange = roundLitres(measuredLitres - currentBook);
+      const projected = measuredLitres;
+      if (Math.abs(litresChange) < 0.01) {
+        const err: any = new Error('The selected dip already matches book stock. No adjustment is required.');
+        err.httpStatus = 400;
+        throw err;
+      }
+      if (litresChange > 0 && !POSITIVE_ADJUSTMENT_REASONS.has(reason)) {
+        const err: any = new Error(`${ADJUSTMENT_REASON_LABELS[reason] || reason} is not allowed for a positive stock adjustment.`);
+        err.httpStatus = 400;
+        throw err;
+      }
+      if (litresChange < 0 && !NEGATIVE_ADJUSTMENT_REASONS.has(reason)) {
+        const err: any = new Error(`${ADJUSTMENT_REASON_LABELS[reason] || reason} is not allowed for a negative stock adjustment.`);
+        err.httpStatus = 400;
+        throw err;
+      }
       if (projected < -0.01) {
         const err: any = new Error(`Adjustment would make book stock negative (${projected.toFixed(2)} L).`);
         err.httpStatus = 400;
@@ -330,7 +372,7 @@ router.post('/:id/adjustments', requireAdmin, validate(createTankStockAdjustment
         adjustment_timestamp: adjustmentTimestamp,
         cost_per_litre: costPerLitre,
         total_cost: totalCost,
-        reference_dip_id: req.body.reference_dip_id || null,
+        reference_dip_id: dip.id,
         created_by_employee_id: req.employee?.id || null,
       });
 
@@ -365,11 +407,17 @@ router.post('/:id/adjustments', requireAdmin, validate(createTankStockAdjustment
         reference_id: adjustmentId,
         litres_change: litresChange,
         balance_after: newStock,
-        notes: `${ADJUSTMENT_REASON_LABELS[reason] || reason}: ${notes}`,
+        notes: `${ADJUSTMENT_REASON_LABELS[reason] || reason}: Dip #${dip.id} set book stock from ${currentBook.toFixed(2)} L to ${measuredLitres.toFixed(2)} L. ${notes}`,
       });
 
       return trx('tank_stock_adjustments')
-        .where({ id: adjustmentId })
+        .leftJoin('tank_dips', 'tank_stock_adjustments.reference_dip_id', 'tank_dips.id')
+        .where('tank_stock_adjustments.id', adjustmentId)
+        .select(
+          'tank_stock_adjustments.*',
+          'tank_dips.measured_litres as reference_dip_litres',
+          'tank_dips.dip_date as reference_dip_date',
+        )
         .first();
     });
 

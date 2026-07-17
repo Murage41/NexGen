@@ -111,6 +111,11 @@ export const updateTankDipSchema = z.object({
 // --- Tank Stock Adjustments ---
 const TANK_ADJUSTMENT_REASONS = [
   'stock_take',
+  'delivery_correction_gain',
+  'meter_calibration_gain',
+  'opening_balance_correction_gain',
+  'other_gain',
+  'dip_reconciliation_loss',
   'evaporation_loss',
   'spillage_loss',
   'leakage_loss',
@@ -122,12 +127,13 @@ const TANK_ADJUSTMENT_REASONS = [
 ] as const;
 
 export const createTankStockAdjustmentSchema = z.object({
-  litres_change: z.number({ error: 'litres_change is required' })
-    .refine((n) => Number.isFinite(n) && n !== 0, 'litres_change cannot be zero'),
+  litres_change: z.number()
+    .refine((n) => Number.isFinite(n) && n !== 0, 'litres_change cannot be zero')
+    .optional(),
   reason: z.enum(TANK_ADJUSTMENT_REASONS),
   notes: z.string().min(3, 'notes/reason details are required'),
   adjustment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'adjustment_date must be YYYY-MM-DD format').optional(),
-  reference_dip_id: z.number().int().positive().nullish().optional(),
+  reference_dip_id: z.number({ error: 'reference_dip_id is required' }).int().positive(),
   cost_per_litre: z.number().min(0, 'cost_per_litre cannot be negative').nullish().optional(),
 });
 

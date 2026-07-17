@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Plus, Pencil, Trash2, AlertTriangle, Droplets } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
-import { getTank, getTankStockSummary, createTankDip, updateTankDip, deleteTankDip, getCurrentShift } from '../services/api';
+import { getTank, getTankStockSummary, createTankDip, updateTankDip, deleteTankDip, getCurrentShift, createTankAdjustment } from '../services/api';
 import { getKenyaDate } from '../utils/timezone';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,6 +14,26 @@ const VARIANCE_CATEGORIES = [
   { value: 'operational_loss', label: 'Operational Loss' },
   { value: 'meter_drift', label: 'Meter Drift' },
   { value: 'delivery_variance', label: 'Delivery Variance' },
+];
+
+const POSITIVE_ADJUSTMENT_REASONS = [
+  { value: 'stock_take', label: 'Physical dip found stock above book' },
+  { value: 'delivery_correction_gain', label: 'Approved delivery correction gain' },
+  { value: 'meter_calibration_gain', label: 'Meter or calibration correction gain' },
+  { value: 'opening_balance_correction_gain', label: 'Opening balance correction gain' },
+  { value: 'other_gain', label: 'Other approved stock gain' },
+];
+
+const NEGATIVE_ADJUSTMENT_REASONS = [
+  { value: 'dip_reconciliation_loss', label: 'Physical dip found stock below book' },
+  { value: 'evaporation_loss', label: 'Evaporation or temperature loss' },
+  { value: 'spillage_loss', label: 'Spillage loss' },
+  { value: 'leakage_loss', label: 'Leakage loss' },
+  { value: 'theft_loss', label: 'Theft / unexplained loss' },
+  { value: 'contamination_loss', label: 'Contamination write-down' },
+  { value: 'calibration_loss', label: 'Calibration or meter test loss' },
+  { value: 'write_off', label: 'Inventory write-off' },
+  { value: 'other_loss', label: 'Other approved stock loss' },
 ];
 
 const variancePillClass = (cat: string) => {
@@ -37,8 +57,10 @@ export default function TankDips() {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editDip, setEditDip] = useState<any | null>(null);
+  const [adjustDip, setAdjustDip] = useState<any | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [form, setForm] = useState({ measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' });
+  const [adjustForm, setAdjustForm] = useState({ reason: '', notes: '', cost_per_litre: '' });
   const [warnings, setWarnings] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -112,6 +134,38 @@ export default function TankDips() {
     }
   }
 
+  function openAdjust(dip: any) {
+    const change = Number(dip.variance_litres || 0);
+    const reasons = change > 0 ? POSITIVE_ADJUSTMENT_REASONS : change < 0 ? NEGATIVE_ADJUSTMENT_REASONS : [];
+    setAdjustDip(dip);
+    setAdjustForm({ reason: reasons[0]?.value || '', notes: '', cost_per_litre: '' });
+    setError('');
+    setWarnings([]);
+  }
+
+  async function handleAdjust() {
+    if (!adjustDip || !adjustForm.reason || !adjustForm.notes.trim()) return;
+    setSubmitting(true);
+    setError('');
+    setWarnings([]);
+    try {
+      const payload: any = {
+        reference_dip_id: adjustDip.id,
+        reason: adjustForm.reason,
+        notes: adjustForm.notes.trim(),
+      };
+      if (adjustForm.cost_per_litre) payload.cost_per_litre = parseFloat(adjustForm.cost_per_litre);
+      const res = await createTankAdjustment(parseInt(id!), payload);
+      setWarnings(res?.data?.warnings || []);
+      setAdjustDip(null);
+      await loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to post adjustment');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return;
     setSubmitting(true);
@@ -146,6 +200,12 @@ export default function TankDips() {
 
   const dips = summary?.dips || [];
   const vLabel = varianceLabel(summary?.dip_variance);
+  const adjustChange = adjustDip ? Number(adjustDip.variance_litres || 0) : 0;
+  const adjustReasons = adjustChange > 0
+    ? POSITIVE_ADJUSTMENT_REASONS
+    : adjustChange < 0
+      ? NEGATIVE_ADJUSTMENT_REASONS
+      : [];
 
   return (
     <div className="pb-6">
@@ -171,6 +231,17 @@ export default function TankDips() {
       {error && (
         <div className="mb-3 bg-red-50 border border-red-200 rounded-xl p-3">
           <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+
+      {warnings.length > 0 && !showAdd && !editDip && (
+        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+            <div className="text-xs text-amber-800 space-y-1">
+              {warnings.map((w, i) => <p key={i}>{w}</p>)}
+            </div>
+          </div>
         </div>
       )}
 
@@ -268,6 +339,18 @@ export default function TankDips() {
                     </div>
                   )}
                 </div>
+                {isAdmin && !hasOpenShift && v !== null && Math.abs(v) >= 0.01 && (
+                  dip.adjustment_id ? (
+                    <p className="mt-3 text-xs text-gray-400">Linked to adjustment #{dip.adjustment_id}</p>
+                  ) : (
+                    <button
+                      onClick={() => openAdjust(dip)}
+                      className="mt-3 w-full bg-blue-50 text-blue-700 py-2 rounded-xl text-sm font-medium"
+                    >
+                      Adjust book stock to this dip
+                    </button>
+                  )
+                )}
               </div>
             );
           })}
@@ -351,6 +434,77 @@ export default function TankDips() {
                   {submitting ? 'Saving...' : editDip ? 'Save Changes' : 'Record Dip'}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Adjustment Modal */}
+      {adjustDip && (
+        <div className="mobile-modal-overlay flex items-end" onClick={() => setAdjustDip(null)}>
+          <div className="mobile-bottom-sheet rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
+            <h2 className="text-lg font-bold text-gray-800 mb-4">Adjust To Dip</h2>
+            {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+            <div className="rounded-xl bg-blue-50 border border-blue-100 p-3 text-sm mb-3">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Book at dip</span>
+                <span className="font-medium">{parseFloat(adjustDip.book_stock_at_dip).toLocaleString('en-KE', { maximumFractionDigits: 1 })} L</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Dip reading</span>
+                <span className="font-medium">{parseFloat(adjustDip.measured_litres).toLocaleString('en-KE', { maximumFractionDigits: 1 })} L</span>
+              </div>
+              <div className={`flex justify-between font-semibold ${adjustChange >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                <span>Adjustment</span>
+                <span>{adjustChange >= 0 ? '+' : ''}{adjustChange.toFixed(2)} L</span>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Reason</label>
+                <select
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={adjustForm.reason}
+                  onChange={e => setAdjustForm({ ...adjustForm, reason: e.target.value })}
+                >
+                  {adjustReasons.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  Showing {adjustChange > 0 ? 'positive stock gain' : 'negative stock loss'} reasons only.
+                </p>
+              </div>
+              {adjustChange > 0 && (
+                <div>
+                  <label className="text-sm text-gray-600 mb-1 block">Cost per Litre (optional)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Leave blank to use latest batch cost"
+                    value={adjustForm.cost_per_litre}
+                    onChange={e => setAdjustForm({ ...adjustForm, cost_per_litre: e.target.value })}
+                  />
+                </div>
+              )}
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Approval Notes</label>
+                <textarea
+                  rows={3}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Manager approval, incident reference, or reconciliation note"
+                  value={adjustForm.notes}
+                  onChange={e => setAdjustForm({ ...adjustForm, notes: e.target.value })}
+                />
+              </div>
+              <button
+                onClick={handleAdjust}
+                disabled={submitting || !adjustForm.reason || !adjustForm.notes.trim() || Math.abs(adjustChange) < 0.01}
+                className="w-full bg-blue-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50"
+              >
+                {submitting ? 'Posting...' : 'Post Adjustment'}
+              </button>
             </div>
           </div>
         </div>

@@ -65,6 +65,9 @@ router.get('/', async (req, res) => {
       .join('tanks', 'tank_dips.tank_id', 'tanks.id')
       .whereNull('tank_dips.deleted_at')
       .select('tank_dips.*', 'tanks.label as tank_label', 'tanks.fuel_type')
+      .select(
+        db.raw('(SELECT id FROM tank_stock_adjustments WHERE reference_dip_id = tank_dips.id LIMIT 1) as adjustment_id'),
+      )
       .orderByRaw('tank_dips.dip_date DESC, tank_dips.timestamp DESC');
     if (tank_id) query = query.where('tank_dips.tank_id', tank_id);
     if (date) query = query.where('tank_dips.dip_date', date);
@@ -165,6 +168,15 @@ router.put('/:id', requireAdmin, validate(updateTankDipSchema), async (req, res)
   try {
     const existing = await db('tank_dips').where({ id: req.params.id }).first();
     if (!existing) return res.status(404).json({ success: false, error: 'Dip not found' });
+    const linkedAdjustment = await db('tank_stock_adjustments')
+      .where({ reference_dip_id: req.params.id })
+      .first();
+    if (linkedAdjustment) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot edit this dip because it is linked to stock adjustment #${linkedAdjustment.id}.`,
+      });
+    }
 
     const { measured_litres, dip_date, variance_category, variance_notes } = req.body;
     const updateData: any = {};
@@ -217,6 +229,15 @@ router.put('/:id', requireAdmin, validate(updateTankDipSchema), async (req, res)
 // DELETE a dip
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
+    const linkedAdjustment = await db('tank_stock_adjustments')
+      .where({ reference_dip_id: req.params.id })
+      .first();
+    if (linkedAdjustment) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot delete this dip because it is linked to stock adjustment #${linkedAdjustment.id}.`,
+      });
+    }
     await db('tank_dips').where({ id: req.params.id }).update({ deleted_at: new Date().toISOString() });
     res.json({ success: true });
   } catch (err: any) {
