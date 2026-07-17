@@ -47,6 +47,33 @@ router.get('/', async (_req, res) => {
       }
     }
 
+    let todayInvoiceRetail = 0;
+    if (shiftIds.length > 0) {
+      const invoiceResult = await db('invoice_consumption')
+        .whereIn('shift_id', shiftIds)
+        .whereNull('deleted_at')
+        .sum('retail_amount as total')
+        .first();
+      todayInvoiceRetail = Number((invoiceResult as any)?.total) || 0;
+    }
+
+    let todayCreditReceiptsCash = 0;
+    let todayCreditReceiptsMpesa = 0;
+    if (shiftIds.length > 0 && await db.schema.hasTable('credit_payments')) {
+      const hasShiftId = await db.schema.hasColumn('credit_payments', 'shift_id');
+      if (hasShiftId) {
+        const receipts = await db('credit_payments')
+          .whereIn('shift_id', shiftIds)
+          .whereNull('deleted_at')
+          .select('payment_method', 'amount');
+        for (const receipt of receipts) {
+          if (receipt.payment_method === 'mpesa') todayCreditReceiptsMpesa += Number(receipt.amount) || 0;
+          else todayCreditReceiptsCash += Number(receipt.amount) || 0;
+        }
+      }
+    }
+    const todayCreditReceipts = todayCreditReceiptsCash + todayCreditReceiptsMpesa;
+
     // Today's COGS from FIFO batch consumption
     const todayFifoCosts = await getFIFOCostByFuelType(today, today);
     const todayCogs = (todayFifoCosts['petrol'] || 0) + (todayFifoCosts['diesel'] || 0);
@@ -93,12 +120,18 @@ router.get('/', async (_req, res) => {
     const todayNetProfit = todayGrossProfit - todayWages - todayExpenses;
     const todayGrossMargin = todaySales > 0 ? (todayGrossProfit / todaySales) * 100 : 0;
 
-    // Today's variance — must match shift detail formula:
-    // variance = (cash + mpesa + credits + expenses + wages) − expected_sales
-    // Phase 2 fix: was missing todayExpenses + todayWages, causing
-    // dashboard variance to disagree with individual shift variances.
-    const todayTotalCollected = todayCash + todayMpesa + todayCreditsOnAccount + todayShiftExpenses + todayWages;
-    const todayVariance = todayTotalCollected - todaySales;
+    // Today's variance must match shift detail. Shift-linked debt receipts
+    // are expected in handover totals, but remain separate from pump sales.
+    const todayExpectedTotal = todaySales + todayCreditReceipts;
+    const todayTotalAccounted =
+      todayCash +
+      todayMpesa +
+      todayCreditReceipts +
+      todayCreditsOnAccount +
+      todayInvoiceRetail +
+      todayShiftExpenses +
+      todayWages;
+    const todayVariance = todayTotalAccounted - todayExpectedTotal;
 
     // ── Month-to-date figures ──
     const mtdShifts = await db('shifts')
@@ -356,6 +389,8 @@ router.get('/', async (_req, res) => {
         today_litres_petrol: todayLitresPetrol,
         today_litres_diesel: todayLitresDiesel,
         today_variance: todayVariance,
+        today_expected_total: todayExpectedTotal,
+        today_accounted: todayTotalAccounted,
         today_cogs: todayCogs,
         today_gross_profit: todayGrossProfit,
         today_gross_margin: todayGrossMargin,
@@ -368,6 +403,13 @@ router.get('/', async (_req, res) => {
           mpesa_fee: todayMpesaFee,
           mpesa_net: todayMpesaNet,
           credits: todayCreditsOnAccount,
+          invoice_retail: todayInvoiceRetail,
+          credit_receipts: todayCreditReceipts,
+          credit_receipts_cash: todayCreditReceiptsCash,
+          credit_receipts_mpesa: todayCreditReceiptsMpesa,
+          expected_cash: todayCash + todayCreditReceiptsCash,
+          expected_mpesa: todayMpesa + todayCreditReceiptsMpesa,
+          expected_total_received: todayCash + todayMpesa + todayCreditReceipts,
         },
         // Month-to-date
         mtd_sales: mtdSales,

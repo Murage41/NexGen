@@ -217,6 +217,14 @@ export default function Reports() {
                   <div className="py-2">
                     <PnLRow label="Cash" value={dailyData.total_cash} />
                     <PnLRow label="M-Pesa" value={dailyData.total_mpesa} />
+                    {dailyData.total_credit_receipts > 0 && (
+                      <>
+                        <PnLRow label="Debt Receipts" value={dailyData.total_credit_receipts} color="text-green-700" />
+                        <PnLRow label="Expected Cash" value={dailyData.expected_cash_received} indent />
+                        <PnLRow label="Expected M-Pesa" value={dailyData.expected_mpesa_received} indent />
+                        <PnLRow label="Expected Received" value={dailyData.expected_total_received} bold />
+                      </>
+                    )}
                     <PnLRow label="Credits (on account)" value={dailyData.total_credits} color="text-amber-600" />
                     <PnLRow label="Total Collected"
                       value={dailyData.total_cash + dailyData.total_mpesa + dailyData.total_credits}
@@ -263,7 +271,14 @@ export default function Reports() {
                           <td className="p-3 text-right text-gray-600">{litres(s.petrol_litres)}</td>
                           <td className="p-3 text-right text-gray-600">{litres(s.diesel_litres)}</td>
                           <td className="p-3 text-right">{kes(s.total_sales)}</td>
-                          <td className="p-3 text-right">{kes(s.total_collections)}</td>
+                          <td className="p-3 text-right">
+                            {kes(s.total_collections)}
+                            {s.total_credit_receipts > 0 && (
+                              <span className="block text-xs text-green-700">
+                                received {kes(s.expected_total_received)}
+                              </span>
+                            )}
+                          </td>
                           <td className={`p-3 text-right font-medium ${s.variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                             {s.variance >= 0
                               ? <span className="flex items-center justify-end gap-1"><TrendingUp size={12} />{kes(s.variance)}</span>

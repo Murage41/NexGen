@@ -80,15 +80,22 @@ function computeShiftAccountability({
   const drawer_cash = roundMoney(sales_cash + credit_receipts_cash);
   const drawer_mpesa = roundMoney(sales_mpesa + credit_receipts_mpesa);
   const drawer_total = roundMoney(drawer_cash + drawer_mpesa);
-  const total_accounted = roundMoney(
+  const sales_accounted = roundMoney(
     sales_collections + total_credits + total_invoice_consumption + total_expenses + normalized_wage,
   );
-  const variance = roundMoney(total_accounted - expected_sales);
+  const sales_variance = roundMoney(sales_accounted - expected_sales);
+  const expected_shift_total = roundMoney(expected_sales + total_credit_receipts);
+  const total_accounted = roundMoney(sales_accounted + total_credit_receipts);
+  const variance = roundMoney(total_accounted - expected_shift_total);
 
   return {
     expected_sales,
+    expected_shift_total,
     total_cash,
     total_mpesa,
+    expected_cash: drawer_cash,
+    expected_mpesa: drawer_mpesa,
+    expected_total_received: drawer_total,
     drawer_total,
     credit_receipts_cash,
     credit_receipts_mpesa,
@@ -102,6 +109,8 @@ function computeShiftAccountability({
     total_invoice_consumption,
     total_expenses,
     employee_wage: normalized_wage,
+    sales_accounted,
+    sales_variance,
     total_accounted,
     variance,
   };
@@ -1031,7 +1040,8 @@ router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftO
  *   - Leaves shift_collections as current-shift sales collections only
  *   - Records credit_payments row linked to this shift_id
  *   - Does NOT touch revenue / pump_readings
- *   - Appears in drawer/bank movement totals, but not sales accountability variance
+ *   - Counts toward the shift's expected cash/M-Pesa handover
+ *   - Stays separate from fuel revenue so old debt is not treated as new sales
  */
 router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   if (!(await requireOpenShift(req, res))) return;

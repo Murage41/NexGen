@@ -202,10 +202,36 @@ export default function Dashboard() {
                   <span className="text-gray-500">M-Pesa</span>
                   <span className="font-medium">{formatKES(data.today_collections.mpesa)}</span>
                 </div>
+                {data.today_collections.credit_receipts > 0 && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-green-700">Debt receipts</span>
+                      <span className="font-medium text-green-700">{formatKES(data.today_collections.credit_receipts)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Expected cash</span>
+                      <span className="font-medium">{formatKES(data.today_collections.expected_cash)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Expected M-Pesa</span>
+                      <span className="font-medium">{formatKES(data.today_collections.expected_mpesa)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-gray-500">Expected received</span>
+                      <span className="font-semibold">{formatKES(data.today_collections.expected_total_received)}</span>
+                    </div>
+                  </>
+                )}
                 <div className="flex justify-between">
                   <span className="text-amber-600">Credits</span>
                   <span className="font-medium text-amber-600">{formatKES(data.today_collections.credits)}</span>
                 </div>
+                {data.today_collections.invoice_retail > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-purple-600">Invoice consumption</span>
+                    <span className="font-medium text-purple-600">{formatKES(data.today_collections.invoice_retail)}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -95,6 +95,30 @@ export default function Dashboard() {
         </div>
       )}
 
+      {data?.today_collections?.credit_receipts > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
+          <p className="text-sm font-semibold text-gray-700 mb-2">Today's Received</p>
+          <div className="space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span className="text-green-700">Debt receipts</span>
+              <span className="font-medium text-green-700">{fmt(data.today_collections.credit_receipts)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Expected cash</span>
+              <span>{fmt(data.today_collections.expected_cash)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Expected M-Pesa</span>
+              <span>{fmt(data.today_collections.expected_mpesa)}</span>
+            </div>
+            <div className="flex justify-between font-semibold border-t border-gray-100 pt-1">
+              <span>Expected received</span>
+              <span>{fmt(data.today_collections.expected_total_received)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Weekly mini chart (simplified for mobile) */}
       {data?.weekly_sales && (
         <div className="bg-white rounded-xl p-4 shadow-sm">

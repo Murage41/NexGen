@@ -411,8 +411,10 @@ export default function ShiftDetail() {
   const drawerCash = salesCash + creditReceiptsCash;
   const drawerMpesa = salesMpesa + creditReceiptsMpesa;
   const drawerTotal = drawerCash + drawerMpesa;
-  const totalAccounted = salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
-  const variance = totalAccounted - expectedSales;
+  const expectedShiftTotal = expectedSales + totalCreditReceipts;
+  const salesAccounted = salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
+  const totalAccounted = salesAccounted + totalCreditReceipts;
+  const variance = totalAccounted - expectedShiftTotal;
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
@@ -460,7 +462,10 @@ export default function ShiftDetail() {
             <span className="text-gray-500">Expected Sales (Pump)</span>
             <span className="font-bold text-gray-800">{formatKES(expectedSales)}</span>
           </div>
-          <div></div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Expected Shift Total</span>
+            <span className="font-bold text-gray-800">{formatKES(expectedShiftTotal)}</span>
+          </div>
 
           <div className="flex justify-between">
             <span className="text-gray-500">Sales Cash</span>
@@ -479,12 +484,20 @@ export default function ShiftDetail() {
           {totalCreditReceipts > 0 && (
             <div className="col-span-2 grid grid-cols-2 gap-x-8 rounded border border-green-100 bg-white/70 px-3 py-2 text-xs">
               <div className="flex justify-between text-green-700">
-                <span>Prior debt receipts</span>
+                <span>Debt receipts in shift</span>
                 <span>{formatKES(totalCreditReceipts)}</span>
               </div>
               <div className="flex justify-between text-gray-600">
-                <span>Expected physical handover</span>
+                <span>Expected cash / M-Pesa</span>
                 <span>{formatKES(drawerTotal)}</span>
+              </div>
+              <div className="flex justify-between text-gray-500">
+                <span>Cash handover</span>
+                <span>{formatKES(drawerCash)}</span>
+              </div>
+              <div className="flex justify-between text-gray-500">
+                <span>M-Pesa handover</span>
+                <span>{formatKES(drawerMpesa)}</span>
               </div>
             </div>
           )}
@@ -509,7 +522,7 @@ export default function ShiftDetail() {
         </div>
         <div className="border-t pt-2 flex justify-between items-center">
           <div className="flex justify-between flex-1 mr-8">
-            <span className="font-semibold text-gray-700">Sales Accounted</span>
+            <span className="font-semibold text-gray-700">Shift Accounted</span>
             <span className="font-bold text-gray-800">{formatKES(totalAccounted)}</span>
           </div>
           <div className="text-right">
@@ -738,11 +751,19 @@ export default function ShiftDetail() {
             {totalCreditReceipts > 0 && (
               <div className="mt-2 space-y-1 text-xs text-gray-500">
                 <div className="flex justify-between">
-                  <span>Prior debt receipts</span>
+                  <span>Debt receipts in shift</span>
                   <span>{formatKES(totalCreditReceipts)}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Cash handover</span>
+                  <span>{formatKES(drawerCash)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>M-Pesa handover</span>
+                  <span>{formatKES(drawerMpesa)}</span>
+                </div>
                 <div className="flex justify-between font-medium text-gray-700">
-                  <span>Expected handover</span>
+                  <span>Expected total received</span>
                   <span>{formatKES(drawerTotal)}</span>
                 </div>
               </div>

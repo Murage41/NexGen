@@ -74,6 +74,10 @@ export default function Reports() {
         { label: '─────', value: '', divider: true },
         { label: 'Cash', value: kes(r.total_cash) },
         { label: 'M-Pesa', value: kes(r.total_mpesa) },
+        ...(Number(r.total_credit_receipts || 0) > 0 ? [
+          { label: 'Debt Receipts', value: kes(r.total_credit_receipts), positive: true },
+          { label: 'Expected Received', value: kes(r.expected_total_received), bold: true },
+        ] : []),
         { label: 'Credits', value: kes(r.total_credits), warn: true },
       ];
     } else {
@@ -297,6 +301,9 @@ export default function Reports() {
                     </div>
                     <div className="flex gap-4 mt-2 text-xs text-gray-500">
                       <span>Wage: <span className="font-medium text-gray-700">{kes(s.actual_wage_paid)}</span></span>
+                      {s.total_credit_receipts > 0 && (
+                        <span className="text-green-700">Received: {kes(s.expected_total_received)}</span>
+                      )}
                       {s.wage_deduction > 0 && (
                         <span className="text-red-500">Deducted: {kes(s.wage_deduction)}</span>
                       )}

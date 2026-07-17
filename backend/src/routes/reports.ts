@@ -6,6 +6,14 @@ import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
 
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function sumMoney(rows: any[], selector: (row: any) => any): number {
+  return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
+}
+
 // ─── Daily Report ─────────────────────────────────────────────────────────────
 router.get('/daily', async (req, res) => {
   try {
@@ -34,6 +42,14 @@ router.get('/daily', async (req, res) => {
     let totalShiftExpenses = 0;
     let totalMpesaFee = 0;
     let totalMpesaNet = 0;
+    let totalCreditReceipts = 0;
+    let totalCreditReceiptsCash = 0;
+    let totalCreditReceiptsMpesa = 0;
+
+    const hasCreditPayments = await db.schema.hasTable('credit_payments');
+    const hasShiftCreditReceipts = hasCreditPayments
+      ? await db.schema.hasColumn('credit_payments', 'shift_id')
+      : false;
 
     for (const shift of shifts) {
       const readings = await db('pump_readings')
@@ -72,6 +88,25 @@ router.get('/daily', async (req, res) => {
       const mpesaFee = Number(collections?.mpesa_fee) || 0;
       const mpesaNet = Number(collections?.mpesa_net) || 0;
       const totalCollections = cash + mpesa + credits;
+      const shiftCreditReceipts = hasShiftCreditReceipts
+        ? await db('credit_payments').where({ shift_id: shift.id }).whereNull('deleted_at')
+        : [];
+      const creditReceiptsCash = sumMoney(
+        shiftCreditReceipts.filter((receipt: any) => (receipt.payment_method || 'cash') !== 'mpesa'),
+        (receipt: any) => receipt.amount,
+      );
+      const creditReceiptsMpesa = sumMoney(
+        shiftCreditReceipts.filter((receipt: any) => receipt.payment_method === 'mpesa'),
+        (receipt: any) => receipt.amount,
+      );
+      const creditReceiptsTotal = roundMoney(creditReceiptsCash + creditReceiptsMpesa);
+      const expectedShiftTotal = roundMoney(shiftSales + creditReceiptsTotal);
+      const expectedCash = roundMoney(cash + creditReceiptsCash);
+      const expectedMpesa = roundMoney(mpesa + creditReceiptsMpesa);
+      const expectedTotalReceived = roundMoney(expectedCash + expectedMpesa);
+      const shiftAccounted = roundMoney(
+        cash + mpesa + creditReceiptsTotal + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid,
+      );
 
       const shiftInvoicePetrolLitres = shiftInvoiceConsumption
         .filter((c: any) => c.fuel_type === 'petrol')
@@ -93,6 +128,9 @@ router.get('/daily', async (req, res) => {
       totalShiftExpenses += shiftExpensesTotal;
       totalMpesaFee += mpesaFee;
       totalMpesaNet += mpesaNet;
+      totalCreditReceipts += creditReceiptsTotal;
+      totalCreditReceiptsCash += creditReceiptsCash;
+      totalCreditReceiptsMpesa += creditReceiptsMpesa;
 
       shiftDetails.push({
         id: shift.id,
@@ -110,11 +148,20 @@ router.get('/daily', async (req, res) => {
         diesel_litres: dieselLitres,
         total_sales: shiftSales,
         total_collections: totalCollections,
+        total_credit_receipts: creditReceiptsTotal,
+        credit_receipts_cash: creditReceiptsCash,
+        credit_receipts_mpesa: creditReceiptsMpesa,
+        expected_shift_total: expectedShiftTotal,
+        expected_cash: expectedCash,
+        expected_mpesa: expectedMpesa,
+        expected_total_received: expectedTotalReceived,
         standard_wage: Number(shift.daily_wage),
         wage_deduction: wageDeduction ? Number(wageDeduction.deduction_amount) : 0,
         actual_wage_paid: actualWagePaid,
-        // Phase 3B: invoice-mode retail enters the balance math like a credit
-        variance: (cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid) - shiftSales,
+        shift_accounted: shiftAccounted,
+        // Debt receipts collected during the shift count in handover totals,
+        // but old debt is not treated as new pump sales.
+        variance: roundMoney(shiftAccounted - expectedShiftTotal),
       });
     }
 
@@ -252,20 +299,6 @@ router.get('/daily', async (req, res) => {
     const grossProfit = totalSales - cogs;
     const netProfit = grossProfit - totalWagesPaid - totalExpenses;
 
-    // Debt collected during today's shifts (credit_payments with shift_id)
-    let totalCreditReceipts = 0;
-    if (shiftIds.length > 0 && await db.schema.hasTable('credit_payments')) {
-      const hasShiftId = await db.schema.hasColumn('credit_payments', 'shift_id');
-      if (hasShiftId) {
-        const receiptsResult = await db('credit_payments')
-          .whereIn('shift_id', shiftIds)
-          .whereNull('deleted_at')
-          .sum('amount as total')
-          .first();
-        totalCreditReceipts = Number((receiptsResult as any)?.total) || 0;
-      }
-    }
-
     res.json({
       success: true,
       data: {
@@ -287,7 +320,12 @@ router.get('/daily', async (req, res) => {
         invoice_petrol_litres: totalInvoicePetrolLitres,
         invoice_diesel_litres: totalInvoiceDieselLitres,
         invoice_customers: invoiceCustomersSummary,
-        total_credit_receipts: totalCreditReceipts,
+        total_credit_receipts: roundMoney(totalCreditReceipts),
+        total_credit_receipts_cash: roundMoney(totalCreditReceiptsCash),
+        total_credit_receipts_mpesa: roundMoney(totalCreditReceiptsMpesa),
+        expected_cash_received: roundMoney(totalCash + totalCreditReceiptsCash),
+        expected_mpesa_received: roundMoney(totalMpesa + totalCreditReceiptsMpesa),
+        expected_total_received: roundMoney(totalCash + totalMpesa + totalCreditReceipts),
         collection_rate: collectionRate,
         // Costs
         total_wages_paid: totalWagesPaid,
