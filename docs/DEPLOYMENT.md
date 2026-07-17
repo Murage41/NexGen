@@ -95,14 +95,25 @@ Cloudflare, and require Access login/MFA before the app is reachable.
 
 ### 5. Ngrok
 
-Ngrok is now opt-in with:
+For the station PC, use the station stack:
+
+```cmd
+npm run station:tunnel
+```
+
+Use this when you want foreground logs for backend, desktop, and ngrok in the
+same terminal. If you close that terminal, the station stack stops.
+
+For full development mode only, use:
 
 ```cmd
 npm run dev:tunnel
 ```
 
-Use it for development, demos, or emergency temporary access. Do not leave an
-unauthenticated public ngrok URL as the normal production entry point.
+That starts the heavier development stack, including the separate mobile Vite
+dev server. Use it for development, demos, or emergency temporary access. Do
+not leave an unauthenticated public ngrok URL as the normal production entry
+point.
 
 ## Production Environment
 
@@ -166,6 +177,11 @@ npm run station:bg
 npm run dev:status
 npm run dev:stop
 ```
+
+Use `npm run station:bg` for normal station operation and startup tasks. Use
+`npm run station:tunnel` when troubleshooting because it keeps the logs visible
+in the terminal. Reserve `npm run dev:bg` for development/testing because it
+also starts the separate mobile Vite dev server.
 
 Startup at user login is handled by a Windows Scheduled Task:
 

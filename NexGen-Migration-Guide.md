@@ -1,9 +1,11 @@
 # NexGen ERP — Migration Guide (New Windows 10 PC)
 
 > Production note: this guide was originally written for a development-style
-> PC move. For live deployment, use `docs/DEPLOYMENT.md`. Ngrok is no longer
-> started by default; use `npm run dev:tunnel` only for temporary dev/demo
-> access.
+> PC move. For live deployment, use `docs/DEPLOYMENT.md`. On the station PC,
+> use `npm run station:bg` for normal background operation and
+> `npm run station:tunnel` for foreground troubleshooting logs. Reserve
+> `npm run dev:bg` / `npm run dev:tunnel` for development because they also
+> start the separate mobile Vite dev server.
 
 This guide takes a **fresh Windows 10 PC** with nothing installed and gets NexGen fully running.
 The new PC starts with a fresh database; the old development database is not migrated.
@@ -171,6 +173,9 @@ https://your-ngrok-domain/mobile/
 
 The mobile Vite server on port `5174` is only needed for full development mode
 with `npm run dev` or `npm run dev:tunnel`.
+
+Use `npm run station:tunnel` for station troubleshooting. Use `npm run
+station:bg` for normal background operation.
 
 The old development tunnel was:
 ```
