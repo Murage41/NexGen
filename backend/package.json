@@ -10,7 +10,8 @@
     "migrate": "knex migrate:latest --knexfile src/knexfile.ts",
     "migrate:make": "knex migrate:make --knexfile src/knexfile.ts",
     "seed": "knex seed:run --knexfile src/knexfile.ts",
-    "fresh-start:reset": "tsx scripts/freshStartReset.ts"
+    "fresh-start:reset": "tsx scripts/freshStartReset.ts",
+    "stress:invoice-customers": "tsx scripts/stress_invoice_customer_monitor.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

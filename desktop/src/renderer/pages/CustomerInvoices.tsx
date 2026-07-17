@@ -12,8 +12,9 @@ import {
   getInvoicePayments,
   createInvoicePayment,
   deleteInvoicePayment,
+  getInvoiceCustomerMonitor,
 } from '../services/api';
-import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet } from 'lucide-react';
+import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet, Users, Droplets, AlertTriangle, Clock } from 'lucide-react';
 
 type Account = { id: number; name: string; billing_mode?: string; outstanding_balance?: number };
 type Invoice = {
@@ -28,6 +29,40 @@ type Invoice = {
   total_amount: number;
   balance: number;
   notes?: string;
+};
+type MonitorCustomer = {
+  id: number;
+  name: string;
+  phone?: string | null;
+  issued_balance: number;
+  cached_outstanding_balance: number;
+  open_invoice_count: number;
+  oldest_open_invoice_date?: string | null;
+  draft_count: number;
+  draft_total: number;
+  unbilled_litres: number;
+  unbilled_retail_amount: number;
+  unbilled_entries: number;
+  first_unbilled_date?: string | null;
+  last_unbilled_date?: string | null;
+  last_consumption_date?: string | null;
+  total_exposure: number;
+  fuels: Record<string, { litres: number; retail_amount: number; entries: number }>;
+  latest_open_invoices: Array<{ id: number; invoice_number: string; status: string; issue_date?: string | null; balance: number }>;
+  recent_unbilled_consumption: Array<{ id: number; shift_id: number; shift_date: string; fuel_type: string; litres: number; retail_amount: number }>;
+};
+type MonitorData = {
+  summary: {
+    customer_count: number;
+    issued_balance: number;
+    unbilled_litres: number;
+    unbilled_retail_amount: number;
+    unbilled_entries: number;
+    total_exposure: number;
+    open_invoice_count: number;
+    draft_count: number;
+  };
+  customers: MonitorCustomer[];
 };
 
 const statusColors: Record<string, string> = {
@@ -52,9 +87,12 @@ export default function CustomerInvoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMonitor, setLoadingMonitor] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [accountFilter, setAccountFilter] = useState<string>('');
+  const [monitorSearch, setMonitorSearch] = useState('');
   const [error, setError] = useState('');
+  const [monitor, setMonitor] = useState<MonitorData | null>(null);
 
   // Generate (draft) modal
   const [showGenerate, setShowGenerate] = useState(false);
@@ -69,7 +107,7 @@ export default function CustomerInvoices() {
   const [editPrice, setEditPrice] = useState('');
 
   // Phase 3D — Payments
-  const [tab, setTab] = useState<'invoices' | 'payments'>('invoices');
+  const [tab, setTab] = useState<'customers' | 'invoices' | 'payments'>('customers');
   const [payments, setPayments] = useState<any[]>([]);
   const [showReceive, setShowReceive] = useState(false);
   const [payForm, setPayForm] = useState({
@@ -91,6 +129,19 @@ export default function CustomerInvoices() {
     loadInvoices();
     loadPayments();
   }, [statusFilter, accountFilter]);
+
+  async function loadMonitor() {
+    try {
+      setLoadingMonitor(true);
+      const res = await getInvoiceCustomerMonitor({ recent_limit: 5 });
+      setMonitor(res.data.data || null);
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.response?.data?.error || err?.message || 'Failed to load invoice customers');
+    } finally {
+      setLoadingMonitor(false);
+    }
+  }
 
   async function loadPayments() {
     try {
@@ -141,6 +192,7 @@ export default function CustomerInvoices() {
       setPayResult(res.data.data);
       await loadInvoices();
       await loadPayments();
+      await loadMonitor();
     } catch (err: any) {
       setError(err?.response?.data?.error || err?.message || 'Failed to record payment');
     } finally {
@@ -154,6 +206,7 @@ export default function CustomerInvoices() {
       await deleteInvoicePayment(paymentId);
       await loadInvoices();
       await loadPayments();
+      await loadMonitor();
     } catch (err: any) {
       alert(err?.response?.data?.error || err?.message);
     }
@@ -162,12 +215,14 @@ export default function CustomerInvoices() {
   async function loadData() {
     try {
       setLoading(true);
-      const [invRes, acctRes] = await Promise.all([
+      const [invRes, acctRes, monitorRes] = await Promise.all([
         getCustomerInvoices(),
         getCreditAccounts({ billing_mode: 'invoice' }),
+        getInvoiceCustomerMonitor({ recent_limit: 5 }),
       ]);
       setInvoices(invRes.data.data || []);
       setAccounts(acctRes.data.data || []);
+      setMonitor(monitorRes.data.data || null);
     } catch (err: any) {
       setError(err?.response?.data?.error || err?.message || 'Failed to load');
     } finally {
@@ -242,6 +297,7 @@ export default function CustomerInvoices() {
       await createCustomerInvoiceDraft(payload);
       setShowGenerate(false);
       await loadInvoices();
+      await loadMonitor();
     } catch (err: any) {
       setError(err?.response?.data?.error || err?.message || 'Failed to save draft');
     }
@@ -262,6 +318,7 @@ export default function CustomerInvoices() {
       await issueCustomerInvoice(id);
       setDetail(null);
       await loadInvoices();
+      await loadMonitor();
     } catch (err: any) {
       alert(err?.response?.data?.error || err?.message);
     }
@@ -273,6 +330,7 @@ export default function CustomerInvoices() {
       await voidCustomerInvoice(id);
       setDetail(null);
       await loadInvoices();
+      await loadMonitor();
     } catch (err: any) {
       alert(err?.response?.data?.error || err?.message);
     }
@@ -284,6 +342,7 @@ export default function CustomerInvoices() {
       await deleteCustomerInvoiceDraft(id);
       setDetail(null);
       await loadInvoices();
+      await loadMonitor();
     } catch (err: any) {
       alert(err?.response?.data?.error || err?.message);
     }
@@ -303,10 +362,34 @@ export default function CustomerInvoices() {
       const res = await getCustomerInvoice(invoiceId);
       setDetail(res.data.data);
       await loadInvoices();
+      await loadMonitor();
     } catch (err: any) {
       alert(err?.response?.data?.error || err?.message);
     }
   }
+
+  const monitorCustomers = (monitor?.customers || []).filter((customer) => {
+    if (accountFilter && String(customer.id) !== accountFilter) return false;
+    const q = monitorSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      customer.name.toLowerCase().includes(q) ||
+      String(customer.phone || '').toLowerCase().includes(q)
+    );
+  });
+  const monitorSummary = monitorCustomers.reduce(
+    (acc, customer) => {
+      acc.customer_count += 1;
+      acc.issued_balance += Number(customer.issued_balance || 0);
+      acc.unbilled_litres += Number(customer.unbilled_litres || 0);
+      acc.unbilled_retail_amount += Number(customer.unbilled_retail_amount || 0);
+      acc.total_exposure += Number(customer.total_exposure || 0);
+      acc.unbilled_entries += Number(customer.unbilled_entries || 0);
+      return acc;
+    },
+    { customer_count: 0, issued_balance: 0, unbilled_litres: 0, unbilled_retail_amount: 0, total_exposure: 0, unbilled_entries: 0 },
+  );
+  const fmtLitres = (n: number) => `${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`;
 
   return (
     <div>
@@ -333,6 +416,15 @@ export default function CustomerInvoices() {
 
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 border-b border-gray-200">
+        <button
+          onClick={() => setTab('customers')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
+            tab === 'customers' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Users size={14} className="inline mr-1.5 -mt-0.5" />
+          Customers
+        </button>
         <button
           onClick={() => setTab('invoices')}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
@@ -381,7 +473,151 @@ export default function CustomerInvoices() {
             <option value="void">Void</option>
           </select>
         )}
+        {tab === 'customers' && (
+          <input
+            value={monitorSearch}
+            onChange={(e) => setMonitorSearch(e.target.value)}
+            placeholder="Search customer or phone"
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white w-64"
+          />
+        )}
       </div>
+
+      {tab === 'customers' && (
+        loading || loadingMonitor ? (
+          <p className="text-gray-400 text-sm">Loading invoice customers...</p>
+        ) : !monitor || monitorCustomers.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+            <Users size={28} className="mx-auto mb-2 opacity-60" />
+            <p className="text-sm">No invoice-mode customers found.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="flex items-center justify-between text-gray-500 mb-2">
+                  <span className="text-xs font-medium uppercase">Exposure</span>
+                  <AlertTriangle size={16} />
+                </div>
+                <p className="text-xl font-bold text-red-600">{fmt(monitorSummary.total_exposure)}</p>
+                <p className="text-xs text-gray-400 mt-1">{monitorSummary.customer_count} customers</p>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="flex items-center justify-between text-gray-500 mb-2">
+                  <span className="text-xs font-medium uppercase">Issued Debt</span>
+                  <FileText size={16} />
+                </div>
+                <p className="text-xl font-bold text-gray-800">{fmt(monitorSummary.issued_balance)}</p>
+                <p className="text-xs text-gray-400 mt-1">Unpaid issued invoices</p>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="flex items-center justify-between text-gray-500 mb-2">
+                  <span className="text-xs font-medium uppercase">Unbilled Litres</span>
+                  <Droplets size={16} />
+                </div>
+                <p className="text-xl font-bold text-blue-700">{fmtLitres(monitorSummary.unbilled_litres)}</p>
+                <p className="text-xs text-gray-400 mt-1">{monitorSummary.unbilled_entries} consumption rows</p>
+              </div>
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="flex items-center justify-between text-gray-500 mb-2">
+                  <span className="text-xs font-medium uppercase">Unbilled Retail</span>
+                  <DollarSign size={16} />
+                </div>
+                <p className="text-xl font-bold text-amber-700">{fmt(monitorSummary.unbilled_retail_amount)}</p>
+                <p className="text-xs text-gray-400 mt-1">At shift retail price</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-gray-600 text-xs uppercase">
+                  <tr>
+                    <th className="text-left px-4 py-2.5">Customer</th>
+                    <th className="text-right px-4 py-2.5">Issued Debt</th>
+                    <th className="text-right px-4 py-2.5">Unbilled</th>
+                    <th className="text-right px-4 py-2.5">Exposure</th>
+                    <th className="text-left px-4 py-2.5">Fuel Split</th>
+                    <th className="text-left px-4 py-2.5">Recent Unbilled Consumption</th>
+                    <th className="text-left px-4 py-2.5">Open Invoices</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monitorCustomers.map((customer) => {
+                    const petrol = customer.fuels?.petrol;
+                    const diesel = customer.fuels?.diesel;
+                    return (
+                      <tr key={customer.id} className="border-t border-gray-100 align-top hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <p className="font-semibold text-gray-800">{customer.name}</p>
+                          <p className="text-xs text-gray-400">{customer.phone || 'No phone'}</p>
+                          <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
+                            <Clock size={12} />
+                            <span>Last use: {customer.last_consumption_date || 'None'}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <p className={customer.issued_balance > 0 ? 'font-semibold text-red-600' : 'text-gray-400'}>
+                            {fmt(customer.issued_balance)}
+                          </p>
+                          <p className="text-xs text-gray-400">{customer.open_invoice_count} open</p>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <p className="font-semibold text-blue-700">{fmtLitres(customer.unbilled_litres)}</p>
+                          <p className="text-xs text-gray-500">{fmt(customer.unbilled_retail_amount)}</p>
+                          {customer.first_unbilled_date && (
+                            <p className="text-[11px] text-gray-400">{customer.first_unbilled_date} to {customer.last_unbilled_date}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold text-gray-800">{fmt(customer.total_exposure)}</td>
+                        <td className="px-4 py-3 text-xs">
+                          <div className="space-y-1">
+                            <div className="flex justify-between gap-3">
+                              <span className="text-blue-700 font-medium">Petrol</span>
+                              <span>{fmtLitres(petrol?.litres || 0)}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-amber-700 font-medium">Diesel</span>
+                              <span>{fmtLitres(diesel?.litres || 0)}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs min-w-[220px]">
+                          {customer.recent_unbilled_consumption.length === 0 ? (
+                            <span className="text-gray-400">No unbilled rows</span>
+                          ) : (
+                            <div className="space-y-1">
+                              {customer.recent_unbilled_consumption.map((row) => (
+                                <div key={row.id} className="flex justify-between gap-3">
+                                  <span className="text-gray-500">{row.shift_date} · {row.fuel_type}</span>
+                                  <span className="font-medium">{fmtLitres(row.litres)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs min-w-[180px]">
+                          {customer.latest_open_invoices.length === 0 ? (
+                            <span className="text-gray-400">None</span>
+                          ) : (
+                            <div className="space-y-1">
+                              {customer.latest_open_invoices.map((inv) => (
+                                <div key={inv.id} className="flex justify-between gap-3">
+                                  <span className="font-mono text-gray-500">{inv.invoice_number}</span>
+                                  <span className="font-medium text-red-600">{fmt(inv.balance)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
 
       {tab === 'invoices' && (loading ? (
         <p className="text-gray-400 text-sm">Loading...</p>

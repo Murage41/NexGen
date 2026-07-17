@@ -3,6 +3,7 @@ import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { getKenyaDate } from '../utils/timezone';
 import { recomputeAccountBalance } from '../services/accountBalance';
+import { getInvoiceCustomerMonitor } from '../services/invoiceCustomerMonitor';
 
 const router = Router();
 
@@ -127,6 +128,17 @@ router.get('/', async (req, res) => {
 
 // ─── Payments (Phase 3D) ────────────────────────────────────────────────────
 //
+// GET /customers/monitor - invoice-mode customer debt + unbilled litres overview.
+router.get('/customers/monitor', async (req, res) => {
+  try {
+    const recentLimit = Number(req.query.recent_limit || 5);
+    const data = await getInvoiceCustomerMonitor(db, { recentLimit });
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // IMPORTANT: these /payments routes MUST be declared before /:id so Express
 // matches the literal path first (otherwise GET /payments would resolve as
 // GET /:id with id="payments" and 404).

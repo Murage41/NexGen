@@ -147,6 +147,10 @@ export const deleteCreditAccount = (id: number) => api.delete(`/credit-accounts/
 export const addAccountPayment = (accountId: number, data: any) =>
   api.post(`/credit-accounts/${accountId}/payments`, data);
 
+// Invoice Customers
+export const getInvoiceCustomerMonitor = (params?: { recent_limit?: number }) =>
+  api.get('/customer-invoices/customers/monitor', { params });
+
 // Reports
 export const getDailyReport = (date?: string) => api.get('/reports/daily', { params: { date } });
 export const getMonthlyReport = (month?: string) => api.get('/reports/monthly', { params: { month } });

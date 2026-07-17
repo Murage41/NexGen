@@ -115,6 +115,8 @@ export const addAccountPayment = (accountId: number, data: any) =>
 // ============ Customer Invoices (invoice-mode AR) ============
 export const getCustomerInvoices = (params?: { account_id?: number; status?: string; from?: string; to?: string }) =>
   api.get('/customer-invoices', { params });
+export const getInvoiceCustomerMonitor = (params?: { recent_limit?: number }) =>
+  api.get('/customer-invoices/customers/monitor', { params });
 export const getCustomerInvoice = (id: number) => api.get(`/customer-invoices/${id}`);
 export const previewCustomerInvoice = (params: { account_id: number; from: string; to: string }) =>
   api.get('/customer-invoices/preview/scan', { params });

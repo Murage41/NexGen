@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Users, Fuel, DollarSign, BarChart3, LogOut, Droplets, Truck } from 'lucide-react';
+import { Users, Fuel, DollarSign, BarChart3, LogOut, Droplets, Truck, FileText } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 
@@ -18,6 +18,7 @@ const menuItems: MenuItem[] = [
   { label: 'Tanks & Stock', path: '/tanks', icon: Droplets, color: 'text-cyan-500', bg: 'bg-cyan-50', adminOnly: true },
   { label: 'Fuel Deliveries', path: '/deliveries', icon: Truck, color: 'text-orange-500', bg: 'bg-orange-50', adminOnly: true },
   { label: 'Suppliers', path: '/suppliers', icon: Truck, color: 'text-teal-500', bg: 'bg-teal-50', adminOnly: true },
+  { label: 'Invoice Customers', path: '/invoice-customers', icon: FileText, color: 'text-indigo-500', bg: 'bg-indigo-50', adminOnly: true },
   { label: 'Fuel Pricing', path: '/prices', icon: DollarSign, color: 'text-green-500', bg: 'bg-green-50', adminOnly: true },
   { label: 'Reports', path: '/reports', icon: BarChart3, color: 'text-amber-500', bg: 'bg-amber-50' },
 ];
