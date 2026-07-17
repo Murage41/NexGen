@@ -5,6 +5,22 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Write-Host "Expected station mode ports: backend 3001, desktop 5173, ngrok inspector 4040."
 Write-Host "Port 5174 is the mobile Vite dev server and is only expected in full dev mode.`n"
 
+Write-Host "Startup tasks"
+foreach ($TaskName in @("NexGen ERP Station Stack", "NexGen ERP Dev Stack")) {
+  $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  if ($task) {
+    $info = Get-ScheduledTaskInfo -TaskName $TaskName
+    [PSCustomObject]@{
+      TaskName = $TaskName
+      State = $task.State
+      LastRunTime = $info.LastRunTime
+      LastTaskResult = $info.LastTaskResult
+      NextRunTime = $info.NextRunTime
+    }
+  }
+}
+Write-Host ""
+
 Write-Host "Ports"
 Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
   Where-Object { $_.LocalPort -in 3001, 4040, 5173, 5174 } |
@@ -37,4 +53,13 @@ try {
     Format-Table -AutoSize
 } catch {
   Write-Host "Ngrok inspector is not responding on http://127.0.0.1:4040"
+}
+
+Write-Host "`nRecent startup logs"
+foreach ($LogName in @("nexgen-station-stack.log", "nexgen-dev-stack.log")) {
+  $path = Join-Path $Root "logs\$LogName"
+  if (Test-Path $path) {
+    Write-Host "`n$LogName"
+    Get-Content $path -Tail 25
+  }
 }

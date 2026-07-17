@@ -1,5 +1,6 @@
 param(
-  [switch]$WithTunnel = $true
+  [switch]$WithTunnel = $true,
+  [int]$DelaySeconds = 45
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +21,9 @@ if ($oldTask) {
 $actionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$StartScript`"$TunnelArg"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $actionArgs -WorkingDirectory $Root
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
+if ($DelaySeconds -gt 0) {
+  $trigger.Delay = "PT${DelaySeconds}S"
+}
 $principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited
 $description = "Starts NexGen backend, desktop dev server, and optional ngrok tunnel when the Windows user logs in. Mobile is served from the backend /mobile build."
 $settings = New-ScheduledTaskSettingsSet `
@@ -28,7 +32,8 @@ $settings = New-ScheduledTaskSettingsSet `
   -ExecutionTimeLimit (New-TimeSpan -Days 30) `
   -MultipleInstances IgnoreNew `
   -RestartCount 3 `
-  -RestartInterval (New-TimeSpan -Minutes 1)
+  -RestartInterval (New-TimeSpan -Minutes 1) `
+  -StartWhenAvailable
 
 Register-ScheduledTask `
   -TaskName $TaskName `
@@ -41,4 +46,6 @@ Register-ScheduledTask `
 
 Write-Host "Installed startup task: $TaskName"
 Write-Host "It will run when $CurrentUser logs in."
+Write-Host "Startup delay: $DelaySeconds seconds."
 Write-Host "To start now: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Start-NexGenStationStack.ps1$TunnelArg"
+Write-Host "To verify: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Get-NexGenStatus.ps1"

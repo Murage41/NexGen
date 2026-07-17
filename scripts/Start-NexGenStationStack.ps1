@@ -25,7 +25,19 @@ if (Test-PortListening -Port 3001) {
 
 $npmCommand = if ($WithTunnel) { "npm run station:tunnel" } else { "npm run station" }
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-Add-Content -Path $LogFile -Value "`n[$timestamp] Starting NexGen station stack: $npmCommand"
+$npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if (-not $npm) {
+  $npm = Get-Command npm -ErrorAction SilentlyContinue
+}
+if (-not $npm) {
+  Add-Content -Path $LogFile -Value "`n[$timestamp] ERROR: npm was not found in PATH for user $env:USERDOMAIN\$env:USERNAME"
+  throw "npm was not found in PATH."
+}
+
+Add-Content -Path $LogFile -Value "`n[$timestamp] Starting NexGen station stack as $env:USERDOMAIN\$env:USERNAME"
+Add-Content -Path $LogFile -Value "Root: $Root"
+Add-Content -Path $LogFile -Value "npm: $($npm.Source)"
+Add-Content -Path $LogFile -Value "Command: $npmCommand"
 
 $cmdArgs = "/c cd /d `"$Root`" && $npmCommand >> `"$LogFile`" 2>&1"
 Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -WindowStyle Hidden
