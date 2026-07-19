@@ -100,12 +100,15 @@ router.get('/daily', async (req, res) => {
         (receipt: any) => receipt.amount,
       );
       const creditReceiptsTotal = roundMoney(creditReceiptsCash + creditReceiptsMpesa);
+      const salesCash = roundMoney(cash - creditReceiptsCash);
+      const salesMpesa = roundMoney(mpesa - creditReceiptsMpesa);
+      const salesCollections = roundMoney(salesCash + salesMpesa);
       const expectedShiftTotal = roundMoney(shiftSales + creditReceiptsTotal);
-      const expectedCash = roundMoney(cash + creditReceiptsCash);
-      const expectedMpesa = roundMoney(mpesa + creditReceiptsMpesa);
+      const expectedCash = roundMoney(cash);
+      const expectedMpesa = roundMoney(mpesa);
       const expectedTotalReceived = roundMoney(expectedCash + expectedMpesa);
       const shiftAccounted = roundMoney(
-        cash + mpesa + creditReceiptsTotal + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid,
+        cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid,
       );
 
       const shiftInvoicePetrolLitres = shiftInvoiceConsumption
@@ -148,6 +151,9 @@ router.get('/daily', async (req, res) => {
         diesel_litres: dieselLitres,
         total_sales: shiftSales,
         total_collections: totalCollections,
+        sales_cash: salesCash,
+        sales_mpesa: salesMpesa,
+        sales_collections: salesCollections,
         total_credit_receipts: creditReceiptsTotal,
         credit_receipts_cash: creditReceiptsCash,
         credit_receipts_mpesa: creditReceiptsMpesa,
@@ -159,8 +165,8 @@ router.get('/daily', async (req, res) => {
         wage_deduction: wageDeduction ? Number(wageDeduction.deduction_amount) : 0,
         actual_wage_paid: actualWagePaid,
         shift_accounted: shiftAccounted,
-        // Debt receipts collected during the shift count in handover totals,
-        // but old debt is not treated as new pump sales.
+        // Debt receipts are already inside cash/M-Pesa received totals;
+        // keep them separate only so old debt is not treated as new pump sales.
         variance: roundMoney(shiftAccounted - expectedShiftTotal),
       });
     }
@@ -237,8 +243,9 @@ router.get('/daily', async (req, res) => {
       unrecoveredLosses = Number((debtResult as any)?.total) || 0;
     }
 
-    // Collection rate — includes invoice retail (treated like a credit for accountability)
-    const totalCollected = totalCash + totalMpesa + totalCredits + totalInvoiceRetail;
+    // Collection rate excludes old-debt receipts and includes invoice retail
+    // as an on-account sale for current pump-sales accountability.
+    const totalCollected = totalCash + totalMpesa - totalCreditReceipts + totalCredits + totalInvoiceRetail;
     const collectionRate = totalSales > 0 ? (totalCollected / totalSales) * 100 : 0;
 
     // Tank stock snapshot for the day — computed as-of report date (fixes Issue 3)
@@ -323,9 +330,12 @@ router.get('/daily', async (req, res) => {
         total_credit_receipts: roundMoney(totalCreditReceipts),
         total_credit_receipts_cash: roundMoney(totalCreditReceiptsCash),
         total_credit_receipts_mpesa: roundMoney(totalCreditReceiptsMpesa),
-        expected_cash_received: roundMoney(totalCash + totalCreditReceiptsCash),
-        expected_mpesa_received: roundMoney(totalMpesa + totalCreditReceiptsMpesa),
-        expected_total_received: roundMoney(totalCash + totalMpesa + totalCreditReceipts),
+        sales_cash: roundMoney(totalCash - totalCreditReceiptsCash),
+        sales_mpesa: roundMoney(totalMpesa - totalCreditReceiptsMpesa),
+        sales_collections: roundMoney(totalCash + totalMpesa - totalCreditReceipts),
+        expected_cash_received: roundMoney(totalCash),
+        expected_mpesa_received: roundMoney(totalMpesa),
+        expected_total_received: roundMoney(totalCash + totalMpesa),
         collection_rate: collectionRate,
         // Costs
         total_wages_paid: totalWagesPaid,

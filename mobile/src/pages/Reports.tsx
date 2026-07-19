@@ -72,13 +72,16 @@ export default function Reports() {
         { label: 'Gross Margin', value: pct(r.total_sales > 0 ? (r.gross_profit / r.total_sales) * 100 : 0), sub: true },
         { label: 'Collection Rate', value: pct(r.collection_rate), sub: true },
         { label: '─────', value: '', divider: true },
-        { label: 'Cash', value: kes(r.total_cash) },
-        { label: 'M-Pesa', value: kes(r.total_mpesa) },
+        { label: 'Cash Received', value: kes(r.total_cash) },
+        { label: 'M-Pesa Received', value: kes(r.total_mpesa) },
         ...(Number(r.total_credit_receipts || 0) > 0 ? [
-          { label: 'Debt Receipts', value: kes(r.total_credit_receipts), positive: true },
-          { label: 'Expected Received', value: kes(r.expected_total_received), bold: true },
+          { label: 'Debt Receipts Included', value: kes(r.total_credit_receipts), positive: true },
+          { label: 'Sales Cash After Debt', value: kes(r.sales_cash), sub: true },
+          { label: 'Sales M-Pesa After Debt', value: kes(r.sales_mpesa), sub: true },
+          { label: 'Received Total', value: kes(r.expected_total_received), bold: true },
         ] : []),
         { label: 'Credits', value: kes(r.total_credits), warn: true },
+        { label: 'Pump Sales Accounted', value: kes(r.sales_collections + r.total_credits + r.total_invoice_retail), bold: true },
       ];
     } else {
       return [
@@ -302,7 +305,7 @@ export default function Reports() {
                     <div className="flex gap-4 mt-2 text-xs text-gray-500">
                       <span>Wage: <span className="font-medium text-gray-700">{kes(s.actual_wage_paid)}</span></span>
                       {s.total_credit_receipts > 0 && (
-                        <span className="text-green-700">Received: {kes(s.expected_total_received)}</span>
+                        <span className="text-green-700">Debt included: {kes(s.total_credit_receipts)}</span>
                       )}
                       {s.wage_deduction > 0 && (
                         <span className="text-red-500">Deducted: {kes(s.wage_deduction)}</span>

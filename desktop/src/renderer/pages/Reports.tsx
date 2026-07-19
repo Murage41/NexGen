@@ -215,19 +215,19 @@ export default function Reports() {
                     <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Collections</h2>
                   </div>
                   <div className="py-2">
-                    <PnLRow label="Cash" value={dailyData.total_cash} />
-                    <PnLRow label="M-Pesa" value={dailyData.total_mpesa} />
+                    <PnLRow label="Cash Received" value={dailyData.total_cash} />
+                    <PnLRow label="M-Pesa Received" value={dailyData.total_mpesa} />
                     {dailyData.total_credit_receipts > 0 && (
                       <>
-                        <PnLRow label="Debt Receipts" value={dailyData.total_credit_receipts} color="text-green-700" />
-                        <PnLRow label="Expected Cash" value={dailyData.expected_cash_received} indent />
-                        <PnLRow label="Expected M-Pesa" value={dailyData.expected_mpesa_received} indent />
-                        <PnLRow label="Expected Received" value={dailyData.expected_total_received} bold />
+                        <PnLRow label="Debt Receipts Included" value={dailyData.total_credit_receipts} color="text-green-700" />
+                        <PnLRow label="Sales Cash After Debt" value={dailyData.sales_cash} indent />
+                        <PnLRow label="Sales M-Pesa After Debt" value={dailyData.sales_mpesa} indent />
+                        <PnLRow label="Received Total" value={dailyData.expected_total_received} bold />
                       </>
                     )}
                     <PnLRow label="Credits (on account)" value={dailyData.total_credits} color="text-amber-600" />
-                    <PnLRow label="Total Collected"
-                      value={dailyData.total_cash + dailyData.total_mpesa + dailyData.total_credits}
+                    <PnLRow label="Pump Sales Accounted"
+                      value={dailyData.sales_collections + dailyData.total_credits + dailyData.total_invoice_retail}
                       bold border />
                     <div className="px-4 py-2">
                       <div className="flex items-center justify-between text-xs">
@@ -272,10 +272,10 @@ export default function Reports() {
                           <td className="p-3 text-right text-gray-600">{litres(s.diesel_litres)}</td>
                           <td className="p-3 text-right">{kes(s.total_sales)}</td>
                           <td className="p-3 text-right">
-                            {kes(s.total_collections)}
+                            {kes((s.sales_collections || 0) + (s.total_credits || 0) + (s.invoice_retail_amount || 0))}
                             {s.total_credit_receipts > 0 && (
                               <span className="block text-xs text-green-700">
-                                received {kes(s.expected_total_received)}
+                                debt included {kes(s.total_credit_receipts)}
                               </span>
                             )}
                           </td>

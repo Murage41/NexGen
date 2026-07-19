@@ -121,12 +121,11 @@ router.get('/', async (_req, res) => {
     const todayGrossMargin = todaySales > 0 ? (todayGrossProfit / todaySales) * 100 : 0;
 
     // Today's variance must match shift detail. Shift-linked debt receipts
-    // are expected in handover totals, but remain separate from pump sales.
+    // are included inside entered cash/M-Pesa totals, not added on top.
     const todayExpectedTotal = todaySales + todayCreditReceipts;
     const todayTotalAccounted =
       todayCash +
       todayMpesa +
-      todayCreditReceipts +
       todayCreditsOnAccount +
       todayInvoiceRetail +
       todayShiftExpenses +
@@ -407,9 +406,11 @@ router.get('/', async (_req, res) => {
           credit_receipts: todayCreditReceipts,
           credit_receipts_cash: todayCreditReceiptsCash,
           credit_receipts_mpesa: todayCreditReceiptsMpesa,
-          expected_cash: todayCash + todayCreditReceiptsCash,
-          expected_mpesa: todayMpesa + todayCreditReceiptsMpesa,
-          expected_total_received: todayCash + todayMpesa + todayCreditReceipts,
+          sales_cash: todayCash - todayCreditReceiptsCash,
+          sales_mpesa: todayMpesa - todayCreditReceiptsMpesa,
+          expected_cash: todayCash,
+          expected_mpesa: todayMpesa,
+          expected_total_received: todayCash + todayMpesa,
         },
         // Month-to-date
         mtd_sales: mtdSales,

@@ -405,15 +405,15 @@ export default function ShiftDetail() {
   const creditReceiptsMpesa = creditReceipts
     .filter((r: any) => r.payment_method === 'mpesa')
     .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-  const salesCash = totalCash;
-  const salesMpesa = totalMpesa;
+  const salesCash = totalCash - creditReceiptsCash;
+  const salesMpesa = totalMpesa - creditReceiptsMpesa;
   const salesCollections = salesCash + salesMpesa;
-  const drawerCash = salesCash + creditReceiptsCash;
-  const drawerMpesa = salesMpesa + creditReceiptsMpesa;
+  const drawerCash = totalCash;
+  const drawerMpesa = totalMpesa;
   const drawerTotal = drawerCash + drawerMpesa;
   const expectedShiftTotal = expectedSales + totalCreditReceipts;
   const salesAccounted = salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
-  const totalAccounted = salesAccounted + totalCreditReceipts;
+  const totalAccounted = drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
   const variance = totalAccounted - expectedShiftTotal;
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -468,11 +468,11 @@ export default function ShiftDetail() {
           </div>
 
           <div className="flex justify-between">
-            <span className="text-gray-500">Sales Cash</span>
+            <span className="text-gray-500">Cash Received</span>
             <span className="font-medium">{formatKES(totalCash)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">Sales M-Pesa</span>
+            <span className="text-gray-500">M-Pesa Received</span>
             <span className="font-medium">{formatKES(totalMpesa)}</span>
           </div>
           {totalMpesa > 0 && mpesaFee > 0 && (
@@ -488,16 +488,16 @@ export default function ShiftDetail() {
                 <span>{formatKES(totalCreditReceipts)}</span>
               </div>
               <div className="flex justify-between text-gray-600">
-                <span>Expected cash / M-Pesa</span>
+                <span>Included in received total</span>
                 <span>{formatKES(drawerTotal)}</span>
               </div>
               <div className="flex justify-between text-gray-500">
-                <span>Cash handover</span>
-                <span>{formatKES(drawerCash)}</span>
+                <span>Sales cash after debt</span>
+                <span>{formatKES(salesCash)}</span>
               </div>
               <div className="flex justify-between text-gray-500">
-                <span>M-Pesa handover</span>
-                <span>{formatKES(drawerMpesa)}</span>
+                <span>Sales M-Pesa after debt</span>
+                <span>{formatKES(salesMpesa)}</span>
               </div>
             </div>
           )}
@@ -730,23 +730,23 @@ export default function ShiftDetail() {
         </div>
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Sales Cash (KES)</label>
+            <label className="block text-sm text-gray-600 mb-1">Cash Received (KES)</label>
             <input type="number" step="0.01" value={numVal(collections.cash_amount)} disabled={!isOpen}
               onChange={e => setCollections({ ...collections, cash_amount: parseFloat(e.target.value) || 0 })}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Sales M-Pesa (KES)</label>
+            <label className="block text-sm text-gray-600 mb-1">M-Pesa Received (KES)</label>
             <input type="number" step="0.01" value={numVal(collections.mpesa_amount)} disabled={!isOpen}
               onChange={e => setCollections({ ...collections, mpesa_amount: parseFloat(e.target.value) || 0 })}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Sales Cash + M-Pesa</label>
+            <label className="block text-sm text-gray-600 mb-1">Cash + M-Pesa Received</label>
             <div className="w-full border border-gray-200 rounded-lg p-2 bg-gray-50 font-bold text-lg">
-              {formatKES(salesCollections)}
+              {formatKES(drawerTotal)}
             </div>
             {totalCreditReceipts > 0 && (
               <div className="mt-2 space-y-1 text-xs text-gray-500">
@@ -755,15 +755,15 @@ export default function ShiftDetail() {
                   <span>{formatKES(totalCreditReceipts)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Cash handover</span>
-                  <span>{formatKES(drawerCash)}</span>
+                  <span>Sales cash after debt</span>
+                  <span>{formatKES(salesCash)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>M-Pesa handover</span>
-                  <span>{formatKES(drawerMpesa)}</span>
+                  <span>Sales M-Pesa after debt</span>
+                  <span>{formatKES(salesMpesa)}</span>
                 </div>
                 <div className="flex justify-between font-medium text-gray-700">
-                  <span>Expected total received</span>
+                  <span>Included in received total</span>
                   <span>{formatKES(drawerTotal)}</span>
                 </div>
               </div>

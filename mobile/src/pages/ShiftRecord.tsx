@@ -387,10 +387,13 @@ export default function ShiftRecord() {
   const creditReceiptsMpesa = creditReceipts
     .filter((r: any) => r.payment_method === 'mpesa')
     .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-  const salesCollections = (Number(collections.cash_amount) || 0) + (Number(collections.mpesa_amount) || 0);
-  const drawerCash = (Number(collections.cash_amount) || 0) + creditReceiptsCash;
-  const drawerMpesa = (Number(collections.mpesa_amount) || 0) + creditReceiptsMpesa;
-  const drawerTotal = salesCollections + totalCreditReceipts;
+  const receivedCash = Number(collections.cash_amount) || 0;
+  const receivedMpesa = Number(collections.mpesa_amount) || 0;
+  const salesCash = receivedCash - creditReceiptsCash;
+  const salesMpesa = receivedMpesa - creditReceiptsMpesa;
+  const drawerCash = receivedCash;
+  const drawerMpesa = receivedMpesa;
+  const drawerTotal = receivedCash + receivedMpesa;
   const totalInvoice = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
   const receiptAccounts = creditAccounts.filter((a: any) =>
     a.type === 'customer' &&
@@ -501,14 +504,14 @@ export default function ShiftRecord() {
         <div className="space-y-3">
           <div className="bg-white rounded-xl p-4 shadow-sm space-y-3">
             <div>
-              <label className="text-sm text-gray-600 mb-1 block">Sales Cash (KES)</label>
+              <label className="text-sm text-gray-600 mb-1 block">Cash Received (KES)</label>
               <input type="number" step="0.01" value={numVal(collections.cash_amount)}
                 onChange={e => setCollections({ ...collections, cash_amount: parseFloat(e.target.value) || 0 })}
                 onFocus={selectOnFocus} placeholder="0.00"
                 className="w-full border border-gray-300 rounded-lg p-3 text-base" />
             </div>
             <div>
-              <label className="text-sm text-gray-600 mb-1 block">Sales M-Pesa (KES)</label>
+              <label className="text-sm text-gray-600 mb-1 block">M-Pesa Received (KES)</label>
               <input type="number" step="0.01" value={numVal(collections.mpesa_amount)}
                 onChange={e => setCollections({ ...collections, mpesa_amount: parseFloat(e.target.value) || 0 })}
                 onFocus={selectOnFocus} placeholder="0.00"
@@ -516,9 +519,9 @@ export default function ShiftRecord() {
             </div>
             <div className="pt-2 border-t">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Sales Cash + M-Pesa</span>
+                <span className="text-gray-500">Cash + M-Pesa Received</span>
                 <span className="font-bold text-lg">
-                  KES {salesCollections.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                  KES {drawerTotal.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                 </span>
               </div>
               {totalCreditReceipts > 0 && (
@@ -528,15 +531,15 @@ export default function ShiftRecord() {
                     <span>KES {totalCreditReceipts.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-gray-500">
-                    <span>Cash handover</span>
-                    <span>KES {drawerCash.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+                    <span>Sales cash after debt</span>
+                    <span>KES {salesCash.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-gray-500">
-                    <span>M-Pesa handover</span>
-                    <span>KES {drawerMpesa.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
+                    <span>Sales M-Pesa after debt</span>
+                    <span>KES {salesMpesa.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between font-semibold text-gray-700 border-t border-green-100 pt-1">
-                    <span>Expected total received</span>
+                    <span>Included in received total</span>
                     <span>KES {drawerTotal.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>

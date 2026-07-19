@@ -48,7 +48,7 @@ function splitCreditReceipts(creditReceipts: any[]) {
   };
 }
 
-function computeShiftAccountability({
+export function computeShiftAccountability({
   readings,
   collections,
   shiftCredits,
@@ -74,18 +74,20 @@ function computeShiftAccountability({
   const normalized_wage = roundMoney(Number(employee_wage || 0));
   const { credit_receipts_cash, credit_receipts_mpesa, total_credit_receipts } = splitCreditReceipts(creditReceipts);
 
-  const sales_cash = total_cash;
-  const sales_mpesa = total_mpesa;
+  const sales_cash = roundMoney(total_cash - credit_receipts_cash);
+  const sales_mpesa = roundMoney(total_mpesa - credit_receipts_mpesa);
   const sales_collections = roundMoney(sales_cash + sales_mpesa);
-  const drawer_cash = roundMoney(sales_cash + credit_receipts_cash);
-  const drawer_mpesa = roundMoney(sales_mpesa + credit_receipts_mpesa);
+  const drawer_cash = total_cash;
+  const drawer_mpesa = total_mpesa;
   const drawer_total = roundMoney(drawer_cash + drawer_mpesa);
   const sales_accounted = roundMoney(
     sales_collections + total_credits + total_invoice_consumption + total_expenses + normalized_wage,
   );
   const sales_variance = roundMoney(sales_accounted - expected_sales);
   const expected_shift_total = roundMoney(expected_sales + total_credit_receipts);
-  const total_accounted = roundMoney(sales_accounted + total_credit_receipts);
+  const total_accounted = roundMoney(
+    drawer_total + total_credits + total_invoice_consumption + total_expenses + normalized_wage,
+  );
   const variance = roundMoney(total_accounted - expected_shift_total);
 
   return {
@@ -1037,10 +1039,10 @@ router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftO
  *
  * Accounting treatment:
  *   - Reduces credit_accounts.balance (receivable decreases)
- *   - Leaves shift_collections as current-shift sales collections only
+ *   - Leaves shift_collections as gross cash/M-Pesa received totals
  *   - Records credit_payments row linked to this shift_id
  *   - Does NOT touch revenue / pump_readings
- *   - Counts toward the shift's expected cash/M-Pesa handover
+ *   - Is already included inside the shift's cash/M-Pesa handover totals
  *   - Stays separate from fuel revenue so old debt is not treated as new sales
  */
 router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {

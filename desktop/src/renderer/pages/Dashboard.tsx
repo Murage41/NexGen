@@ -209,15 +209,15 @@ export default function Dashboard() {
                       <span className="font-medium text-green-700">{formatKES(data.today_collections.credit_receipts)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">Expected cash</span>
+                      <span className="text-gray-500">Cash received total</span>
                       <span className="font-medium">{formatKES(data.today_collections.expected_cash)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">Expected M-Pesa</span>
+                      <span className="text-gray-500">M-Pesa received total</span>
                       <span className="font-medium">{formatKES(data.today_collections.expected_mpesa)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-gray-500">Expected received</span>
+                      <span className="text-gray-500">Received total</span>
                       <span className="font-semibold">{formatKES(data.today_collections.expected_total_received)}</span>
                     </div>
                   </>
