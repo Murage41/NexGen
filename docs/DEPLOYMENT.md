@@ -230,6 +230,9 @@ from a controlled local script.
 - Restrict who can install tunnel tools or change router/firewall settings.
 - Review logs and backup freshness weekly.
 
+For fuel delivery date, pending invoice, and backdated stock handling, follow
+`docs/DELIVERY-WORKFLOW.md`.
+
 ## Remaining Hardening Work
 
 - Replace desktop shared-key bypass with proper admin login.

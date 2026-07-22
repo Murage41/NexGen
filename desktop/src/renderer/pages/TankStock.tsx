@@ -12,7 +12,7 @@ import { getKenyaDate } from '../utils/timezone';
 const today = () => getKenyaDate();
 
 const emptyTankForm = { label: '', fuel_type: 'petrol', capacity_litres: '' };
-const emptyDeliveryForm = { tank_id: '', supplier_id: '', litres: '', cost_per_litre: '', date: today(), delivery_time: '', invoice_number: '' };
+const emptyDeliveryForm = { tank_id: '', supplier_id: '', litres: '', cost_per_litre: '', date: today(), invoice_number: '' };
 const emptyDipForm = { tank_id: '', measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' };
 const emptyAdjustmentForm = { tank_id: '', reference_dip_id: '', reason: '', notes: '', cost_per_litre: '' };
 
@@ -99,6 +99,7 @@ export default function TankStock() {
   const [deliveryInvoiceFile, setDeliveryInvoiceFile] = useState<File | null>(null);
   const [dipForm, setDipForm] = useState(emptyDipForm);
   const [adjustmentForm, setAdjustmentForm] = useState(emptyAdjustmentForm);
+  const [deliveryWarnings, setDeliveryWarnings] = useState<string[]>([]);
   const [dipWarnings, setDipWarnings] = useState<string[]>([]);
   const [adjustmentWarnings, setAdjustmentWarnings] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -160,51 +161,55 @@ export default function TankStock() {
     setDeliveryForm({ ...emptyDeliveryForm, tank_id: tanks.length > 0 ? String(tanks[0].id) : '', date: today() });
     setDeliveryInvoiceFile(null);
     setError('');
+    setDeliveryWarnings([]);
     setDeliveryModal({ open: true, editing: null });
   }
   function openEditDelivery(d: any) {
+    const pendingPrice = d.pricing_status === 'pending_price' || Number(d.cost_per_litre || 0) <= 0;
     setDeliveryForm({
       tank_id: String(d.tank_id),
       supplier_id: d.supplier_id ? String(d.supplier_id) : '',
       litres: String(d.litres),
-      cost_per_litre: String(d.cost_per_litre),
+      cost_per_litre: pendingPrice ? '' : String(d.cost_per_litre),
       date: d.date,
-      delivery_time: d.delivery_timestamp
-        ? String(d.delivery_timestamp).slice(11, 16)
-        : '',
       invoice_number: d.invoice_number || '',
     });
     setDeliveryInvoiceFile(null);
     setError('');
+    setDeliveryWarnings([]);
     setDeliveryModal({ open: true, editing: d });
   }
   async function handleSaveDelivery(e: React.FormEvent) {
     e.preventDefault();
-    setSaving(true); setError('');
+    setSaving(true); setError(''); setDeliveryWarnings([]);
     try {
       if (!deliveryForm.supplier_id) {
         throw new Error('Select an existing supplier account before recording a delivery.');
       }
+      const parsedCost = deliveryForm.cost_per_litre === '' ? undefined : parseFloat(deliveryForm.cost_per_litre);
       const payload: any = {
         tank_id: parseInt(deliveryForm.tank_id),
         supplier_id: parseInt(deliveryForm.supplier_id),
         litres: parseFloat(deliveryForm.litres),
-        cost_per_litre: parseFloat(deliveryForm.cost_per_litre),
         date: deliveryForm.date,
         invoice_number: deliveryForm.invoice_number || null,
-        ...(deliveryForm.delivery_time ? { delivery_time: deliveryForm.delivery_time } : {}),
       };
+      if (parsedCost !== undefined) payload.cost_per_litre = parsedCost;
       let savedId: number | undefined;
+      let warnings: string[] = [];
       if (deliveryModal.editing) {
         const res = await updateFuelDelivery(deliveryModal.editing.id, payload);
         savedId = res.data.data?.id || deliveryModal.editing.id;
+        warnings = res.data.warnings || [];
       } else {
         const res = await createFuelDelivery(payload);
         savedId = res.data.data?.id;
+        warnings = res.data.warnings || [];
       }
       if (deliveryInvoiceFile && savedId) {
         await uploadFuelDeliveryInvoiceDocument(savedId, await fileToInvoicePayload(deliveryInvoiceFile));
       }
+      setDeliveryWarnings(warnings);
       setDeliveryModal({ open: false, editing: null });
       setDeliveryInvoiceFile(null);
       loadData();
@@ -346,6 +351,9 @@ export default function TankStock() {
 
   const formatKES = (n: number) => `KES ${Number(n).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
   const fmt = (n: any) => Number(n || 0).toLocaleString('en-KE', { maximumFractionDigits: 0 });
+  const isPendingDeliveryPrice = (d: any) => d.pricing_status === 'pending_price' || Number(d.cost_per_litre || 0) <= 0;
+  const deliveryCostLabel = (d: any) => isPendingDeliveryPrice(d) ? 'Pending' : formatKES(Number(d.cost_per_litre));
+  const deliveryTotalLabel = (d: any) => isPendingDeliveryPrice(d) ? 'Pending' : formatKES(Number(d.total_cost));
   const fmtDate = (s: string) => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 
   const adjustmentTankDips = adjustmentForm.tank_id
@@ -379,6 +387,12 @@ export default function TankStock() {
 
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">{error}</div>
+      )}
+
+      {deliveryWarnings.length > 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+          {deliveryWarnings.map((w, i) => <p key={i}>{w}</p>)}
+        </div>
       )}
 
       {adjustmentWarnings.length > 0 && (
@@ -536,12 +550,12 @@ export default function TankStock() {
                   <td className="p-3">{fmtDate(d.date)}</td>
                   <td className="p-3 font-medium">{d.tank_label || `Tank #${d.tank_id}`}</td>
                   <td className="p-3 text-right">{fmt(d.litres)}</td>
-                  <td className="p-3 text-right">{formatKES(d.cost_per_litre)}</td>
-                  <td className="p-3 text-right font-medium">{formatKES(d.total_cost)}</td>
+                  <td className={`p-3 text-right ${isPendingDeliveryPrice(d) ? 'text-amber-600 font-medium' : ''}`}>{deliveryCostLabel(d)}</td>
+                  <td className={`p-3 text-right font-medium ${isPendingDeliveryPrice(d) ? 'text-amber-600' : ''}`}>{deliveryTotalLabel(d)}</td>
                   <td className="p-3 text-gray-600">{d.supplier_name || d.supplier || '—'}</td>
                   <td className="p-3 text-gray-600">
                     <div className="flex items-center gap-2">
-                      <span>{d.invoice_number || '-'}</span>
+                      <span>{d.invoice_number || (isPendingDeliveryPrice(d) ? 'Pending' : '-')}</span>
                       {d.invoice_file_path && (
                         <button
                           type="button"
@@ -777,18 +791,14 @@ export default function TankStock() {
             </div>
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
             <form onSubmit={handleSaveDelivery} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
-                  <input type="date" required max={today()} value={deliveryForm.date} onChange={e => setDeliveryForm({ ...deliveryForm, date: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Time (optional)</label>
-                  <input type="time" value={deliveryForm.delivery_time} onChange={e => setDeliveryForm({ ...deliveryForm, delivery_time: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" />
-                  <p className="text-xs text-gray-500 mt-1">Leave blank = now. Set if delivery arrived before/after dips on the same date.</p>
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                <input type="date" required max={today()} value={deliveryForm.date} onChange={e => setDeliveryForm({ ...deliveryForm, date: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2" />
+                <p className="text-xs text-gray-500 mt-1">Delivery stock is effective from the start of this selected date.</p>
+                {deliveryForm.date < today() && (
+                  <p className="text-xs text-amber-600 mt-1">Backdated delivery: tank stock and dips from this date forward will be recomputed.</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tank *</label>
@@ -805,14 +815,19 @@ export default function TankStock() {
                     className="w-full border border-gray-300 rounded-lg p-2" placeholder="0.00" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Cost per Litre (KES) *</label>
-                  <input type="number" required step="0.01" min="0" value={deliveryForm.cost_per_litre} onChange={e => setDeliveryForm({ ...deliveryForm, cost_per_litre: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="0.00" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cost per Litre (KES)</label>
+                  <input type="number" step="0.01" min="0" value={deliveryForm.cost_per_litre} onChange={e => setDeliveryForm({ ...deliveryForm, cost_per_litre: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="Pending" />
                 </div>
               </div>
               {deliveryForm.litres && deliveryForm.cost_per_litre && (
                 <div className="bg-blue-50 rounded-lg p-2 text-sm text-blue-700 font-medium">
                   Total: KES {(parseFloat(deliveryForm.litres || '0') * parseFloat(deliveryForm.cost_per_litre || '0')).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                </div>
+              )}
+              {deliveryForm.litres && !deliveryForm.cost_per_litre && (
+                <div className="bg-amber-50 rounded-lg p-2 text-sm text-amber-700">
+                  Litres will be added to stock now. Supplier cost and debt stay pending until the invoice price is entered.
                 </div>
               )}
               <div>
@@ -824,7 +839,7 @@ export default function TankStock() {
                   <option value="">-- Select Supplier --</option>
                   {suppliersList.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">Deliveries must be tied to an existing supplier account and AP invoice.</p>
+                <p className="text-xs text-gray-400 mt-1">Deliveries must be tied to an existing supplier. Supplier debt is created when the price is entered.</p>
                 {suppliersList.length === 0 && (
                   <p className="text-xs text-red-500 mt-1">No suppliers are configured. Add the supplier account first.</p>
                 )}

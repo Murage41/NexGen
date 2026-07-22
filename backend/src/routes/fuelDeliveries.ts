@@ -5,7 +5,14 @@ import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
 import { createDeliverySchema, updateDeliverySchema } from '../schemas';
-import { recomputeCache, recomputeDipsForTankFromDate } from '../services/stockCalculator';
+import { recomputeCache, recomputeDipsForTankFromDate, replayTankCogsFrom } from '../services/stockCalculator';
+import {
+  DELIVERY_STATUS_PENDING_PRICE,
+  DELIVERY_STATUS_PRICED,
+  effectiveDeliveryTimestamp,
+  isDeliveryPriced,
+  normalizeDeliveryPricing,
+} from '../services/deliveryPolicy';
 
 const router = Router();
 
@@ -58,6 +65,57 @@ function resolveStoredInvoicePath(storedPath: string | null | undefined): string
 async function supplierDueDate(trx: any, supplierId: number, date: string): Promise<string> {
   const supplierRow = await trx('suppliers').where({ id: supplierId }).first();
   return kenyaDueDate(date, Number(supplierRow?.payment_terms_days || 0));
+}
+
+async function ensureUniqueInvoiceNumber(
+  trx: any,
+  supplierId: number,
+  invoiceNumber: string | null | undefined,
+  ignoreDeliveryId?: number,
+) {
+  const normalized = String(invoiceNumber || '').trim();
+  if (!normalized) return;
+
+  const deliveryQuery = trx('fuel_deliveries')
+    .where({ supplier_id: supplierId, invoice_number: normalized })
+    .whereNull('deleted_at');
+  if (ignoreDeliveryId) deliveryQuery.whereNot({ id: ignoreDeliveryId });
+  const duplicateDelivery = await deliveryQuery.first('id');
+  if (duplicateDelivery) {
+    throw routeError(`Supplier invoice number "${normalized}" is already used on delivery #${duplicateDelivery.id}.`);
+  }
+
+  const invoiceQuery = trx('supplier_invoices')
+    .where({ supplier_id: supplierId, invoice_number: normalized })
+    .whereNull('deleted_at');
+  if (ignoreDeliveryId) {
+    invoiceQuery.where(function (this: any) {
+      this.whereNull('delivery_id').orWhereNot('delivery_id', ignoreDeliveryId);
+    });
+  }
+  const duplicateInvoice = await invoiceQuery.first('id');
+  if (duplicateInvoice) {
+    throw routeError(`Supplier invoice number "${normalized}" is already used on supplier invoice #${duplicateInvoice.id}.`);
+  }
+}
+
+async function deliveryCapacityWarning(trx: any, tankId: number, stock: number): Promise<string | null> {
+  const tank = await trx('tanks').where({ id: tankId }).select('label', 'capacity_litres').first();
+  if (!tank) return null;
+  const capacity = Number(tank.capacity_litres || 0);
+  if (capacity > 0 && stock > capacity + 0.01) {
+    return `Tank ${tank.label || tankId} book stock is ${stock.toFixed(1)} L, above capacity ${capacity.toFixed(1)} L. Check the delivery date/litres and take a dip.`;
+  }
+  return null;
+}
+
+function appendCogsReplayWarnings(warnings: string[], replayResults: any[]) {
+  if (replayResults.length === 0) return;
+  warnings.push(`FIFO costing replayed for ${replayResults.length} closed shift(s) affected by this delivery.`);
+  const missingLitres = replayResults.reduce((sum, r) => sum + Number(r.missing_litres || 0), 0);
+  if (missingLitres > 0) {
+    warnings.push(`${missingLitres.toFixed(1)} L still have no matching delivery batch after replay. Check older missing deliveries.`);
+  }
 }
 
 router.get('/', async (req, res) => {
@@ -184,31 +242,31 @@ router.post('/:id/invoice-document', requireAdmin, async (req, res) => {
 
 router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) => {
   try {
-    const { tank_id, supplier_id, litres, cost_per_litre, date, delivery_time, invoice_number } = req.body;
-    const total_cost = litres * cost_per_litre;
-
-    // Effective real-world delivery time. If caller provided HH:MM, build
-    // `${date} ${HH:MM}:00`. Otherwise default to now (SQLite local format).
-    const nowSqlite = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    const delivery_timestamp = delivery_time
-      ? `${date} ${delivery_time}:00`
-      : nowSqlite;
+    const { tank_id, supplier_id, litres, cost_per_litre, date, invoice_number } = req.body;
+    const { costPerLitre, totalCost, pricingStatus } = normalizeDeliveryPricing(litres, cost_per_litre);
+    const delivery_timestamp = effectiveDeliveryTimestamp(date);
+    const invoiceNumber = invoice_number || null;
+    const pricedAt = isDeliveryPriced(pricingStatus) ? new Date().toISOString() : null;
+    const warnings: string[] = [];
 
     const delivery = await db.transaction(async (trx) => {
       const supplier = await requireSupplierAccount(trx, supplier_id);
       const tank = await trx('tanks').where({ id: tank_id }).select('fuel_type').first();
       if (!tank) throw routeError('Tank not found', 404);
+      await ensureUniqueInvoiceNumber(trx, supplier_id, invoiceNumber);
 
       const [id] = await trx('fuel_deliveries').insert({
         tank_id,
         supplier: supplier.name,
         supplier_id,
         litres,
-        cost_per_litre,
-        total_cost,
+        cost_per_litre: costPerLitre,
+        total_cost: totalCost,
         date,
         delivery_timestamp,
-        invoice_number: invoice_number || null,
+        invoice_number: invoiceNumber,
+        pricing_status: pricingStatus,
+        priced_at: pricedAt,
       });
 
       // Create FIFO batch
@@ -218,12 +276,14 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
         fuel_type: tank.fuel_type,
         original_litres: parseFloat(litres),
         remaining_litres: parseFloat(litres),
-        cost_per_litre: parseFloat(cost_per_litre),
+        cost_per_litre: costPerLitre,
         date,
       });
 
       // Recompute cached stock (replaces old tanks.increment)
       const newStock = await recomputeCache(tank_id, trx);
+      const capacityWarning = await deliveryCapacityWarning(trx, tank_id, newStock);
+      if (capacityWarning) warnings.push(capacityWarning);
 
       // Phase 1 stale-cache fix: any dip on/after this delivery's date is now
       // stale because its book_stock_at_dip didn't include this delivery.
@@ -236,18 +296,31 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
         reference_id: id,
         litres_change: parseFloat(litres),
         balance_after: newStock,
-        notes: `Delivery from ${supplier.name}: ${parseFloat(litres).toFixed(1)} L (date: ${date})`,
+        notes: `Delivery from ${supplier.name}: ${parseFloat(litres).toFixed(1)} L (effective: ${delivery_timestamp})`,
       });
 
-      await trx('supplier_invoices').insert({
-        supplier_id,
-        delivery_id: id,
-        invoice_number: invoice_number || null,
-        amount: total_cost,
-        balance: total_cost,
-        status: 'unpaid',
-        due_date: await supplierDueDate(trx, supplier_id, date),
-      });
+      if (isDeliveryPriced(pricingStatus)) {
+        await trx('supplier_invoices').insert({
+          supplier_id,
+          delivery_id: id,
+          invoice_number: invoiceNumber,
+          amount: totalCost,
+          balance: totalCost,
+          status: 'unpaid',
+          due_date: await supplierDueDate(trx, supplier_id, date),
+        });
+      } else {
+        warnings.push('Delivery recorded as pending price/invoice. Litres are in stock; COGS remains provisional until price is entered.');
+      }
+
+      const replayResults = await replayTankCogsFrom(
+        tank_id,
+        delivery_timestamp,
+        `Delivery #${id} recorded or repriced`,
+        0,
+        trx,
+      );
+      appendCogsReplayWarnings(warnings, replayResults);
 
       return trx('fuel_deliveries')
         .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
@@ -257,7 +330,7 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
         .first();
     });
 
-    res.status(201).json({ success: true, data: delivery });
+    res.status(201).json({ success: true, data: delivery, ...(warnings.length > 0 ? { warnings } : {}) });
   } catch (err: any) {
     console.error('[deliveries:create] ERROR', err.message, err.stack);
     res.status(err.status || 500).json({ success: false, error: err.message });
@@ -266,24 +339,39 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
 
 router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res) => {
   try {
-    const existing = await db('fuel_deliveries').where({ id: req.params.id }).whereNull('deleted_at').first();
+    const deliveryId = parseInt(req.params.id as string);
+    const existing = await db('fuel_deliveries').where({ id: deliveryId }).whereNull('deleted_at').first();
     if (!existing) return res.status(404).json({ success: false, error: 'Delivery not found' });
 
-    const { tank_id, supplier_id: reqSupplierId, litres, cost_per_litre, date, delivery_time, invoice_number } = req.body;
-    const newLitres = parseFloat(litres);
-    const oldLitres = parseFloat(existing.litres);
-    const oldTankId = existing.tank_id;
-    const newTankId = parseInt(tank_id);
-    const total_cost = newLitres * parseFloat(cost_per_litre);
-    const resolvedSupplierId = reqSupplierId;
+    const { tank_id, supplier_id: reqSupplierId, litres, cost_per_litre, date, invoice_number } = req.body;
+    const newLitres = Number(litres);
+    const oldLitres = Number(existing.litres);
+    const oldTankId = Number(existing.tank_id);
+    const newTankId = Number(tank_id);
+    const resolvedSupplierId = Number(reqSupplierId);
+    const invoiceNumber = invoice_number || null;
+    const { costPerLitre, totalCost, pricingStatus } = normalizeDeliveryPricing(newLitres, cost_per_litre);
+    const newDeliveryTs = effectiveDeliveryTimestamp(date);
+    const oldDeliveryTs = existing.delivery_timestamp || existing.created_at || effectiveDeliveryTimestamp(existing.date);
+    const replayFromTs = String(oldDeliveryTs) < newDeliveryTs ? String(oldDeliveryTs) : newDeliveryTs;
     const supplier = await requireSupplierAccount(db, resolvedSupplierId);
     const linkedInvoice = await db('supplier_invoices')
-      .where({ delivery_id: req.params.id })
+      .where({ delivery_id: deliveryId })
       .whereNull('deleted_at')
       .first();
+    const oldCostPerLitre = Number(existing.cost_per_litre || 0);
+    const oldPricingStatus = existing.pricing_status || (oldCostPerLitre > 0 ? DELIVERY_STATUS_PRICED : DELIVERY_STATUS_PENDING_PRICE);
+    const wasPendingPrice = oldPricingStatus === DELIVERY_STATUS_PENDING_PRICE || oldCostPerLitre <= 0;
+    const warnings: string[] = [];
 
     if (linkedInvoice) {
-      const amountChanged = Math.round(Number(linkedInvoice.amount) * 100) !== Math.round(total_cost * 100);
+      if (!isDeliveryPriced(pricingStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Cannot clear the price because a supplier invoice already exists. Void/reverse the AP invoice instead.',
+        });
+      }
+      const amountChanged = Math.round(Number(linkedInvoice.amount) * 100) !== Math.round(totalCost * 100);
       const supplierChanged = Number(resolvedSupplierId) !== Number(linkedInvoice.supplier_id);
       if ((amountChanged || supplierChanged) && invoiceHasSettlement(linkedInvoice)) {
         return res.status(400).json({
@@ -292,139 +380,182 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
         });
       }
     }
+    await ensureUniqueInvoiceNumber(db, resolvedSupplierId, invoiceNumber, deliveryId);
 
     // ── Guard: block litres/cost/tank changes if fuel from this batch has been sold ──
-    const batch = await db('delivery_batches').where({ delivery_id: parseInt(req.params.id as string) }).first();
+    const batch = await db('delivery_batches').where({ delivery_id: deliveryId }).first();
     if (batch) {
-      const consumed = parseFloat(batch.original_litres) - parseFloat(batch.remaining_litres);
+      const consumed = Number(batch.original_litres) - Number(batch.remaining_litres);
       if (consumed > 0) {
         const litresChanged = newLitres !== oldLitres;
-        const costChanged = parseFloat(cost_per_litre) !== parseFloat(existing.cost_per_litre);
+        const costChanged = costPerLitre !== oldCostPerLitre;
         const tankChanged = newTankId !== oldTankId;
-        if (litresChanged || costChanged || tankChanged) {
+        const allowedPendingPricing = costChanged && wasPendingPrice && costPerLitre > 0 && !litresChanged && !tankChanged;
+        if (litresChanged || tankChanged || (costChanged && !allowedPendingPricing)) {
           return res.status(400).json({
             success: false,
-            error: `Cannot change litres, cost, or tank — ${consumed.toFixed(1)} L from this delivery have already been sold through closed shifts. You can still edit the supplier, date, and notes. For cost corrections, use the COGS recalculation endpoint.`,
+            error: `Cannot change litres, tank, or a finalized cost because ${consumed.toFixed(1)} L from this delivery have already been sold through closed shifts.`,
           });
+        }
+        if (allowedPendingPricing) {
+          warnings.push(`${consumed.toFixed(1)} L from this pending-price delivery were already sold. FIFO costing will be replayed for affected closed shifts.`);
         }
       }
     }
 
     const delivery = await db.transaction(async (trx) => {
-      // If user supplied a new HH:MM, rebuild delivery_timestamp; otherwise
-      // preserve whatever was stored (date change alone also rolls forward).
-      const newDeliveryTs = delivery_time
-        ? `${date} ${delivery_time}:00`
-        : (existing.delivery_timestamp
-            ? `${date} ${existing.delivery_timestamp.slice(11)}`  // keep HH:MM:SS, swap date
-            : null);
-
-      await trx('fuel_deliveries').where({ id: req.params.id }).update({
+      await trx('fuel_deliveries').where({ id: deliveryId }).update({
         tank_id: newTankId,
         supplier: supplier.name,
         supplier_id: resolvedSupplierId,
         litres: newLitres,
-        cost_per_litre,
-        total_cost,
+        cost_per_litre: costPerLitre,
+        total_cost: totalCost,
         date,
-        invoice_number: invoice_number || null,
-        ...(newDeliveryTs !== null ? { delivery_timestamp: newDeliveryTs } : {}),
+        invoice_number: invoiceNumber,
+        delivery_timestamp: newDeliveryTs,
+        pricing_status: pricingStatus,
+        priced_at: isDeliveryPriced(pricingStatus)
+          ? (existing.priced_at || new Date().toISOString())
+          : null,
       });
 
       if (linkedInvoice) {
-        const invoiceUpdate: any = { invoice_number: invoice_number || null };
+        const invoiceUpdate: any = { invoice_number: invoiceNumber };
         if (!invoiceHasSettlement(linkedInvoice)) {
           Object.assign(invoiceUpdate, {
             supplier_id: resolvedSupplierId,
-            amount: total_cost,
-            balance: total_cost,
+            amount: totalCost,
+            balance: totalCost,
             status: 'unpaid',
             due_date: await supplierDueDate(trx, resolvedSupplierId, date),
           });
         }
         await trx('supplier_invoices').where({ id: linkedInvoice.id }).update(invoiceUpdate);
-      } else {
+      } else if (isDeliveryPriced(pricingStatus)) {
         await trx('supplier_invoices').insert({
           supplier_id: resolvedSupplierId,
-          delivery_id: parseInt(req.params.id as string),
-          invoice_number: invoice_number || null,
+          delivery_id: deliveryId,
+          invoice_number: invoiceNumber,
           invoice_file_name: existing.invoice_file_name || null,
           invoice_file_path: existing.invoice_file_path || null,
           invoice_uploaded_at: existing.invoice_uploaded_at || null,
-          amount: total_cost,
-          balance: total_cost,
+          amount: totalCost,
+          balance: totalCost,
           status: 'unpaid',
           due_date: await supplierDueDate(trx, resolvedSupplierId, date),
         });
       }
 
-      // Update FIFO batch — handle tank change and/or litres change independently (fixes Issue 4)
-      const existingBatch = await trx('delivery_batches').where({ delivery_id: parseInt(req.params.id as string) }).first();
+      const existingBatch = await trx('delivery_batches').where({ delivery_id: deliveryId }).first();
 
       if (existingBatch) {
-        const oldRemaining = parseFloat(existingBatch.remaining_litres);
-        const consumed = parseFloat(existingBatch.original_litres) - oldRemaining;
+        const oldRemaining = Number(existingBatch.remaining_litres);
+        const consumed = Number(existingBatch.original_litres) - oldRemaining;
 
         if (oldTankId !== newTankId) {
           const newTank = await trx('tanks').where({ id: newTankId }).select('fuel_type').first();
           const newRemaining = Math.max(0, newLitres - consumed);
           await trx('delivery_batches').where({ id: existingBatch.id }).update({
-            tank_id: newTankId, fuel_type: newTank.fuel_type,
-            original_litres: newLitres, remaining_litres: newRemaining,
-            cost_per_litre: parseFloat(cost_per_litre), date,
+            tank_id: newTankId,
+            fuel_type: newTank.fuel_type,
+            original_litres: newLitres,
+            remaining_litres: newRemaining,
+            cost_per_litre: costPerLitre,
+            date,
           });
           const oldStock = await recomputeCache(oldTankId, trx);
           const newStock = await recomputeCache(newTankId, trx);
+          const capacityWarning = await deliveryCapacityWarning(trx, newTankId, newStock);
+          if (capacityWarning) warnings.push(capacityWarning);
 
-          // Phase 1 stale-cache fix: dips on both tanks from earlier of old/new date
           const earliestDate = existing.date < date ? existing.date : date;
           await recomputeDipsForTankFromDate(oldTankId, earliestDate, trx);
           await recomputeDipsForTankFromDate(newTankId, earliestDate, trx);
 
           await trx('tank_stock_ledger').insert({
-            tank_id: oldTankId, event_type: 'delivery', reference_id: parseInt(req.params.id as string),
-            litres_change: -oldLitres, balance_after: oldStock,
+            tank_id: oldTankId,
+            event_type: 'delivery',
+            reference_id: deliveryId,
+            litres_change: -oldLitres,
+            balance_after: oldStock,
             notes: `Delivery #${req.params.id} moved to different tank: -${oldLitres.toFixed(1)} L`,
           });
           await trx('tank_stock_ledger').insert({
-            tank_id: newTankId, event_type: 'delivery', reference_id: parseInt(req.params.id as string),
-            litres_change: newLitres, balance_after: newStock,
+            tank_id: newTankId,
+            event_type: 'delivery',
+            reference_id: deliveryId,
+            litres_change: newLitres,
+            balance_after: newStock,
             notes: `Delivery #${req.params.id} moved from different tank: +${newLitres.toFixed(1)} L`,
           });
         } else {
-          const litreDelta = newLitres - parseFloat(existingBatch.original_litres);
+          const litreDelta = newLitres - Number(existingBatch.original_litres);
           const newRemaining = Math.max(0, oldRemaining + litreDelta);
           await trx('delivery_batches').where({ id: existingBatch.id }).update({
-            original_litres: newLitres, remaining_litres: newRemaining,
-            cost_per_litre: parseFloat(cost_per_litre), date,
+            original_litres: newLitres,
+            remaining_litres: newRemaining,
+            cost_per_litre: costPerLitre,
+            date,
           });
 
+          const newStock = await recomputeCache(newTankId, trx);
+          const capacityWarning = await deliveryCapacityWarning(trx, newTankId, newStock);
+          if (capacityWarning) warnings.push(capacityWarning);
+
           if (litreDelta !== 0) {
-            const newStock = await recomputeCache(newTankId, trx);
             await trx('tank_stock_ledger').insert({
-              tank_id: newTankId, event_type: 'delivery', reference_id: parseInt(req.params.id as string),
-              litres_change: litreDelta, balance_after: newStock,
+              tank_id: newTankId,
+              event_type: 'delivery',
+              reference_id: deliveryId,
+              litres_change: litreDelta,
+              balance_after: newStock,
               notes: `Delivery #${req.params.id} edited: ${litreDelta > 0 ? '+' : ''}${litreDelta.toFixed(1)} L`,
             });
-          } else {
-            await recomputeCache(newTankId, trx);
           }
 
-          // Phase 1 stale-cache fix: dips for this tank from earlier of old/new date
           const earliestDate = existing.date < date ? existing.date : date;
           await recomputeDipsForTankFromDate(newTankId, earliestDate, trx);
         }
+      } else {
+        const newTank = await trx('tanks').where({ id: newTankId }).select('fuel_type').first();
+        await trx('delivery_batches').insert({
+          delivery_id: deliveryId,
+          tank_id: newTankId,
+          fuel_type: newTank.fuel_type,
+          original_litres: newLitres,
+          remaining_litres: newLitres,
+          cost_per_litre: costPerLitre,
+          date,
+        });
+        const newStock = await recomputeCache(newTankId, trx);
+        const capacityWarning = await deliveryCapacityWarning(trx, newTankId, newStock);
+        if (capacityWarning) warnings.push(capacityWarning);
+        await recomputeDipsForTankFromDate(newTankId, date, trx);
+      }
+
+      const replayTankIds = new Set<number>([newTankId]);
+      if (oldTankId !== newTankId) replayTankIds.add(oldTankId);
+      for (const replayTankId of replayTankIds) {
+        const replayResults = await replayTankCogsFrom(
+          replayTankId,
+          replayFromTs,
+          `Delivery #${deliveryId} edited or repriced`,
+          0,
+          trx,
+        );
+        appendCogsReplayWarnings(warnings, replayResults);
       }
 
       return trx('fuel_deliveries')
         .join('tanks', 'fuel_deliveries.tank_id', 'tanks.id')
         .leftJoin('suppliers', 'fuel_deliveries.supplier_id', 'suppliers.id')
         .select('fuel_deliveries.*', 'tanks.label as tank_label', 'tanks.fuel_type', 'suppliers.name as supplier_name')
-        .where('fuel_deliveries.id', req.params.id)
+        .where('fuel_deliveries.id', deliveryId)
         .first();
     });
 
-    res.json({ success: true, data: delivery });
+    res.json({ success: true, data: delivery, ...(warnings.length > 0 ? { warnings } : {}) });
   } catch (err: any) {
     console.error('[deliveries:update] ERROR', err.message, err.stack);
     res.status(err.status || 500).json({ success: false, error: err.message });

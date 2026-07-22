@@ -12,7 +12,10 @@
     "seed": "knex seed:run --knexfile src/knexfile.ts",
     "fresh-start:reset": "tsx scripts/freshStartReset.ts",
     "stress:invoice-customers": "tsx scripts/stress_invoice_customer_monitor.ts",
-    "test:shift-debt-receipts": "tsx scripts/test_shift_debt_receipts.ts"
+    "test:shift-debt-receipts": "tsx scripts/test_shift_debt_receipts.ts",
+    "test:delivery-policy": "tsx scripts/test_delivery_policy.ts",
+    "test:delivery-replay": "tsx scripts/test_delivery_replay.ts",
+    "maintenance:delivery-timestamps:dry-run": "tsx scripts/dry_run_delivery_timestamp_normalization.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

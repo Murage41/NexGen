@@ -10,7 +10,8 @@ import { Knex } from 'knex';
  * as end-of-day (23:59:59) — which preserves the previous date-level semantics
  * for callers that only have a date (reports, "live" cache).
  *
- * Deliveries use COALESCE(delivery_timestamp, created_at) for effective time.
+ * New deliveries store the selected date at midnight in delivery_timestamp.
+ * COALESCE(delivery_timestamp, created_at) is kept as a legacy fallback only.
  * Sales use shifts.end_time (the close moment) as the effective time.
  *
  * This replaces the old date-only approach. Fixes the pre-delivery-dip phantom
@@ -248,6 +249,106 @@ export async function reverseBatchConsumption(
   let deleteQuery = qb('batch_consumption').where({ shift_id: shiftId });
   if (tankId !== null) deleteQuery = deleteQuery.where({ tank_id: tankId });
   await deleteQuery.delete();
+}
+
+export type TankCogsReplayResult = {
+  shift_id: number;
+  tank_id: number;
+  litres_sold: number;
+  old_cogs: number;
+  new_cogs: number;
+  delta_kes: number;
+  missing_litres: number;
+};
+
+/**
+ * Replays FIFO batch consumption for one tank from a historical point forward.
+ * Use after a backdated delivery or pending-price delivery is completed.
+ */
+export async function replayTankCogsFrom(
+  tankId: number,
+  fromTimestamp: string,
+  reason: string,
+  correctedBy = 0,
+  conn?: Knex
+): Promise<TankCogsReplayResult[]> {
+  const qb = conn || db;
+
+  const shifts = await qb('pump_readings')
+    .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+    .join('shifts', 'pump_readings.shift_id', 'shifts.id')
+    .where('pumps.tank_id', tankId)
+    .where('shifts.status', 'closed')
+    .whereRaw(
+      "datetime(COALESCE(shifts.end_time, shifts.shift_date || ' 23:59:59')) >= datetime(?)",
+      [fromTimestamp],
+    )
+    .select('shifts.id as shift_id')
+    .sum('pump_readings.litres_sold as litres_sold')
+    .groupBy('shifts.id')
+    .orderByRaw("datetime(COALESCE(shifts.end_time, shifts.shift_date || ' 23:59:59')) asc")
+    .orderBy('shifts.id', 'asc');
+
+  if (shifts.length === 0) return [];
+
+  const oldCosts = new Map<number, number>();
+  for (const shift of shifts) {
+    const oldCostResult = await qb('batch_consumption')
+      .where({ shift_id: shift.shift_id, tank_id: tankId })
+      .sum('total_cost as total')
+      .first();
+    oldCosts.set(shift.shift_id, Number((oldCostResult as any)?.total || 0));
+  }
+
+  for (const shift of shifts) {
+    await reverseBatchConsumption(shift.shift_id, tankId, qb);
+  }
+
+  const hasCorrections = await qb.schema.hasTable('cogs_corrections');
+  const results: TankCogsReplayResult[] = [];
+
+  for (const shift of shifts) {
+    const litresSold = Number(shift.litres_sold || 0);
+    if (litresSold <= 0) continue;
+
+    const oldCost = oldCosts.get(shift.shift_id) || 0;
+    const fifoResult = await consumeBatchesFIFO(tankId, litresSold, shift.shift_id, qb);
+    const newCost = Math.round(fifoResult.totalCost * 100) / 100;
+    const delta = Math.round((newCost - oldCost) * 100) / 100;
+    const missingLitres = fifoResult.details
+      .filter((d) => d.source === 'missing')
+      .reduce((sum, d) => sum + d.litres, 0);
+
+    await qb('shift_tank_snapshots')
+      .where({ shift_id: shift.shift_id, tank_id: tankId })
+      .update({ cogs: newCost });
+
+    if (hasCorrections && Math.abs(delta) >= 0.01) {
+      await qb('cogs_corrections').insert({
+        shift_id: shift.shift_id,
+        tank_id: tankId,
+        litres_sold: litresSold,
+        old_cogs: oldCost,
+        new_cogs: newCost,
+        delta_kes: delta,
+        corrected_by: correctedBy,
+        reason,
+      });
+    }
+
+    results.push({
+      shift_id: shift.shift_id,
+      tank_id: tankId,
+      litres_sold: litresSold,
+      old_cogs: oldCost,
+      new_cogs: newCost,
+      delta_kes: delta,
+      missing_litres: missingLitres,
+    });
+  }
+
+  await recomputeCache(tankId, qb);
+  return results;
 }
 
 /**

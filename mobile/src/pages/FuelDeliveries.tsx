@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Truck, Pencil, Trash2, FileText } from 'lucide-react';
+import { Plus, Truck, Pencil, Trash2, FileText, AlertTriangle } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import {
   getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
@@ -48,6 +48,7 @@ export default function FuelDeliveries() {
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   useEffect(() => { loadData(); }, []);
 
@@ -72,43 +73,50 @@ export default function FuelDeliveries() {
     setForm({ ...emptyForm, tank_id: tanks.length > 0 ? String(tanks[0].id) : '', date: today() });
     setInvoiceFile(null);
     setError('');
+    setWarnings([]);
     setShowAdd(true);
   }
 
   function openEdit(delivery: any) {
+    const pendingPrice = delivery.pricing_status === 'pending_price' || Number(delivery.cost_per_litre || 0) <= 0;
     setForm({
       tank_id: String(delivery.tank_id),
       supplier_id: delivery.supplier_id ? String(delivery.supplier_id) : '',
       litres: String(delivery.litres),
-      cost_per_litre: String(delivery.cost_per_litre),
+      cost_per_litre: pendingPrice ? '' : String(delivery.cost_per_litre),
       date: delivery.date,
       invoice_number: delivery.invoice_number || '',
     });
     setInvoiceFile(null);
     setEditDelivery(delivery);
     setError('');
+    setWarnings([]);
   }
 
   async function handleSave() {
-    if (!form.tank_id || !form.supplier_id || !form.litres || !form.cost_per_litre || !form.date) return;
+    if (!form.tank_id || !form.supplier_id || !form.litres || !form.date) return;
     setSubmitting(true);
     setError('');
+    setWarnings([]);
     try {
-      const payload = {
+      const payload: any = {
         tank_id: parseInt(form.tank_id),
         supplier_id: parseInt(form.supplier_id),
         litres: parseFloat(form.litres),
-        cost_per_litre: parseFloat(form.cost_per_litre),
         date: form.date,
         invoice_number: form.invoice_number || null,
       };
+      if (form.cost_per_litre !== '') payload.cost_per_litre = parseFloat(form.cost_per_litre);
       let savedId: number | undefined;
+      let responseWarnings: string[] = [];
       if (editDelivery) {
         const res = await updateFuelDelivery(editDelivery.id, payload);
         savedId = res.data.data?.id || editDelivery.id;
+        responseWarnings = res.data.warnings || [];
       } else {
         const res = await createFuelDelivery(payload);
         savedId = res.data.data?.id;
+        responseWarnings = res.data.warnings || [];
       }
       if (invoiceFile && savedId) {
         await uploadFuelDeliveryInvoiceDocument(savedId, await fileToInvoicePayload(invoiceFile));
@@ -118,6 +126,7 @@ export default function FuelDeliveries() {
       } else {
         setShowAdd(false);
       }
+      setWarnings(responseWarnings);
       setInvoiceFile(null);
       await loadData();
     } catch (err: any) {
@@ -161,7 +170,8 @@ export default function FuelDeliveries() {
     return d.toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
-  const totalCost = (d: any) => parseFloat(d.litres) * parseFloat(d.cost_per_litre);
+  const isPendingPrice = (d: any) => d.pricing_status === 'pending_price' || Number(d.cost_per_litre || 0) <= 0;
+  const totalCost = (d: any) => Number(d.total_cost || 0) || parseFloat(d.litres) * parseFloat(d.cost_per_litre);
 
   if (loading) return <div className="text-center text-gray-400 mt-20">Loading...</div>;
 
@@ -186,6 +196,14 @@ export default function FuelDeliveries() {
       {error && (
         <div className="mb-3 bg-red-50 border border-red-200 rounded-xl p-3">
           <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
+          {warnings.map((w, i) => (
+            <p key={i} className="text-sm text-amber-700">{w}</p>
+          ))}
         </div>
       )}
 
@@ -225,7 +243,7 @@ export default function FuelDeliveries() {
                   <p className="text-sm text-gray-600 ml-6">{d.tank_label}</p>
                   {(d.supplier_name || d.supplier) && <p className="text-xs text-gray-400 ml-6">Supplier: {d.supplier_name || d.supplier}</p>}
                   <div className="flex items-center gap-2 ml-6 mt-1">
-                    <p className="text-xs text-gray-400">Invoice: {d.invoice_number || '-'}</p>
+                    <p className="text-xs text-gray-400">Invoice: {d.invoice_number || (isPendingPrice(d) ? 'Pending' : '-')}</p>
                     {isAdmin && d.invoice_file_path && (
                       <button
                         type="button"
@@ -238,10 +256,12 @@ export default function FuelDeliveries() {
                   </div>
                   <div className="flex items-center gap-3 ml-6 mt-1">
                     <p className="text-xs text-gray-400">{formatDate(d.date)}</p>
-                    <p className="text-xs text-gray-500">@ KES {parseFloat(d.cost_per_litre).toFixed(2)}/L</p>
+                    <p className={`text-xs ${isPendingPrice(d) ? 'text-amber-600 font-medium' : 'text-gray-500'}`}>
+                      {isPendingPrice(d) ? 'Price pending' : `@ KES ${parseFloat(d.cost_per_litre).toFixed(2)}/L`}
+                    </p>
                   </div>
-                  <p className="text-sm font-semibold text-gray-700 ml-6 mt-1">
-                    Total: KES {totalCost(d).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                  <p className={`text-sm font-semibold ml-6 mt-1 ${isPendingPrice(d) ? 'text-amber-600' : 'text-gray-700'}`}>
+                    Total: {isPendingPrice(d) ? 'Pending' : `KES ${totalCost(d).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`}
                   </p>
                 </div>
                 {isAdmin && (
@@ -277,6 +297,12 @@ export default function FuelDeliveries() {
                   value={form.date}
                   onChange={e => setForm({ ...form, date: e.target.value })}
                 />
+                <p className="text-xs text-gray-400 mt-1">Stock is effective from the start of this selected date.</p>
+                {form.date < today() && (
+                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle size={12} /> Backdated delivery will recompute stock and dips from this date.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-sm text-gray-600 mb-1 block">Tank</label>
@@ -341,12 +367,12 @@ export default function FuelDeliveries() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-gray-600 mb-1 block">Cost per Litre (KES)</label>
+                  <label className="text-sm text-gray-600 mb-1 block">Cost per Litre (KES, optional)</label>
                   <input
                     type="number"
                     step="0.01"
                     className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="0.00"
+                    placeholder="Pending"
                     value={form.cost_per_litre}
                     onChange={e => setForm({ ...form, cost_per_litre: e.target.value })}
                   />
@@ -359,6 +385,11 @@ export default function FuelDeliveries() {
                   </p>
                 </div>
               )}
+              {form.litres && !form.cost_per_litre && (
+                <div className="bg-amber-50 rounded-xl p-3">
+                  <p className="text-xs text-amber-700">Litres will be added to stock now. Supplier cost and debt stay pending until the invoice price is entered.</p>
+                </div>
+              )}
               {editDelivery && (
                 <div className="bg-amber-50 rounded-xl p-3">
                   <p className="text-xs text-amber-700">⚠️ Editing a delivery will adjust the tank stock balance accordingly.</p>
@@ -366,7 +397,7 @@ export default function FuelDeliveries() {
               )}
               <button
                 onClick={handleSave}
-                disabled={submitting || !form.tank_id || !form.supplier_id || !form.litres || !form.cost_per_litre || !form.date}
+                disabled={submitting || !form.tank_id || !form.supplier_id || !form.litres || !form.date}
                 className="w-full bg-blue-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50 mt-2"
               >
                 {submitting ? 'Saving...' : editDelivery ? 'Save Changes' : 'Record Delivery'}
