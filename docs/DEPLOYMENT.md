@@ -5,6 +5,11 @@ The goal is simple: the station keeps working even if the internet is down,
 remote access is deliberate, and the SQLite database is treated as the
 business record rather than a disposable dev file.
 
+Before treating any build as production-ready, complete the controls and
+release gates in `docs/PRODUCTION-SECURITY-AND-COMPLIANCE.md`. That document
+also covers coexistence with POSitive, Windows policy, Tailscale, licensing,
+ODPC, eTIMS, external APIs, and Android distribution.
+
 ## Current Assessment
 
 The old setup was development-first:
