@@ -140,6 +140,30 @@ attempts.
 If `DESKTOP_KEY` is set, build the desktop app with the same value as
 `VITE_DESKTOP_KEY`.
 
+## Station Update From GitHub
+
+Use this when updating the station PC from the latest committed `main`.
+
+```cmd
+cd D:\NexGen
+git status --short
+git pull --ff-only origin main
+cd backend
+npm run migrate
+cd ..
+npm run station:bg
+```
+
+`git pull --ff-only origin main` is the production-safe form. It downloads only
+the commits that the station PC does not already have, then advances `main`
+only if it can do so cleanly. If the station PC has local code changes or a
+diverged branch, it stops instead of creating a merge commit.
+
+`git pull origin main` also downloads only new commits, not a fresh copy of the
+whole repository, and it works when the station PC is clean. The reason the
+`--ff-only` form is preferred for production is that it refuses unexpected local
+Git history instead of trying to merge it automatically.
+
 ## Build And Run
 
 Build mobile first so the backend can serve it:
