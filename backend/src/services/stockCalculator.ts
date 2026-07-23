@@ -100,16 +100,19 @@ export async function recomputeCache(
 /**
  * Consume fuel from delivery batches using FIFO (First In, First Out).
  * Deducts litres from the oldest batches first, records consumption rows.
+ * Only batches that existed by `effectiveAt` may fund the shift.
  * Returns the total FIFO cost for the fuel consumed.
  */
 export async function consumeBatchesFIFO(
   tankId: number,
   litres: number,
   shiftId: number,
+  effectiveAt: string,
   conn?: Knex
 ): Promise<{ totalCost: number; details: Array<{ batchId: number; litres: number; costPerLitre: number; source: 'delivery' | 'adjustment' | 'missing' }> }> {
   const qb = conn || db;
   if (litres <= 0) return { totalCost: 0, details: [] };
+  if (!effectiveAt) throw new Error('FIFO consumption requires an effective timestamp');
 
   type BatchSource = {
     source: 'delivery' | 'adjustment';
@@ -117,41 +120,64 @@ export async function consumeBatchesFIFO(
     tank_id: number;
     remaining_litres: number;
     cost_per_litre: number;
-    date: string;
+    effective_at: string;
   };
 
-  const deliveryBatches: BatchSource[] = (await qb('delivery_batches')
-    .where('tank_id', tankId)
-    .where('remaining_litres', '>', 0)
-    .select('id', 'tank_id', 'remaining_litres', 'cost_per_litre', 'date'))
+  const deliveryBatches: BatchSource[] = (await qb('delivery_batches as batch')
+    .join('fuel_deliveries as delivery', 'batch.delivery_id', 'delivery.id')
+    .where('batch.tank_id', tankId)
+    .where('batch.remaining_litres', '>', 0)
+    .whereNull('delivery.deleted_at')
+    .whereRaw(
+      "datetime(COALESCE(delivery.delivery_timestamp, delivery.created_at, batch.date || ' 00:00:00')) <= datetime(?)",
+      [effectiveAt],
+    )
+    .select(
+      'batch.id',
+      'batch.tank_id',
+      'batch.remaining_litres',
+      'batch.cost_per_litre',
+      qb.raw("COALESCE(delivery.delivery_timestamp, delivery.created_at, batch.date || ' 00:00:00') as effective_at"),
+    ))
     .map((b: any) => ({
       source: 'delivery' as const,
       id: b.id,
       tank_id: b.tank_id,
       remaining_litres: parseFloat(b.remaining_litres),
       cost_per_litre: parseFloat(b.cost_per_litre),
-      date: b.date,
+      effective_at: b.effective_at,
     }));
 
   let adjustmentBatches: BatchSource[] = [];
   if (await qb.schema.hasTable('tank_adjustment_batches')) {
-    adjustmentBatches = (await qb('tank_adjustment_batches')
-      .where('tank_id', tankId)
-      .where('remaining_litres', '>', 0)
-      .select('id', 'tank_id', 'remaining_litres', 'cost_per_litre', 'date'))
+    adjustmentBatches = (await qb('tank_adjustment_batches as batch')
+      .join('tank_stock_adjustments as adjustment', 'batch.adjustment_id', 'adjustment.id')
+      .where('batch.tank_id', tankId)
+      .where('batch.remaining_litres', '>', 0)
+      .whereRaw(
+        "datetime(COALESCE(adjustment.adjustment_timestamp, batch.date || ' 00:00:00')) <= datetime(?)",
+        [effectiveAt],
+      )
+      .select(
+        'batch.id',
+        'batch.tank_id',
+        'batch.remaining_litres',
+        'batch.cost_per_litre',
+        qb.raw("COALESCE(adjustment.adjustment_timestamp, batch.date || ' 00:00:00') as effective_at"),
+      ))
       .map((b: any) => ({
         source: 'adjustment' as const,
         id: b.id,
         tank_id: b.tank_id,
         remaining_litres: parseFloat(b.remaining_litres),
         cost_per_litre: parseFloat(b.cost_per_litre),
-        date: b.date,
+        effective_at: b.effective_at,
       }));
   }
 
   const batches = [...deliveryBatches, ...adjustmentBatches].sort((a, b) => {
-    const byDate = String(a.date).localeCompare(String(b.date));
-    if (byDate !== 0) return byDate;
+    const byTimestamp = String(a.effective_at).localeCompare(String(b.effective_at));
+    if (byTimestamp !== 0) return byTimestamp;
     if (a.source !== b.source) return a.source === 'delivery' ? -1 : 1;
     return a.id - b.id;
   });
@@ -218,6 +244,31 @@ export async function consumeBatchesFIFO(
   return { totalCost, details };
 }
 
+async function restoreBatchConsumptionRows(rows: any[], qb: Knex): Promise<void> {
+  const deliveryRestores = new Map<number, number>();
+  const adjustmentRestores = new Map<number, number>();
+
+  for (const row of rows) {
+    const litres = parseFloat(row.litres_consumed) || 0;
+    if (row.batch_id) {
+      deliveryRestores.set(row.batch_id, (deliveryRestores.get(row.batch_id) || 0) + litres);
+    }
+    if (row.adjustment_batch_id) {
+      adjustmentRestores.set(
+        row.adjustment_batch_id,
+        (adjustmentRestores.get(row.adjustment_batch_id) || 0) + litres,
+      );
+    }
+  }
+
+  for (const [batchId, litres] of deliveryRestores) {
+    await qb('delivery_batches').where({ id: batchId }).increment('remaining_litres', litres);
+  }
+  for (const [batchId, litres] of adjustmentRestores) {
+    await qb('tank_adjustment_batches').where({ id: batchId }).increment('remaining_litres', litres);
+  }
+}
+
 /**
  * Reverse all batch consumption for a given shift and tank.
  * Adds litres back to delivery_batches.remaining_litres.
@@ -232,18 +283,7 @@ export async function reverseBatchConsumption(
   if (tankId !== null) query = query.where({ tank_id: tankId });
 
   const rows = await query.select('*');
-  for (const row of rows) {
-    if (row.batch_id) {
-      await qb('delivery_batches')
-        .where({ id: row.batch_id })
-        .increment('remaining_litres', parseFloat(row.litres_consumed));
-    }
-    if (row.adjustment_batch_id) {
-      await qb('tank_adjustment_batches')
-        .where({ id: row.adjustment_batch_id })
-        .increment('remaining_litres', parseFloat(row.litres_consumed));
-    }
-  }
+  await restoreBatchConsumptionRows(rows, qb);
 
   // Delete the consumption records
   let deleteQuery = qb('batch_consumption').where({ shift_id: shiftId });
@@ -283,7 +323,10 @@ export async function replayTankCogsFrom(
       "datetime(COALESCE(shifts.end_time, shifts.shift_date || ' 23:59:59')) >= datetime(?)",
       [fromTimestamp],
     )
-    .select('shifts.id as shift_id')
+    .select(
+      'shifts.id as shift_id',
+      qb.raw("COALESCE(shifts.end_time, shifts.shift_date || ' 23:59:59') as effective_at"),
+    )
     .sum('pump_readings.litres_sold as litres_sold')
     .groupBy('shifts.id')
     .orderByRaw("datetime(COALESCE(shifts.end_time, shifts.shift_date || ' 23:59:59')) asc")
@@ -291,18 +334,23 @@ export async function replayTankCogsFrom(
 
   if (shifts.length === 0) return [];
 
+  const shiftIds = shifts.map((shift: any) => Number(shift.shift_id));
+  const consumptionRows = await qb('batch_consumption')
+    .where({ tank_id: tankId })
+    .whereIn('shift_id', shiftIds)
+    .select('*');
+
   const oldCosts = new Map<number, number>();
-  for (const shift of shifts) {
-    const oldCostResult = await qb('batch_consumption')
-      .where({ shift_id: shift.shift_id, tank_id: tankId })
-      .sum('total_cost as total')
-      .first();
-    oldCosts.set(shift.shift_id, Number((oldCostResult as any)?.total || 0));
+  for (const row of consumptionRows) {
+    const shiftId = Number(row.shift_id);
+    oldCosts.set(shiftId, (oldCosts.get(shiftId) || 0) + Number(row.total_cost || 0));
   }
 
-  for (const shift of shifts) {
-    await reverseBatchConsumption(shift.shift_id, tankId, qb);
-  }
+  await restoreBatchConsumptionRows(consumptionRows, qb);
+  await qb('batch_consumption')
+    .where({ tank_id: tankId })
+    .whereIn('shift_id', shiftIds)
+    .delete();
 
   const hasCorrections = await qb.schema.hasTable('cogs_corrections');
   const results: TankCogsReplayResult[] = [];
@@ -312,7 +360,13 @@ export async function replayTankCogsFrom(
     if (litresSold <= 0) continue;
 
     const oldCost = oldCosts.get(shift.shift_id) || 0;
-    const fifoResult = await consumeBatchesFIFO(tankId, litresSold, shift.shift_id, qb);
+    const fifoResult = await consumeBatchesFIFO(
+      tankId,
+      litresSold,
+      shift.shift_id,
+      String(shift.effective_at),
+      qb,
+    );
     const newCost = Math.round(fifoResult.totalCost * 100) / 100;
     const delta = Math.round((newCost - oldCost) * 100) / 100;
     const missingLitres = fifoResult.details

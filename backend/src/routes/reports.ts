@@ -1044,7 +1044,14 @@ router.post('/recalculate-cogs', requireAdmin, async (req: any, res) => {
         await reverseBatchConsumption(shift_id, tankId, trx);
 
         // Re-consume with current batch prices
-        const { totalCost: newCost } = await consumeBatchesFIFO(tankId, litresSold, shift_id, trx);
+        const effectiveAt = shift.end_time || `${shift.shift_date} 23:59:59`;
+        const { totalCost: newCost } = await consumeBatchesFIFO(
+          tankId,
+          litresSold,
+          shift_id,
+          effectiveAt,
+          trx,
+        );
 
         // Update shift_tank_snapshots.cogs
         await trx('shift_tank_snapshots')

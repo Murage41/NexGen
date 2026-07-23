@@ -65,6 +65,8 @@ NexGen will:
 - recompute tank stock from that date forward,
 - recompute affected dip book-stock values from that date forward,
 - replay FIFO batch consumption and COGS for affected closed shifts,
+- prevent deliveries and positive adjustments dated after a shift from funding
+  that earlier shift,
 - keep older station history untouched unless the delivery itself is edited.
 
 If a pending-price delivery already supplied litres to a closed shift before
@@ -72,7 +74,9 @@ the price was entered, NexGen allows the price update and replays FIFO costing
 for the affected closed shifts automatically.
 
 If many closed shifts are affected, saving the delivery can take a little
-longer because the replay is done immediately and transactionally.
+longer because the replay is done immediately and transactionally. Replay
+restores affected batch balances in bulk, processes shifts in closing order,
+and uses indexed tank/batch lookups.
 
 ## Existing Station Data
 

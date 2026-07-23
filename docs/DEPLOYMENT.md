@@ -144,14 +144,50 @@ If `DESKTOP_KEY` is set, build the desktop app with the same value as
 
 Use this when updating the station PC from the latest committed `main`.
 
-```cmd
+Run these commands in PowerShell while signed in as the Windows user that
+normally runs NexGen:
+
+```powershell
 cd D:\NexGen
+
+git branch --show-current
 git status --short
+git rev-parse --short HEAD
+```
+
+The branch must be `main`. If `git status --short` lists files, identify them
+before continuing. Do not overwrite station-side code changes.
+
+Stop NexGen and back up the complete SQLite data directory:
+
+```powershell
+npm run dev:stop
+
+$backup = "D:\NexGen-Backups\before-main-update-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+New-Item -ItemType Directory -Force -Path $backup
+Copy-Item -LiteralPath "D:\NexGen\backend\data" -Destination (Join-Path $backup "data") -Recurse -Force
+Test-Path (Join-Path $backup "data\nexgen.db")
+```
+
+`Test-Path` must return `True`. Then pull, install, build the phone interface,
+and migrate the database:
+
+```powershell
+cd D:\NexGen
 git pull --ff-only origin main
+
+npm install
+npm run build:mobile
+
 cd backend
 npm run migrate
 cd ..
+
+npm run startup:install
 npm run station:bg
+Start-Sleep -Seconds 15
+npm run dev:status
+Invoke-RestMethod http://127.0.0.1:3001/api/health
 ```
 
 `git pull --ff-only origin main` is the production-safe form. It downloads only
@@ -163,6 +199,11 @@ diverged branch, it stops instead of creating a merge commit.
 whole repository, and it works when the station PC is clean. The reason the
 `--ff-only` form is preferred for production is that it refuses unexpected local
 Git history instead of trying to merge it automatically.
+
+The current station stack runs backend and desktop source through their
+development runners, so separate backend and desktop builds are not required
+for this mode. The mobile build is required because the backend serves the
+phone interface from `mobile/dist`.
 
 ## Build And Run
 

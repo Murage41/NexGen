@@ -362,6 +362,10 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     const oldCostPerLitre = Number(existing.cost_per_litre || 0);
     const oldPricingStatus = existing.pricing_status || (oldCostPerLitre > 0 ? DELIVERY_STATUS_PRICED : DELIVERY_STATUS_PENDING_PRICE);
     const wasPendingPrice = oldPricingStatus === DELIVERY_STATUS_PENDING_PRICE || oldCostPerLitre <= 0;
+    const litresChanged = newLitres !== oldLitres;
+    const costChanged = costPerLitre !== oldCostPerLitre;
+    const tankChanged = newTankId !== oldTankId;
+    const timelineChanged = String(oldDeliveryTs) !== newDeliveryTs;
     const warnings: string[] = [];
 
     if (linkedInvoice) {
@@ -387,9 +391,6 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
     if (batch) {
       const consumed = Number(batch.original_litres) - Number(batch.remaining_litres);
       if (consumed > 0) {
-        const litresChanged = newLitres !== oldLitres;
-        const costChanged = costPerLitre !== oldCostPerLitre;
-        const tankChanged = newTankId !== oldTankId;
         const allowedPendingPricing = costChanged && wasPendingPrice && costPerLitre > 0 && !litresChanged && !tankChanged;
         if (litresChanged || tankChanged || (costChanged && !allowedPendingPricing)) {
           return res.status(400).json({
@@ -536,15 +537,18 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
 
       const replayTankIds = new Set<number>([newTankId]);
       if (oldTankId !== newTankId) replayTankIds.add(oldTankId);
-      for (const replayTankId of replayTankIds) {
-        const replayResults = await replayTankCogsFrom(
-          replayTankId,
-          replayFromTs,
-          `Delivery #${deliveryId} edited or repriced`,
-          0,
-          trx,
-        );
-        appendCogsReplayWarnings(warnings, replayResults);
+      const shouldReplayCogs = !batch || litresChanged || costChanged || tankChanged || timelineChanged;
+      if (shouldReplayCogs) {
+        for (const replayTankId of replayTankIds) {
+          const replayResults = await replayTankCogsFrom(
+            replayTankId,
+            replayFromTs,
+            `Delivery #${deliveryId} edited or repriced`,
+            0,
+            trx,
+          );
+          appendCogsReplayWarnings(warnings, replayResults);
+        }
       }
 
       return trx('fuel_deliveries')

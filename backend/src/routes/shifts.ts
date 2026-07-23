@@ -1367,7 +1367,13 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
 
         let cogs = 0;
         if (sales > 0) {
-          const fifoResult = await consumeBatchesFIFO(t.id, sales, parseInt(req.params.id), trx);
+          const fifoResult = await consumeBatchesFIFO(
+            t.id,
+            sales,
+            parseInt(req.params.id),
+            closeTime,
+            trx,
+          );
           cogs = fifoResult.totalCost;
 
           // Phase 2 fix: warn if FIFO couldn't find batches for some litres
