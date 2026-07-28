@@ -6,6 +6,7 @@ import { up as migratePayroll } from '../migrations/20260728_034_payroll_ledger'
 import {
   approvePayrollRun,
   calculatePayrollRun,
+  getPayrollRun,
   refreshPayrollLine,
   refreshPayrollRun,
   voidPayrollRun,
@@ -70,6 +71,30 @@ async function main() {
     await migrateEarnings(db);
     await migratePayroll(db);
 
+    const [weeklyEmployeeId] = await db('employees').insert({
+      name: 'Weekly Employee',
+      daily_wage: 0,
+    });
+    const [weeklyPlanId] = await db('employee_compensation_plans').insert({
+      employee_id: weeklyEmployeeId,
+      name: 'Weekly plan',
+      pay_schedule: 'weekly',
+      proration_method: 'calendar_days',
+      effective_from: '2026-07-01',
+      status: 'active',
+      version: 1,
+      currency: 'KES',
+    });
+    await db('employee_earnings').insert({
+      employee_id: weeklyEmployeeId,
+      plan_id: weeklyPlanId,
+      source_type: 'shift',
+      source_key: 'weekly-shift:not-monthly',
+      earning_date: '2026-07-20',
+      gross_amount: 999,
+      status: 'approved',
+    });
+
     await db('employee_compensation_plans').where({ employee_id: employeeId }).update({
       effective_to: '2026-07-15',
       status: 'ended',
@@ -130,6 +155,12 @@ async function main() {
     }, db);
     const line = await db('payroll_lines').where({ run_id: runId, employee_id: employeeId }).first();
     assert.equal(Number(line.gross_earnings), 16483.87);
+    assert.equal(await db('payroll_lines').where({ run_id: runId }).count('* as count').first()
+      .then((row) => Number(row?.count || 0)), 1);
+    assert.equal(
+      (await db('employee_earnings').where({ component_id: salaryComponentId }).first()).status,
+      'calculated',
+    );
 
     const [deductionId] = await db('payroll_deductions').insert({
       payroll_line_id: line.id,
@@ -144,6 +175,10 @@ async function main() {
       await refreshPayrollRun(runId, trx);
     });
     await approvePayrollRun(runId, null, db);
+    assert.equal(
+      (await db('employee_earnings').where({ component_id: salaryComponentId }).first()).status,
+      'approved',
+    );
 
     assert.equal(Number((await db('staff_debts').where({ id: debtId }).first()).balance), 1000);
     assert.equal(Number((await db('credit_accounts').where({ employee_id: employeeId }).first()).balance), 1000);
@@ -165,6 +200,11 @@ async function main() {
       await refreshPayrollRun(runId, trx);
     });
     assert.equal(Number((await db('payroll_lines').where({ id: line.id }).first()).paid_amount), 5000);
+    const runDetail = await getPayrollRun(runId, db);
+    assert.equal(runDetail.lines.length, 1);
+    assert.equal(runDetail.lines[0].earnings.length, 2);
+    assert.equal(runDetail.lines[0].deductions.length, 1);
+    assert.equal(runDetail.lines[0].payments.length, 1);
     await assert.rejects(() => voidPayrollRun(runId, 'Incorrect period', db), /Reverse all payroll payments/);
 
     await db('payroll_payments').where({ id: paymentId }).update({ status: 'reversed', reversed_at: db.fn.now() });

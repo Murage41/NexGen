@@ -166,8 +166,8 @@ export function describeCompensationPlan(plan: CompensationPlan | null): string 
       const scope = component.fuel_type ? ` ${component.fuel_type}` : '';
       return `${Number(component.rate || 0)}%${scope} sales`;
     }
-    const scope = component.fuel_type ? ` ${component.fuel_type}` : '';
-    return `KES ${Number(component.rate || 0).toLocaleString('en-KE')}/${scope} L`;
+    const scope = component.fuel_type ? `${component.fuel_type} ` : '';
+    return `KES ${Number(component.rate || 0).toLocaleString('en-KE')}/${scope}L`;
   });
   return parts.join(' + ');
 }

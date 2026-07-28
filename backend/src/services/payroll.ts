@@ -1,7 +1,6 @@
 import type { Knex } from 'knex';
 import Decimal, { Numeric } from 'decimal.js-light';
 import db from '../database';
-import { getCompensationPlanById } from './compensation';
 
 function money(value: Numeric): number {
   return new Decimal(value || 0).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
@@ -23,6 +22,17 @@ function earlierDate(a: string, b: string): string {
   return a < b ? a : b;
 }
 
+async function insertRowsInChunks(
+  trx: Knex.Transaction,
+  table: string,
+  rows: any[],
+  chunkSize = 250,
+): Promise<void> {
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    await trx(table).insert(rows.slice(index, index + chunkSize));
+  }
+}
+
 export async function generatePeriodicEarnings(
   period: {
     id: number;
@@ -40,29 +50,40 @@ export async function generatePeriodicEarnings(
     })
     .orderBy('employee_id')
     .orderBy('effective_from');
+  if (plans.length === 0) return;
+
+  const components = await trx('employee_compensation_components')
+    .whereIn('plan_id', plans.map((plan) => plan.id))
+    .where({ component_type: 'fixed_periodic' })
+    .orderBy('id');
+  const componentsByPlan = new Map<number, any[]>();
+  for (const component of components) {
+    const planComponents = componentsByPlan.get(Number(component.plan_id)) || [];
+    planComponents.push(component);
+    componentsByPlan.set(Number(component.plan_id), planComponents);
+  }
+
   const periodDays = inclusiveDays(period.period_start, period.period_end);
+  const earningRows: any[] = [];
 
   for (const planRow of plans) {
-    const plan = await getCompensationPlanById(Number(planRow.id), trx);
-    if (!plan) continue;
-    const overlapStart = laterDate(period.period_start, String(plan.effective_from).slice(0, 10));
+    const overlapStart = laterDate(period.period_start, String(planRow.effective_from).slice(0, 10));
     const overlapEnd = earlierDate(
       period.period_end,
-      plan.effective_to ? String(plan.effective_to).slice(0, 10) : period.period_end,
+      planRow.effective_to ? String(planRow.effective_to).slice(0, 10) : period.period_end,
     );
     if (overlapStart > overlapEnd) continue;
     const overlapDays = inclusiveDays(overlapStart, overlapEnd);
 
-    for (const component of plan.components.filter((row) => row.component_type === 'fixed_periodic')) {
-      const sourceKey = `payroll-period:${period.id}:plan:${plan.id}:component:${component.id}`;
-      if (await trx('employee_earnings').where({ source_key: sourceKey }).first()) continue;
+    for (const component of componentsByPlan.get(Number(planRow.id)) || []) {
+      const sourceKey = `payroll-period:${period.id}:plan:${planRow.id}:component:${component.id}`;
       const fullAmount = new Decimal(component.amount || 0);
-      const gross = plan.proration_method === 'none'
+      const gross = planRow.proration_method === 'none'
         ? fullAmount
         : fullAmount.mul(overlapDays).div(periodDays);
-      await trx('employee_earnings').insert({
-        employee_id: plan.employee_id,
-        plan_id: plan.id,
+      earningRows.push({
+        employee_id: planRow.employee_id,
+        plan_id: planRow.id,
         component_id: component.id || null,
         source_type: 'pay_period',
         source_key: sourceKey,
@@ -70,11 +91,20 @@ export async function generatePeriodicEarnings(
         basis_quantity: overlapDays,
         rate: money(component.amount || 0),
         gross_amount: money(gross),
-        status: 'approved',
-        description: `${plan.pay_schedule} fixed compensation (${overlapDays}/${periodDays} days)`,
-        approved_at: trx.fn.now(),
+        status: 'calculated',
+        description: `${planRow.pay_schedule} fixed compensation (${overlapDays}/${periodDays} days)`,
       });
     }
+  }
+
+  if (earningRows.length === 0) return;
+  const existingRows = await trx('employee_earnings')
+    .whereIn('source_key', earningRows.map((row) => row.source_key))
+    .select('source_key');
+  const existingKeys = new Set(existingRows.map((row) => row.source_key));
+  const pendingRows = earningRows.filter((row) => !existingKeys.has(row.source_key));
+  if (pendingRows.length > 0) {
+    await insertRowsInChunks(trx, 'employee_earnings', pendingRows);
   }
 }
 
@@ -194,12 +224,14 @@ export async function calculatePayrollRun(
     }, trx);
 
     const earnings = await trx('employee_earnings as earning')
+      .join('employee_compensation_plans as plan', 'earning.plan_id', 'plan.id')
       .leftJoin('payroll_line_earnings as link', function joinUnreleased() {
         this.on('link.earning_id', '=', 'earning.id').andOnNull('link.released_at');
       })
       .whereNull('link.id')
       .whereNull('earning.reversed_at')
-      .where({ 'earning.status': 'approved' })
+      .where({ 'plan.pay_schedule': input.pay_schedule })
+      .whereIn('earning.status', ['approved', 'calculated'])
       .whereBetween('earning.earning_date', [input.period_start, input.period_end])
       .select('earning.*')
       .orderBy('earning.employee_id')
@@ -213,9 +245,10 @@ export async function calculatePayrollRun(
       byEmployee.set(employeeId, rows);
     }
 
+    const lineRows: any[] = [];
     for (const [employeeId, rows] of byEmployee) {
       const gross = money(rows.reduce((sum, earning) => sum + Number(earning.gross_amount || 0), 0));
-      const [lineId] = await trx('payroll_lines').insert({
+      lineRows.push({
         run_id: runId,
         employee_id: employeeId,
         gross_earnings: gross,
@@ -223,9 +256,24 @@ export async function calculatePayrollRun(
         balance_due: gross,
         status: gross > 0 ? 'unpaid' : 'paid',
       });
-      await trx('payroll_line_earnings').insert(
-        rows.map((earning) => ({ payroll_line_id: lineId, earning_id: earning.id })),
+    }
+    if (lineRows.length > 0) {
+      await insertRowsInChunks(trx, 'payroll_lines', lineRows);
+      const insertedLines = await trx('payroll_lines')
+        .where({ run_id: runId })
+        .select('id', 'employee_id');
+      const lineIdByEmployee = new Map(
+        insertedLines.map((line) => [Number(line.employee_id), Number(line.id)]),
       );
+      const earningLinks = Array.from(byEmployee.entries()).flatMap(([employeeId, rows]) => {
+        const lineId = lineIdByEmployee.get(employeeId);
+        if (!lineId) throw new Error(`Payroll line missing for employee ${employeeId}`);
+        return rows.map((earning) => ({
+          payroll_line_id: lineId,
+          earning_id: earning.id,
+        }));
+      });
+      await insertRowsInChunks(trx, 'payroll_line_earnings', earningLinks);
     }
 
     await refreshPayrollRun(runId, trx);
@@ -233,8 +281,8 @@ export async function calculatePayrollRun(
   });
 }
 
-export async function getPayrollRun(runId: number): Promise<any | null> {
-  const run = await db('payroll_runs')
+export async function getPayrollRun(runId: number, database: Knex = db): Promise<any | null> {
+  const run = await database('payroll_runs')
     .join('payroll_periods', 'payroll_runs.period_id', 'payroll_periods.id')
     .where('payroll_runs.id', runId)
     .select(
@@ -246,25 +294,50 @@ export async function getPayrollRun(runId: number): Promise<any | null> {
     )
     .first();
   if (!run) return null;
-  const lines = await db('payroll_lines')
+  const lines = await database('payroll_lines')
     .join('employees', 'payroll_lines.employee_id', 'employees.id')
     .where('payroll_lines.run_id', runId)
     .select('payroll_lines.*', 'employees.name as employee_name')
     .orderBy('employees.name');
-  for (const line of lines) {
-    line.earnings = await db('payroll_line_earnings')
+  if (lines.length === 0) return { ...run, lines };
+
+  const lineIds = lines.map((line) => Number(line.id));
+  const [earnings, deductions, payments] = await Promise.all([
+    database('payroll_line_earnings')
       .join('employee_earnings', 'payroll_line_earnings.earning_id', 'employee_earnings.id')
-      .where({ 'payroll_line_earnings.payroll_line_id': line.id })
+      .whereIn('payroll_line_earnings.payroll_line_id', lineIds)
       .whereNull('payroll_line_earnings.released_at')
-      .select('employee_earnings.*')
-      .orderBy('employee_earnings.earning_date');
-    line.deductions = await db('payroll_deductions')
-      .where({ payroll_line_id: line.id })
-      .orderBy('created_at');
-    line.payments = await db('payroll_payments')
-      .where({ payroll_line_id: line.id })
+      .select(
+        'payroll_line_earnings.payroll_line_id as payroll_line_id',
+        'employee_earnings.*',
+      )
+      .orderBy('employee_earnings.earning_date'),
+    database('payroll_deductions')
+      .whereIn('payroll_line_id', lineIds)
+      .orderBy('created_at'),
+    database('payroll_payments')
+      .whereIn('payroll_line_id', lineIds)
       .orderBy('payment_date')
-      .orderBy('id');
+      .orderBy('id'),
+  ]);
+  const grouped = <T extends { payroll_line_id: number }>(rows: T[]) => {
+    const values = new Map<number, T[]>();
+    for (const row of rows) {
+      const lineId = Number(row.payroll_line_id);
+      const lineRows = values.get(lineId) || [];
+      lineRows.push(row);
+      values.set(lineId, lineRows);
+    }
+    return values;
+  };
+  const earningsByLine = grouped(earnings);
+  const deductionsByLine = grouped(deductions);
+  const paymentsByLine = grouped(payments);
+  for (const line of lines) {
+    const lineId = Number(line.id);
+    line.earnings = earningsByLine.get(lineId) || [];
+    line.deductions = deductionsByLine.get(lineId) || [];
+    line.payments = paymentsByLine.get(lineId) || [];
   }
   return { ...run, lines };
 }
@@ -334,6 +407,18 @@ export async function approvePayrollRun(
         approved_at: trx.fn.now(),
       });
     }
+    const runEarningIds = trx('payroll_line_earnings')
+      .join('payroll_lines', 'payroll_line_earnings.payroll_line_id', 'payroll_lines.id')
+      .where({ 'payroll_lines.run_id': runId })
+      .whereNull('payroll_line_earnings.released_at')
+      .select('payroll_line_earnings.earning_id');
+    await trx('employee_earnings')
+      .whereIn('id', runEarningIds)
+      .where({ status: 'calculated' })
+      .update({
+        status: 'approved',
+        approved_at: trx.fn.now(),
+      });
     await trx('payroll_runs').where({ id: runId }).update({
       status: 'approved',
       approved_by_employee_id: approvedByEmployeeId || null,

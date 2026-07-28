@@ -2,6 +2,7 @@ import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import {
   LayoutDashboard, Gauge, Users, Fuel, DollarSign,
   CreditCard, Receipt, BarChart3, Settings, Droplets, Truck, FileSpreadsheet,
+  WalletCards,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
@@ -18,12 +19,14 @@ import TankStock from './pages/TankStock';
 import Reports from './pages/Reports';
 import Suppliers from './pages/Suppliers';
 import SettingsPage from './pages/Settings';
+import Payroll from './pages/Payroll';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/shifts', icon: Gauge, label: 'Shifts & Readings' },
   { to: '/pumps', icon: Fuel, label: 'Pumps' },
   { to: '/employees', icon: Users, label: 'Employees' },
+  { to: '/payroll', icon: WalletCards, label: 'Payroll' },
   { to: '/fuel-pricing', icon: DollarSign, label: 'Fuel Pricing' },
   { to: '/expenses', icon: Receipt, label: 'Expenses' },
   { to: '/credit-accounts', icon: CreditCard, label: 'Credit Accounts' },
@@ -81,6 +84,7 @@ export default function App() {
             <Route path="/shifts/:id" element={<ShiftDetail />} />
             <Route path="/pumps" element={<Pumps />} />
             <Route path="/employees" element={<Employees />} />
+            <Route path="/payroll" element={<Payroll />} />
             <Route path="/fuel-pricing" element={<FuelPricing />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/credit-accounts" element={<CreditAccounts />} />

@@ -34,12 +34,49 @@ async function attachCompensation<T extends { id: number }>(employees: T[]): Pro
   compensation_summary: string;
 }>> {
   const today = getKenyaDate();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const employeeIds = employees.map((employee) => employee.id);
+  const earningsByEmployee = new Map<number, number>();
+  const payrollDueByEmployee = new Map<number, number>();
+  const debtByEmployee = new Map<number, number>();
+  if (employeeIds.length > 0) {
+    const earnings = await db('employee_earnings')
+      .whereIn('employee_id', employeeIds)
+      .whereNull('reversed_at')
+      .whereIn('status', ['approved', 'posted'])
+      .whereBetween('earning_date', [monthStart, today])
+      .select('employee_id')
+      .sum('gross_amount as total')
+      .groupBy('employee_id');
+    for (const row of earnings) earningsByEmployee.set(Number(row.employee_id), Number(row.total || 0));
+
+    const payrollDue = await db('payroll_lines')
+      .join('payroll_runs', 'payroll_lines.run_id', 'payroll_runs.id')
+      .whereIn('payroll_lines.employee_id', employeeIds)
+      .whereIn('payroll_runs.status', ['approved', 'partially_paid'])
+      .select('payroll_lines.employee_id')
+      .sum('payroll_lines.balance_due as total')
+      .groupBy('payroll_lines.employee_id');
+    for (const row of payrollDue) payrollDueByEmployee.set(Number(row.employee_id), Number(row.total || 0));
+
+    const debts = await db('staff_debts')
+      .whereIn('employee_id', employeeIds)
+      .where({ status: 'outstanding' })
+      .select('employee_id')
+      .sum('balance as total')
+      .groupBy('employee_id');
+    for (const row of debts) debtByEmployee.set(Number(row.employee_id), Number(row.total || 0));
+  }
+
   return Promise.all(employees.map(async (employee) => {
     const plan = await getCompensationPlan(employee.id, today);
     return {
       ...employee,
       compensation_plan: plan,
       compensation_summary: describeCompensationPlan(plan),
+      current_period_earnings: earningsByEmployee.get(employee.id) || 0,
+      payroll_balance_due: payrollDueByEmployee.get(employee.id) || 0,
+      outstanding_staff_debt: debtByEmployee.get(employee.id) || 0,
     };
   }));
 }
@@ -204,12 +241,20 @@ router.post('/', requireAdmin, validate(createEmployeeSchema), async (req, res) 
       employment_type,
       employment_start_date,
       employment_end_date,
+      initial_compensation_plan,
     } = req.body;
+    const requestedPlan = initial_compensation_plan
+      ? createCompensationPlanSchema.parse(initial_compensation_plan)
+      : null;
+    const fixedPerShift = requestedPlan?.components.find(
+      (component: any) => component.component_type === 'fixed_per_shift',
+    );
+    const legacyDailyWage = requestedPlan ? Number(fixedPerShift?.amount || 0) : daily_wage;
 
     const id = await db.transaction(async (trx) => {
       const [employeeId] = await trx('employees').insert({
         name,
-        daily_wage,
+        daily_wage: legacyDailyWage,
         phone: phone || '',
         pin: hashPin(pin),
         role: role || 'attendant',
@@ -220,20 +265,30 @@ router.post('/', requireAdmin, validate(createEmployeeSchema), async (req, res) 
       });
       const [planId] = await trx('employee_compensation_plans').insert({
         employee_id: employeeId,
-        name: 'Starting per-shift wage',
-        pay_schedule: 'daily',
-        proration_method: 'calendar_days',
-        effective_from: employment_start_date || getKenyaDate(),
+        name: requestedPlan?.name || 'Starting per-shift wage',
+        pay_schedule: requestedPlan?.pay_schedule || 'daily',
+        proration_method: requestedPlan?.proration_method || 'calendar_days',
+        effective_from: requestedPlan?.effective_from || employment_start_date || getKenyaDate(),
         status: 'active',
         version: 1,
         currency: 'KES',
-        notes: 'Created with the employee profile for backward compatibility.',
+        notes: requestedPlan?.notes || 'Created with the employee profile.',
       });
-      await trx('employee_compensation_components').insert({
-        plan_id: planId,
+      const components = requestedPlan?.components || [{
         component_type: 'fixed_per_shift',
         amount: daily_wage,
-      });
+      }];
+      await trx('employee_compensation_components').insert(
+        components.map((component: any) => ({
+          plan_id: planId,
+          component_type: component.component_type,
+          amount: component.amount ?? null,
+          rate: component.rate ?? null,
+          fuel_type: component.fuel_type ?? null,
+          minimum_amount: component.minimum_amount ?? null,
+          maximum_amount: component.maximum_amount ?? null,
+        })),
+      );
       return employeeId;
     });
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id }).first();

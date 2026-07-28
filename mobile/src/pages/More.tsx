@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Users, Fuel, DollarSign, BarChart3, LogOut, Droplets, Truck, FileText } from 'lucide-react';
+import { Users, Fuel, DollarSign, BarChart3, LogOut, Droplets, Truck, FileText, WalletCards } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,6 +14,7 @@ type MenuItem = {
 
 const menuItems: MenuItem[] = [
   { label: 'Employees', path: '/employees', icon: Users, color: 'text-purple-500', bg: 'bg-purple-50', adminOnly: true },
+  { label: 'Payroll', path: '/payroll', icon: WalletCards, color: 'text-emerald-600', bg: 'bg-emerald-50', adminOnly: true },
   { label: 'Pumps', path: '/pumps', icon: Fuel, color: 'text-blue-500', bg: 'bg-blue-50', adminOnly: true },
   { label: 'Tanks & Stock', path: '/tanks', icon: Droplets, color: 'text-cyan-500', bg: 'bg-cyan-50', adminOnly: true },
   { label: 'Fuel Deliveries', path: '/deliveries', icon: Truck, color: 'text-orange-500', bg: 'bg-orange-50', adminOnly: true },

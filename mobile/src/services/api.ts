@@ -84,6 +84,17 @@ export const getActiveEmployees = () => api.get('/employees/active');
 export const createEmployee = (data: any) => api.post('/employees', data);
 export const updateEmployee = (id: number, data: any) => api.put(`/employees/${id}`, data);
 export const deleteEmployee = (id: number) => api.delete(`/employees/${id}`);
+export const getCompensationPlans = (id: number) => api.get(`/employees/${id}/compensation-plans`);
+export const createCompensationPlan = (id: number, data: any) =>
+  api.post(`/employees/${id}/compensation-plans`, data);
+
+// Payroll
+export const getPayrollRuns = (params?: any) => api.get('/payroll/runs', { params });
+export const getPayrollRun = (id: number) => api.get(`/payroll/runs/${id}`);
+export const calculatePayrollRun = (data: any) => api.post('/payroll/runs/calculate', data);
+export const approvePayrollRun = (id: number) => api.post(`/payroll/runs/${id}/approve`);
+export const addPayrollPayment = (lineId: number, data: any) =>
+  api.post(`/payroll/lines/${lineId}/payments`, data);
 
 // Pumps
 export const getPumps = () => api.get('/pumps');

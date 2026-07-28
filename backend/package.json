@@ -12,6 +12,7 @@
     "seed": "knex seed:run --knexfile src/knexfile.ts",
     "fresh-start:reset": "tsx scripts/freshStartReset.ts",
     "stress:invoice-customers": "tsx scripts/stress_invoice_customer_monitor.ts",
+    "stress:employee-payroll": "tsx scripts/stress_employee_payroll.ts",
     "stress:shift-history": "tsx scripts/stress_shift_history.ts",
     "test:compensation-plans": "tsx scripts/test_compensation_plans.ts",
     "test:employee-earnings": "tsx scripts/test_employee_earnings.ts",

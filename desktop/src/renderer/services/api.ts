@@ -19,6 +19,25 @@ export const getEmployee = (id: number) => api.get(`/employees/${id}`);
 export const createEmployee = (data: any) => api.post('/employees', data);
 export const updateEmployee = (id: number, data: any) => api.put(`/employees/${id}`, data);
 export const deleteEmployee = (id: number) => api.delete(`/employees/${id}`);
+export const getCompensationPlans = (id: number) => api.get(`/employees/${id}/compensation-plans`);
+export const createCompensationPlan = (id: number, data: any) =>
+  api.post(`/employees/${id}/compensation-plans`, data);
+
+// ============ Payroll ============
+export const getPayrollRuns = (params?: any) => api.get('/payroll/runs', { params });
+export const getPayrollRun = (id: number) => api.get(`/payroll/runs/${id}`);
+export const calculatePayrollRun = (data: any) => api.post('/payroll/runs/calculate', data);
+export const addPayrollDeduction = (runId: number, lineId: number, data: any) =>
+  api.post(`/payroll/runs/${runId}/lines/${lineId}/deductions`, data);
+export const deletePayrollDeduction = (runId: number, deductionId: number) =>
+  api.delete(`/payroll/runs/${runId}/deductions/${deductionId}`);
+export const approvePayrollRun = (id: number) => api.post(`/payroll/runs/${id}/approve`);
+export const addPayrollPayment = (lineId: number, data: any) =>
+  api.post(`/payroll/lines/${lineId}/payments`, data);
+export const reversePayrollPayment = (id: number, reason: string) =>
+  api.post(`/payroll/payments/${id}/reverse`, { reason });
+export const voidPayrollRun = (id: number, reason: string) =>
+  api.post(`/payroll/runs/${id}/void`, { reason });
 
 // ============ Pumps ============
 export const getPumps = () => api.get('/pumps');

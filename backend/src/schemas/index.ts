@@ -24,10 +24,6 @@ const employeeBaseSchema = z.object({
   employment_end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().optional(),
 });
 
-export const createEmployeeSchema = employeeBaseSchema.extend({
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'),
-});
-
 export const updateEmployeeSchema = employeeBaseSchema.partial().extend({
   pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits').optional(),
 }).refine(
@@ -80,6 +76,11 @@ export const createCompensationPlanSchema = z.object({
   effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'effective_from must be YYYY-MM-DD'),
   notes: z.string().trim().max(1000).nullish().optional(),
   components: z.array(compensationComponentSchema).min(1).max(8),
+});
+
+export const createEmployeeSchema = employeeBaseSchema.extend({
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'),
+  initial_compensation_plan: createCompensationPlanSchema.optional(),
 });
 
 // --- Payroll ---
