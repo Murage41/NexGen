@@ -303,6 +303,21 @@ from a controlled local script.
 For fuel delivery date, pending invoice, and backdated stock handling, follow
 `docs/DELIVERY-WORKFLOW.md`.
 
+For flexible wages, effective-dated compensation, shift earnings, payroll,
+staff-debt deductions, and shift-linked payroll payments, follow
+`docs/EMPLOYEE-COMPENSATION-AND-PAYROLL.md`.
+
+If production stores data outside the repository, set an absolute local path:
+
+```env
+NEXGEN_DATA_DIR=E:\NexGen-Data
+```
+
+The backend database and protected backup endpoint both use this directory.
+Keep it on a local SSD, grant access only to the NexGen service identity and
+authorized administrators, and include the complete directory in backup and
+restore tests.
+
 ## Remaining Hardening Work
 
 - Replace desktop shared-key bypass with proper admin login.
