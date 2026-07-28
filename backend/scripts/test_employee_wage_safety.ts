@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { computeShiftAccountability } from '../src/routes/shifts';
+import { createEmployeeSchema, updateEmployeeSchema } from '../src/schemas';
+
+const baseInput = {
+  readings: [{ amount_sold: 1000 }],
+  collections: { cash_amount: 900, mpesa_amount: 0 },
+  shiftCredits: [],
+  invoiceConsumption: [],
+  creditReceipts: [],
+  expenses: [],
+};
+
+const paidFromShift = computeShiftAccountability({
+  ...baseInput,
+  employee_wage: 100,
+});
+assert.equal(paidFromShift.variance, 0);
+
+const notPaidFromShift = computeShiftAccountability({
+  ...baseInput,
+  employee_wage: 0,
+});
+assert.equal(notPaidFromShift.variance, -100);
+
+assert.equal(createEmployeeSchema.safeParse({
+  name: 'Attendant',
+  daily_wage: -1,
+  pin: '1234',
+  role: 'attendant',
+}).success, false);
+
+const updateWithoutPin = updateEmployeeSchema.parse({
+  name: 'Updated Attendant',
+  daily_wage: 750,
+});
+assert.equal('pin' in updateWithoutPin, false);
+
+assert.equal(updateEmployeeSchema.safeParse({ pin: '000' }).success, false);
+
+console.log('Employee and shift wage safety checks passed');

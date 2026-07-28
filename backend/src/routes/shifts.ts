@@ -682,6 +682,12 @@ router.post('/:id/expenses', requireAuth, requireOwnShiftOrAdmin, validate(creat
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { category, description, amount } = req.body;
+    if (category.trim().toLowerCase() === 'wages') {
+      return res.status(400).json({
+        success: false,
+        error: 'Record employee pay through the shift wage or payroll workflow, not as a shift expense.',
+      });
+    }
     const [expId] = await db('shift_expenses').insert({
       shift_id: req.params.id, category, description, amount,
     });
@@ -1151,7 +1157,7 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
 
     res.status(201).json({ success: true, data: receipt });
   } catch (err: any) {
-    res.status(err.http || 500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1160,6 +1166,11 @@ router.put('/:id/wage-deduction', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const { deduction_amount, reason } = req.body;
+    const normalizedDeduction = Number(deduction_amount);
+    if (!Number.isFinite(normalizedDeduction) || normalizedDeduction < 0) {
+      return res.status(400).json({ success: false, error: 'deduction_amount must be a non-negative number' });
+    }
+
     const shift = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
       .select('shifts.employee_id', 'employees.daily_wage')
@@ -1168,18 +1179,24 @@ router.put('/:id/wage-deduction', requireAdmin, async (req, res) => {
 
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
 
-    const original_wage = shift.daily_wage;
-    const final_wage = original_wage - deduction_amount;
+    const original_wage = Number(shift.daily_wage || 0);
+    if (normalizedDeduction > original_wage) {
+      return res.status(400).json({
+        success: false,
+        error: `Deduction cannot exceed the available wage of KES ${original_wage.toFixed(2)}`,
+      });
+    }
+    const final_wage = original_wage - normalizedDeduction;
 
     const existing = await db('wage_deductions').where({ shift_id: req.params.id }).first();
     if (existing) {
       await db('wage_deductions').where({ shift_id: req.params.id }).update({
-        deduction_amount, original_wage, final_wage, reason: reason || null,
+        deduction_amount: normalizedDeduction, original_wage, final_wage, reason: reason || null,
       });
     } else {
       await db('wage_deductions').insert({
         shift_id: req.params.id, employee_id: shift.employee_id,
-        original_wage, deduction_amount, final_wage, reason: reason || null,
+        original_wage, deduction_amount: normalizedDeduction, final_wage, reason: reason || null,
       });
     }
 
@@ -1224,6 +1241,20 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
       return res.status(400).json({ success: false, error: 'Shift is already closed.' });
     }
 
+    const normalizedWage = submittedWage === undefined || submittedWage === null
+      ? Number(shift.daily_wage || 0)
+      : Number(submittedWage);
+    if (!Number.isFinite(normalizedWage) || normalizedWage < 0) {
+      return res.status(400).json({ success: false, error: 'wage_paid must be a non-negative number' });
+    }
+
+    const normalizedDeduction = deduct_amount === undefined || deduct_amount === null
+      ? null
+      : Number(deduct_amount);
+    if (normalizedDeduction !== null && (!Number.isFinite(normalizedDeduction) || normalizedDeduction < 0)) {
+      return res.status(400).json({ success: false, error: 'deduct_amount must be a non-negative number' });
+    }
+
     const warnings: string[] = [];
     const closeTime = new Date().toISOString();
     const closeTimeSql = toSqliteDateTime(closeTime);
@@ -1246,9 +1277,7 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
         .where({ shift_id: shift.id })
         .whereNull('deleted_at');
 
-      const employee_wage = (submittedWage !== undefined && submittedWage !== null)
-        ? Number(submittedWage)
-        : (shift.daily_wage || 0);
+      const employee_wage = normalizedWage;
       const { variance } = computeShiftAccountability({
         readings,
         collections,
@@ -1262,7 +1291,9 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
       // Handle deficit and deductions
       if (variance < 0) {
         const deficit = Math.abs(variance);
-        const actualDeduction = deduct_amount != null ? Math.min(deduct_amount, employee_wage, deficit) : 0;
+        const actualDeduction = normalizedDeduction != null
+          ? Math.min(normalizedDeduction, employee_wage, deficit)
+          : 0;
         const carriedForward = deficit - actualDeduction;
 
         if (actualDeduction > 0) {
@@ -1452,7 +1483,12 @@ router.get('/staff-debts/:employeeId', async (req, res) => {
 // Phase 5: require admin — adjusts financial records
 router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
   try {
-    const { amount } = req.body;
+    if (!(await requireOpenShift(req, res))) return;
+    const amount = Number(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'amount must be greater than zero' });
+    }
+
     const shift = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
       .select('shifts.*', 'employees.daily_wage', 'employees.id as emp_id')
@@ -1462,6 +1498,20 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
 
     await db.transaction(async (trx) => {
+      const existingDeduction = await trx('wage_deductions')
+        .where({ shift_id: shift.id })
+        .whereNull('deleted_at')
+        .first();
+      const availableWage = Math.max(
+        0,
+        Number(shift.daily_wage || 0) - Number(existingDeduction?.deduction_amount || 0),
+      );
+      if (amount > availableWage) {
+        const error: any = new Error(`Debt deduction cannot exceed the available wage of KES ${availableWage.toFixed(2)}`);
+        error.http = 400;
+        throw error;
+      }
+
       // Get outstanding debts oldest first
       const debts = await trx('staff_debts')
         .where({ employee_id: shift.emp_id, status: 'outstanding' })
@@ -1495,7 +1545,7 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
 
       // Create/update wage deduction for this debt repayment
       if (deductionAmount > 0) {
-        const existing = await trx('wage_deductions').where({ shift_id: shift.id }).first();
+        const existing = existingDeduction;
         const totalDeduction = (existing?.deduction_amount || 0) + deductionAmount;
         if (existing) {
           await trx('wage_deductions').where({ shift_id: shift.id }).update({
@@ -1529,7 +1579,7 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
     res.json({ success: true, data: { debts: updatedDebts, total_outstanding: totalOutstanding } });
   } catch (err: any) {
     console.error('[shifts:repay-debt] ERROR', err.message, err.stack);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -1597,7 +1647,7 @@ router.get('/:id/tank-summary', async (req, res) => {
 
     res.json({ success: true, data: { shift_id: shift.id, status: 'open', tanks } });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 

@@ -72,9 +72,9 @@ export default function ShiftDetail() {
     setClosing(true);
     try {
       let deduct_amount: number | null = null;
-      if (variance < 0) {
-        const deficit = Math.abs(variance);
-        const wage = shift.employee_wage || 0;
+      if (closeVariance < 0) {
+        const deficit = Math.abs(closeVariance);
+        const wage = enteredWagePaid;
         if (deductOption === 'full') {
           deduct_amount = Math.min(deficit, wage);
         } else if (deductOption === 'partial') {
@@ -146,7 +146,8 @@ export default function ShiftDetail() {
   const totalCredits = shift.total_credits || 0;
   const totalInvoiceConsumption = shift.total_invoice_consumption || 0;
   const totalExpenses = shift.total_expenses || 0;
-  const employeeWage = shift.employee_wage || 0;
+  const employeeWage = Number(shift.employee_wage || 0);
+  const enteredWagePaid = Math.max(0, Number(wagePaid) || 0);
 
   const totalDebt = debts.reduce((s: number, d: any) => s + (d.balance || 0), 0);
   const totalCreditReceipts = Number(
@@ -172,6 +173,8 @@ export default function ShiftDetail() {
     shift.total_accounted ?? (drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage),
   );
   const variance = Number(shift.variance ?? (totalAccounted - expectedShiftTotal));
+  const closeTotalAccounted = drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + enteredWagePaid;
+  const closeVariance = closeTotalAccounted - expectedShiftTotal;
 
   return (
     <div className="pb-6">
@@ -553,7 +556,7 @@ export default function ShiftDetail() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Shift Accounted</span>
-                <span className="font-semibold">{fmt(totalAccounted)}</span>
+                <span className="font-semibold">{fmt(closeTotalAccounted)}</span>
               </div>
               {totalCreditReceipts > 0 && (
                 <div className="flex justify-between text-xs text-green-700">
@@ -561,17 +564,17 @@ export default function ShiftDetail() {
                   <span>{fmt(totalCreditReceipts)}</span>
                 </div>
               )}
-              <div className={`flex justify-between font-bold ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <div className={`flex justify-between font-bold ${closeVariance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 <span>Variance</span>
-                <span>{variance >= 0 ? '+' : ''}{fmt(variance)}</span>
+                <span>{closeVariance >= 0 ? '+' : ''}{fmt(closeVariance)}</span>
               </div>
             </div>
 
             {/* Deduction options — only when deficit */}
-            {variance < 0 && (
+            {closeVariance < 0 && (
               <div className="mb-4">
                 <p className="text-sm font-semibold text-gray-700 mb-2">
-                  Deficit: {fmt(Math.abs(variance))} — Wage: {fmt(employeeWage)}
+                  Deficit: {fmt(Math.abs(closeVariance))} - Paid from shift: {fmt(enteredWagePaid)}
                 </p>
 
                 {/* Option: Full deduct */}
@@ -581,9 +584,9 @@ export default function ShiftDetail() {
                   <div>
                     <p className="text-sm font-medium">Deduct Full</p>
                     <p className="text-xs text-gray-500">
-                      Deduct {fmt(Math.min(Math.abs(variance), employeeWage))} from wage
-                      {Math.abs(variance) > employeeWage && (
-                        <span className="text-orange-600"> · {fmt(Math.abs(variance) - employeeWage)} carried as debt</span>
+                      Deduct {fmt(Math.min(Math.abs(closeVariance), enteredWagePaid))} from wage
+                      {Math.abs(closeVariance) > enteredWagePaid && (
+                        <span className="text-orange-600"> · {fmt(Math.abs(closeVariance) - enteredWagePaid)} carried as debt</span>
                       )}
                     </p>
                   </div>
@@ -599,11 +602,11 @@ export default function ShiftDetail() {
                       <div className="mt-2">
                         <input type="number" step="0.01" value={partialAmount}
                           onChange={e => setPartialAmount(e.target.value)}
-                          placeholder={`Max ${Math.min(Math.abs(variance), employeeWage).toFixed(2)}`}
+                          placeholder={`Max ${Math.min(Math.abs(closeVariance), enteredWagePaid).toFixed(2)}`}
                           className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
                         {partialAmount && (
                           <p className="text-xs text-orange-600 mt-1">
-                            {fmt(Math.abs(variance) - Math.min(parseFloat(partialAmount) || 0, employeeWage, Math.abs(variance)))} carried as debt
+                            {fmt(Math.abs(closeVariance) - Math.min(parseFloat(partialAmount) || 0, enteredWagePaid, Math.abs(closeVariance)))} carried as debt
                           </p>
                         )}
                       </div>
@@ -618,7 +621,7 @@ export default function ShiftDetail() {
                   <div>
                     <p className="text-sm font-medium">Don't Deduct</p>
                     <p className="text-xs text-orange-600">
-                      Full {fmt(Math.abs(variance))} carried as debt
+                      Full {fmt(Math.abs(closeVariance))} carried as debt
                     </p>
                   </div>
                 </label>

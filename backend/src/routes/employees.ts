@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
-import { hashPin, validatePin } from '../services/pinSecurity';
+import { validate } from '../middleware/validate';
+import { createEmployeeSchema, updateEmployeeSchema } from '../schemas';
+import { hashPin } from '../services/pinSecurity';
 
 const router = Router();
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Columns safe to expose in list/detail responses (never leak PIN)
 const SAFE_COLUMNS = ['id', 'name', 'daily_wage', 'phone', 'active', 'role', 'created_at'];
@@ -44,23 +45,15 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST create employee
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', requireAdmin, validate(createEmployeeSchema), async (req, res) => {
   try {
     const { name, daily_wage, phone, pin, role } = req.body;
-    const submittedPin = pin === undefined && !IS_PRODUCTION ? '0000' : pin;
-    const pinError = validatePin(submittedPin);
-    if (pinError) {
-      return res.status(400).json({
-        success: false,
-        error: IS_PRODUCTION && pin === undefined ? 'PIN is required in production.' : pinError,
-      });
-    }
 
     const [id] = await db('employees').insert({
       name,
       daily_wage,
-      phone,
-      pin: hashPin(submittedPin),
+      phone: phone || '',
+      pin: hashPin(pin),
       role: role || 'attendant',
     });
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id }).first();
@@ -72,19 +65,18 @@ router.post('/', requireAdmin, async (req, res) => {
 });
 
 // PUT update employee
-router.put('/:id', requireAdmin, async (req, res) => {
+router.put('/:id', requireAdmin, validate(updateEmployeeSchema), async (req, res) => {
   try {
+    const existing = await db('employees').where({ id: req.params.id }).first();
+    if (!existing) return res.status(404).json({ success: false, error: 'Employee not found' });
+
     const { name, daily_wage, phone, active, pin, role } = req.body;
     const updates: any = {};
     if (name !== undefined) updates.name = name;
     if (daily_wage !== undefined) updates.daily_wage = daily_wage;
     if (phone !== undefined) updates.phone = phone;
     if (active !== undefined) updates.active = active;
-    if (pin !== undefined) {
-      const pinError = validatePin(pin);
-      if (pinError) return res.status(400).json({ success: false, error: pinError });
-      updates.pin = hashPin(pin);
-    }
+    if (pin !== undefined) updates.pin = hashPin(pin);
     if (role !== undefined) updates.role = role;
     await db('employees').where({ id: req.params.id }).update(updates);
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id: req.params.id }).first();
@@ -98,8 +90,22 @@ router.put('/:id', requireAdmin, async (req, res) => {
 // DELETE (soft delete - deactivate)
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
+    const employee = await db('employees').where({ id: req.params.id }).first();
+    if (!employee) return res.status(404).json({ success: false, error: 'Employee not found' });
+
+    const openShift = await db('shifts')
+      .where({ employee_id: req.params.id, status: 'open' })
+      .select('id')
+      .first();
+    if (openShift) {
+      return res.status(409).json({
+        success: false,
+        error: `Employee has open shift #${openShift.id}. Close the shift before deactivating the employee.`,
+      });
+    }
+
     await db('employees').where({ id: req.params.id }).update({ active: false });
-    res.json({ success: true });
+    res.json({ success: true, message: 'Employee deactivated' });
   } catch (err: any) {
     console.error('[employees:delete] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Users, Shield, UserCheck } from 'lucide-react';
+import { Plus, Pencil, UserX, Users, Shield, UserCheck } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee } from '../services/api';
 
@@ -71,13 +71,13 @@ export default function Employees() {
     }
   }
 
-  async function handleDelete(id: number) {
-    if (!confirm('Delete this employee?')) return;
+  async function handleDeactivate(id: number) {
+    if (!confirm('Deactivate this employee? Historical records will be kept.')) return;
     try {
       await deleteEmployee(id);
       loadData();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to deactivate employee');
     }
   }
 
@@ -121,9 +121,11 @@ export default function Employees() {
                 <button onClick={() => openEdit(emp)} className="p-2 text-gray-400 hover:text-blue-500">
                   <Pencil size={18} />
                 </button>
-                <button onClick={() => handleDelete(emp.id)} className="p-2 text-gray-400 hover:text-red-500">
-                  <Trash2 size={18} />
-                </button>
+                {Boolean(emp.active) && (
+                  <button onClick={() => handleDeactivate(emp.id)} className="p-2 text-gray-400 hover:text-red-500" title="Deactivate">
+                    <UserX size={18} />
+                  </button>
+                )}
               </div>
             </div>
           ))}

@@ -6,7 +6,7 @@ import PageHeader from '../components/PageHeader';
 import { Save, Plus, Trash2, Search, UserPlus, Banknote } from 'lucide-react';
 
 const PREDEFINED_EXPENSE_CATEGORIES = [
-  'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
+  'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
   'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
   'Cleaning', 'Insurance', 'Accounting', 'Other',
 ];
@@ -45,7 +45,7 @@ export default function ShiftRecord() {
   async function loadExpenseCategories() {
     try {
       const res = await getExpenseCategories();
-      setExpenseCategories(res.data.data || PREDEFINED_EXPENSE_CATEGORIES);
+      setExpenseCategories((res.data.data || PREDEFINED_EXPENSE_CATEGORIES).filter((category: string) => category !== 'Wages'));
     } catch {
       setExpenseCategories(PREDEFINED_EXPENSE_CATEGORIES);
     }

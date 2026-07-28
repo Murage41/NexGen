@@ -9,7 +9,7 @@ import {
 import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets } from 'lucide-react';
 
 const PREDEFINED_EXPENSE_CATEGORIES = [
-  'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
+  'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
   'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
   'Cleaning', 'Insurance', 'Accounting', 'Other',
 ];
@@ -79,7 +79,7 @@ export default function ShiftDetail() {
   async function loadExpenseCategories() {
     try {
       const res = await getExpenseCategories();
-      setExpenseCategories(res.data.data || PREDEFINED_EXPENSE_CATEGORIES);
+      setExpenseCategories((res.data.data || PREDEFINED_EXPENSE_CATEGORIES).filter((category: string) => category !== 'Wages'));
     } catch {
       setExpenseCategories(PREDEFINED_EXPENSE_CATEGORIES);
     }
@@ -310,9 +310,9 @@ export default function ShiftDetail() {
     let deductAmount: number | null = null;
     if (variance < 0) {
       if (deductOption === 'full') {
-        deductAmount = Math.min(Math.abs(variance), employeeWage);
+        deductAmount = Math.min(Math.abs(variance), enteredWagePaid);
       } else if (deductOption === 'partial') {
-        deductAmount = Math.min(parseFloat(partialAmount) || 0, employeeWage, Math.abs(variance));
+        deductAmount = Math.min(parseFloat(partialAmount) || 0, enteredWagePaid, Math.abs(variance));
       }
       // 'none' = null (no deduction, full deficit becomes debt)
     }
@@ -397,7 +397,8 @@ export default function ShiftDetail() {
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
   const totalInvoiceConsumption = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
   const totalExpenses = expenses.reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
-  const employeeWage = shift.employee_wage || 0;
+  const employeeWage = Number(shift.employee_wage || 0);
+  const enteredWagePaid = Math.max(0, Number(wagePaid) || 0);
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
   const creditReceiptsCash = creditReceipts
     .filter((r: any) => (r.payment_method || 'cash') !== 'mpesa')
@@ -412,8 +413,8 @@ export default function ShiftDetail() {
   const drawerMpesa = totalMpesa;
   const drawerTotal = drawerCash + drawerMpesa;
   const expectedShiftTotal = expectedSales + totalCreditReceipts;
-  const salesAccounted = salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
-  const totalAccounted = drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage;
+  const salesAccounted = salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + enteredWagePaid;
+  const totalAccounted = drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + enteredWagePaid;
   const variance = totalAccounted - expectedShiftTotal;
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -1151,22 +1152,22 @@ export default function ShiftDetail() {
                 <p className="text-sm text-green-800">
                   {variance === 0 ? 'Shift balanced perfectly.' : `Surplus of ${formatKES(variance)}.`}
                 </p>
-                <p className="text-xs text-green-600 mt-1">Wage: {formatKES(employeeWage)} (full)</p>
+                <p className="text-xs text-green-600 mt-1">Paid from shift: {formatKES(enteredWagePaid)}</p>
               </div>
             ) : (
               <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
                 <p className="text-sm text-red-800 font-semibold">Deficit: {formatKES(Math.abs(variance))}</p>
-                <p className="text-xs text-red-600 mt-1">Daily wage: {formatKES(employeeWage)}</p>
+                <p className="text-xs text-red-600 mt-1">Paid from shift: {formatKES(enteredWagePaid)}</p>
 
                 <div className="mt-3 space-y-2">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="radio" name="deduct" checked={deductOption === 'full'}
                       onChange={() => setDeductOption('full')} className="text-red-600" />
                     <span className="text-sm">
-                      Deduct {formatKES(Math.min(Math.abs(variance), employeeWage))} from wage
-                      {Math.abs(variance) > employeeWage && (
+                      Deduct {formatKES(Math.min(Math.abs(variance), enteredWagePaid))} from wage
+                      {Math.abs(variance) > enteredWagePaid && (
                         <span className="text-red-500 text-xs ml-1">
-                          ({formatKES(Math.abs(variance) - employeeWage)} carried as debt)
+                          ({formatKES(Math.abs(variance) - enteredWagePaid)} carried as debt)
                         </span>
                       )}
                     </span>
@@ -1184,7 +1185,7 @@ export default function ShiftDetail() {
                         placeholder="Amount to deduct" className="border border-gray-300 rounded p-2 text-sm w-48" />
                       {partialAmount && (
                         <p className="text-xs text-gray-500 mt-1">
-                          Wage: {formatKES(employeeWage - Math.min(parseFloat(partialAmount) || 0, employeeWage))} |
+                          Wage: {formatKES(enteredWagePaid - Math.min(parseFloat(partialAmount) || 0, enteredWagePaid))} |
                           Debt: {formatKES(Math.abs(variance) - Math.min(parseFloat(partialAmount) || 0, Math.abs(variance)))}
                         </p>
                       )}

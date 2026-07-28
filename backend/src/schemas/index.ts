@@ -8,6 +8,29 @@ import { z } from 'zod';
  */
 const optionalText = () => z.string().nullish().optional();
 
+// --- Employees ---
+const employeeBaseSchema = z.object({
+  name: z.string().trim().min(1, 'name is required').max(120, 'name is too long'),
+  daily_wage: z.number({ error: 'daily_wage is required' })
+    .finite('daily_wage must be a valid number')
+    .min(0, 'daily_wage cannot be negative')
+    .max(100000000, 'daily_wage is too large'),
+  phone: z.string().trim().max(32, 'phone is too long').nullish().optional(),
+  role: z.enum(['admin', 'attendant']).default('attendant'),
+  active: z.boolean().optional(),
+});
+
+export const createEmployeeSchema = employeeBaseSchema.extend({
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'),
+});
+
+export const updateEmployeeSchema = employeeBaseSchema.partial().extend({
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits').optional(),
+}).refine(
+  (data) => Object.keys(data).length > 0,
+  { message: 'At least one field must be provided' },
+);
+
 // --- Fuel Deliveries ---
 export const createDeliverySchema = z.object({
   tank_id: z.number({ error: 'tank_id is required' }).int().positive(),

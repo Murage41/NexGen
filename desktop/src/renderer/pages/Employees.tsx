@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee } from '../services/api';
-import { Plus, Pencil, Trash2, Users, X } from 'lucide-react';
+import { Plus, Pencil, UserX, Users, X } from 'lucide-react';
 
 export default function Employees() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [form, setForm] = useState({ name: '', daily_wage: '', phone: '', pin: '0000', role: 'attendant', active: true });
+  const [form, setForm] = useState({ name: '', daily_wage: '', phone: '', pin: '', role: 'attendant', active: true });
 
   useEffect(() => {
     loadEmployees();
@@ -26,7 +26,7 @@ export default function Employees() {
 
   function openCreate() {
     setEditing(null);
-    setForm({ name: '', daily_wage: '', phone: '', pin: '0000', role: 'attendant', active: true });
+    setForm({ name: '', daily_wage: '', phone: '', pin: '', role: 'attendant', active: true });
     setShowModal(true);
   }
 
@@ -36,7 +36,7 @@ export default function Employees() {
       name: emp.name,
       daily_wage: String(emp.daily_wage),
       phone: emp.phone || '',
-      pin: emp.pin || '0000',
+      pin: '',
       role: emp.role || 'attendant',
       active: emp.active === 1 || emp.active === true,
     });
@@ -45,14 +45,14 @@ export default function Employees() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = {
-      name: form.name,
+    const payload: any = {
+      name: form.name.trim(),
       daily_wage: parseFloat(form.daily_wage),
-      phone: form.phone || null,
-      pin: form.pin,
+      phone: form.phone.trim() || null,
       role: form.role,
       active: form.active,
     };
+    if (form.pin) payload.pin = form.pin;
     try {
       if (editing) {
         await updateEmployee(editing.id, payload);
@@ -67,14 +67,14 @@ export default function Employees() {
     }
   }
 
-  async function handleDelete(id: number) {
-    if (!confirm('Are you sure you want to delete this employee?')) return;
+  async function handleDeactivate(id: number) {
+    if (!confirm('Deactivate this employee? Their historical shifts and payroll records will be kept.')) return;
     try {
       await deleteEmployee(id);
       loadEmployees();
     } catch (err: any) {
-      console.error('Failed to delete employee:', err);
-      alert(err.response?.data?.error || 'Failed to delete employee');
+      console.error('Failed to deactivate employee:', err);
+      alert(err.response?.data?.error || 'Failed to deactivate employee');
     }
   }
 
@@ -154,16 +154,19 @@ export default function Employees() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">PIN (4 digits) *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {editing ? 'New PIN (optional)' : 'PIN (4 digits) *'}
+                  </label>
                   <input
-                    type="text"
+                    type="password"
+                    inputMode="numeric"
                     maxLength={4}
                     pattern="\d{4}"
-                    required
+                    required={!editing}
                     value={form.pin}
                     onChange={e => setForm({ ...form, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })}
                     className="w-full border border-gray-300 rounded-lg p-2"
-                    placeholder="0000"
+                    placeholder={editing ? 'Leave blank to keep current PIN' : '4 digits'}
                   />
                 </div>
               </div>
@@ -228,9 +231,11 @@ export default function Employees() {
                     <button onClick={() => openEdit(emp)} className="text-blue-600 hover:text-blue-800" title="Edit">
                       <Pencil size={16} />
                     </button>
-                    <button onClick={() => handleDelete(emp.id)} className="text-red-500 hover:text-red-700" title="Delete">
-                      <Trash2 size={16} />
-                    </button>
+                    {Boolean(emp.active) && (
+                      <button onClick={() => handleDeactivate(emp.id)} className="text-red-500 hover:text-red-700" title="Deactivate">
+                        <UserX size={16} />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
