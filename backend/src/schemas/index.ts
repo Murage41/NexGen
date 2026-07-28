@@ -18,6 +18,10 @@ const employeeBaseSchema = z.object({
   phone: z.string().trim().max(32, 'phone is too long').nullish().optional(),
   role: z.enum(['admin', 'attendant']).default('attendant'),
   active: z.boolean().optional(),
+  job_title: z.string().trim().max(120, 'job_title is too long').nullish().optional(),
+  employment_type: z.enum(['permanent', 'contract', 'casual', 'temporary']).nullish().optional(),
+  employment_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().optional(),
+  employment_end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().optional(),
 });
 
 export const createEmployeeSchema = employeeBaseSchema.extend({
@@ -30,6 +34,52 @@ export const updateEmployeeSchema = employeeBaseSchema.partial().extend({
   (data) => Object.keys(data).length > 0,
   { message: 'At least one field must be provided' },
 );
+
+// --- Employee Compensation ---
+const compensationComponentSchema = z.object({
+  component_type: z.enum([
+    'fixed_per_shift',
+    'fixed_periodic',
+    'sales_percentage',
+    'litre_rate',
+  ]),
+  amount: z.number().finite().min(0).nullish().optional(),
+  rate: z.number().finite().min(0).nullish().optional(),
+  fuel_type: z.enum(['petrol', 'diesel']).nullish().optional(),
+  minimum_amount: z.number().finite().min(0).nullish().optional(),
+  maximum_amount: z.number().finite().min(0).nullish().optional(),
+}).superRefine((component, ctx) => {
+  if (
+    (component.component_type === 'fixed_per_shift' || component.component_type === 'fixed_periodic')
+    && component.amount == null
+  ) {
+    ctx.addIssue({ code: 'custom', path: ['amount'], message: 'amount is required for fixed compensation' });
+  }
+  if (
+    (component.component_type === 'sales_percentage' || component.component_type === 'litre_rate')
+    && component.rate == null
+  ) {
+    ctx.addIssue({ code: 'custom', path: ['rate'], message: 'rate is required for commission compensation' });
+  }
+  if (component.component_type === 'sales_percentage' && Number(component.rate) > 100) {
+    ctx.addIssue({ code: 'custom', path: ['rate'], message: 'sales percentage cannot exceed 100' });
+  }
+  if (
+    component.minimum_amount != null
+    && component.maximum_amount != null
+    && component.minimum_amount > component.maximum_amount
+  ) {
+    ctx.addIssue({ code: 'custom', path: ['maximum_amount'], message: 'maximum must be at least the minimum' });
+  }
+});
+
+export const createCompensationPlanSchema = z.object({
+  name: z.string().trim().min(1, 'name is required').max(120),
+  pay_schedule: z.enum(['daily', 'weekly', 'biweekly', 'monthly']),
+  effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'effective_from must be YYYY-MM-DD'),
+  notes: z.string().trim().max(1000).nullish().optional(),
+  components: z.array(compensationComponentSchema).min(1).max(8),
+});
 
 // --- Fuel Deliveries ---
 export const createDeliverySchema = z.object({
