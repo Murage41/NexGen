@@ -6,6 +6,11 @@ import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForT
 import { compensate } from '../services/meterRollover';
 import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
+import {
+  listShiftHistory,
+  normalizeShiftHistoryQuery,
+  ShiftHistoryQueryError,
+} from '../services/shiftHistory';
 import { requireAdmin, requireAuth, requireOwnShiftOrAdmin } from '../middleware/requireAdmin';
 import { getKenyaDate } from '../utils/timezone';
 
@@ -135,21 +140,13 @@ async function requireOpenShift(req: any, res: any): Promise<boolean> {
 // GET all shifts (with pagination)
 router.get('/', async (req, res) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const offset = (page - 1) * limit;
-    const status = req.query.status as string;
-
-    let query = db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .select('shifts.*', 'employees.name as employee_name');
-
-    if (status) query = query.where('shifts.status', status);
-
-    const shifts = await query.orderBy('shifts.start_time', 'desc').limit(limit).offset(offset);
-    const [{ count }] = await db('shifts').count('* as count');
-    res.json({ success: true, data: { shifts, total: count, page, limit } });
+    const options = normalizeShiftHistoryQuery(req.query as Record<string, unknown>);
+    const result = await listShiftHistory(db, options);
+    res.json({ success: true, data: result });
   } catch (err: any) {
+    if (err instanceof ShiftHistoryQueryError) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
