@@ -205,16 +205,34 @@ router.post('/', requireAdmin, validate(createEmployeeSchema), async (req, res) 
       employment_end_date,
     } = req.body;
 
-    const [id] = await db('employees').insert({
-      name,
-      daily_wage,
-      phone: phone || '',
-      pin: hashPin(pin),
-      role: role || 'attendant',
-      job_title: job_title || null,
-      employment_type: employment_type || null,
-      employment_start_date: employment_start_date || null,
-      employment_end_date: employment_end_date || null,
+    const id = await db.transaction(async (trx) => {
+      const [employeeId] = await trx('employees').insert({
+        name,
+        daily_wage,
+        phone: phone || '',
+        pin: hashPin(pin),
+        role: role || 'attendant',
+        job_title: job_title || null,
+        employment_type: employment_type || null,
+        employment_start_date: employment_start_date || null,
+        employment_end_date: employment_end_date || null,
+      });
+      const [planId] = await trx('employee_compensation_plans').insert({
+        employee_id: employeeId,
+        name: 'Starting per-shift wage',
+        pay_schedule: 'daily',
+        effective_from: employment_start_date || getKenyaDate(),
+        status: 'active',
+        version: 1,
+        currency: 'KES',
+        notes: 'Created with the employee profile for backward compatibility.',
+      });
+      await trx('employee_compensation_components').insert({
+        plan_id: planId,
+        component_type: 'fixed_per_shift',
+        amount: daily_wage,
+      });
+      return employeeId;
     });
     const employee = await db('employees').select(SAFE_COLUMNS).where({ id }).first();
     res.status(201).json({ success: true, data: employee });

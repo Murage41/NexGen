@@ -13,6 +13,12 @@ import {
 } from '../services/shiftHistory';
 import { requireAdmin, requireAuth, requireOwnShiftOrAdmin } from '../middleware/requireAdmin';
 import { getKenyaDate } from '../utils/timezone';
+import {
+  calculateShiftEarnings,
+  generateShiftEarnings,
+  getCompensationPlan,
+  getCompensationPlanById,
+} from '../services/compensation';
 
 const router = Router();
 
@@ -218,6 +224,19 @@ router.get('/:id', async (req, res) => {
       .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
       .where('pump_readings.shift_id', shift.id)
       .where('pumps.active', true);
+    const compensationPlan = shift.compensation_plan_id
+      ? await getCompensationPlanById(Number(shift.compensation_plan_id))
+      : await getCompensationPlan(
+        Number(shift.employee_id),
+        shift.shift_date || String(shift.start_time).slice(0, 10),
+      );
+    const earnings = await db('employee_earnings')
+      .where({ shift_id: shift.id })
+      .whereNull('reversed_at')
+      .orderBy('id');
+    const earningPreview = shift.status === 'open' && compensationPlan
+      ? calculateShiftEarnings(compensationPlan, readings)
+      : [];
 
     const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
     const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
@@ -275,6 +294,13 @@ router.get('/:id', async (req, res) => {
         invoice_consumption: invoiceConsumption,
         credit_receipts: creditReceipts,
         wage_deduction: wageDeduction || null,
+        compensation_plan: compensationPlan,
+        earnings,
+        earning_preview: earningPreview,
+        total_gross_earnings: earnings.reduce(
+          (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
+          0,
+        ),
         outstanding_debts: outstandingDebts,
         total_outstanding_debt,
         ...accountability,
@@ -311,11 +337,25 @@ router.post('/', requireAdmin, async (req, res) => {
         throw err;
       }
 
+      const employee = await trx('employees').where({ id: employee_id, active: true }).first();
+      if (!employee) {
+        const err: any = new Error('Select an active employee before opening the shift.');
+        err.httpStatus = 400;
+        throw err;
+      }
+      const compensationPlan = await getCompensationPlan(Number(employee_id), resolvedDate, trx);
+      if (!compensationPlan) {
+        const err: any = new Error('This employee has no compensation plan for the shift date.');
+        err.httpStatus = 400;
+        throw err;
+      }
+
       const [id] = await trx('shifts').insert({
         employee_id,
         start_time: new Date().toISOString(),
         shift_date: resolvedDate,
         status: 'open',
+        compensation_plan_id: compensationPlan.id,
       });
 
       // Auto-populate opening readings from last closed shift (or pump's initial readings)
@@ -1429,6 +1469,19 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
 
       // *** Mark shift closed BEFORE recomputeCache so that computeBookStock
       // sees this shift's status = 'closed' and includes its sales in the total ***
+      await generateShiftEarnings(
+        {
+          id: shift.id,
+          employee_id: shift.emp_id,
+          compensation_plan_id: shift.compensation_plan_id,
+          shift_date: shift.shift_date,
+          start_time: shift.start_time,
+        },
+        readings,
+        closeTime,
+        trx,
+      );
+
       await trx('shifts').where({ id: req.params.id }).update({
         status: 'closed',
         end_time: closeTime,
