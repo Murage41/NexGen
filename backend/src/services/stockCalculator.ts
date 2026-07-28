@@ -1,5 +1,5 @@
 import db from '../database';
-import { Knex } from 'knex';
+import type { Knex } from 'knex';
 
 /**
  * Computed book stock for a tank as of a given point in time.

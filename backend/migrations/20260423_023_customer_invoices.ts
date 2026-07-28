@@ -1,4 +1,4 @@
-import { Knex } from 'knex';
+import type { Knex } from 'knex';
 
 /**
  * Migration 023 — Customer Invoicing (AR Phase 3)

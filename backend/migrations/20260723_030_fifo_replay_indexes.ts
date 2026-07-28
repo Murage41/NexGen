@@ -1,4 +1,4 @@
-import { Knex } from 'knex';
+import type { Knex } from 'knex';
 
 async function ensureIndex(knex: Knex, table: string, columns: string[], name: string) {
   const existing: any[] = await knex.raw(`PRAGMA index_list(${table})`);

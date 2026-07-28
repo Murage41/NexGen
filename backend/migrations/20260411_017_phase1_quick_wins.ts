@@ -1,4 +1,4 @@
-import { Knex } from 'knex';
+import type { Knex } from 'knex';
 
 /**
  * Phase 1 — Quick Wins: Financial Accuracy & Regulatory Compliance

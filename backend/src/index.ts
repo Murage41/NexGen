@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors, { CorsOptionsDelegate } from 'cors';
 import path from 'path';
-import db from './database';
+import db, { dataDir } from './database';
 import { recomputeAllDipsFromDate } from './services/stockCalculator';
 import { recomputeAllAccountBalances } from './services/accountBalance';
 import { detectDrift } from './services/driftDetector';
@@ -137,6 +137,9 @@ app.get('/api/health/db-stats', requireAdmin, async (_req, res) => {
       'suppliers', 'supplier_invoices', 'supplier_payments',
       'supplier_payment_allocations',
       'tank_stock_adjustments', 'tank_adjustment_batches', 'tank_adjustment_batch_effects',
+      'employee_compensation_plans', 'employee_compensation_components', 'employee_earnings',
+      'payroll_periods', 'payroll_runs', 'payroll_lines', 'payroll_deductions',
+      'payroll_debt_allocations', 'payroll_payments',
     ];
     const stats: Record<string, any> = {};
     for (const t of tables) {
@@ -174,8 +177,8 @@ app.get('/api/health/drift-check', requireAdmin, async (_req, res) => {
 app.post('/api/health/backup', requireAdmin, async (_req, res) => {
   try {
     const fs = await import('fs');
-    const src = path.join(__dirname, '..', 'data', 'nexgen.db');
-    const dir = path.join(__dirname, '..', 'data', 'backups');
+    const src = path.join(dataDir, 'nexgen.db');
+    const dir = path.join(dataDir, 'backups');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     await db.raw('PRAGMA wal_checkpoint(TRUNCATE)');

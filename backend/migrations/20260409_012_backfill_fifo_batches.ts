@@ -1,4 +1,4 @@
-import { Knex } from 'knex';
+import type { Knex } from 'knex';
 
 /**
  * Backfill migration: creates delivery_batches from existing fuel_deliveries,

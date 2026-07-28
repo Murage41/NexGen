@@ -1,5 +1,5 @@
 import db from '../database';
-import { Knex } from 'knex';
+import type { Knex } from 'knex';
 
 /**
  * Recompute the cached `credit_accounts.balance` from source data.
