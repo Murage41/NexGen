@@ -67,6 +67,7 @@ export function computeShiftAccountability({
   creditReceipts,
   expenses,
   employee_wage,
+  payrollPayments = [],
 }: {
   readings: any[];
   collections: any;
@@ -75,6 +76,7 @@ export function computeShiftAccountability({
   creditReceipts: any[];
   expenses: any[];
   employee_wage: number;
+  payrollPayments?: any[];
 }) {
   const expected_sales = sumMoney(readings, (reading: any) => reading.amount_sold);
   const total_cash = roundMoney(collections ? Number(collections.cash_amount || 0) : 0);
@@ -82,6 +84,7 @@ export function computeShiftAccountability({
   const total_credits = sumMoney(shiftCredits, (credit: any) => credit.amount);
   const total_invoice_consumption = sumMoney(invoiceConsumption, (entry: any) => entry.retail_amount);
   const total_expenses = sumMoney(expenses, (expense: any) => expense.amount);
+  const total_payroll_payments = sumMoney(payrollPayments, (payment: any) => payment.amount);
   const normalized_wage = roundMoney(Number(employee_wage || 0));
   const { credit_receipts_cash, credit_receipts_mpesa, total_credit_receipts } = splitCreditReceipts(creditReceipts);
 
@@ -92,12 +95,22 @@ export function computeShiftAccountability({
   const drawer_mpesa = total_mpesa;
   const drawer_total = roundMoney(drawer_cash + drawer_mpesa);
   const sales_accounted = roundMoney(
-    sales_collections + total_credits + total_invoice_consumption + total_expenses + normalized_wage,
+    sales_collections
+      + total_credits
+      + total_invoice_consumption
+      + total_expenses
+      + normalized_wage
+      + total_payroll_payments,
   );
   const sales_variance = roundMoney(sales_accounted - expected_sales);
   const expected_shift_total = roundMoney(expected_sales + total_credit_receipts);
   const total_accounted = roundMoney(
-    drawer_total + total_credits + total_invoice_consumption + total_expenses + normalized_wage,
+    drawer_total
+      + total_credits
+      + total_invoice_consumption
+      + total_expenses
+      + normalized_wage
+      + total_payroll_payments,
   );
   const variance = roundMoney(total_accounted - expected_shift_total);
 
@@ -121,6 +134,7 @@ export function computeShiftAccountability({
     total_credits,
     total_invoice_consumption,
     total_expenses,
+    total_payroll_payments,
     employee_wage: normalized_wage,
     sales_accounted,
     sales_variance,
@@ -242,6 +256,9 @@ router.get('/:id', async (req, res) => {
     const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
     const shiftCredits = await db('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
+    const payrollPayments = await db('payroll_payments')
+      .where({ shift_id: shift.id, status: 'posted' })
+      .orderBy('id');
 
     // Phase 3B: invoice-mode consumption (litre ledger, retail-priced for shift balance)
     const invoiceConsumption = await db('invoice_consumption')
@@ -281,6 +298,7 @@ router.get('/:id', async (req, res) => {
       creditReceipts,
       expenses,
       employee_wage,
+      payrollPayments,
     });
 
     res.json({
@@ -294,6 +312,7 @@ router.get('/:id', async (req, res) => {
         invoice_consumption: invoiceConsumption,
         credit_receipts: creditReceipts,
         wage_deduction: wageDeduction || null,
+        payroll_payments: payrollPayments,
         compensation_plan: compensationPlan,
         earnings,
         earning_preview: earningPreview,
@@ -1311,6 +1330,8 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
       const creditReceipts = await trx('credit_payments')
         .where({ shift_id: shift.id })
         .whereNull('deleted_at');
+      const payrollPayments = await trx('payroll_payments')
+        .where({ shift_id: shift.id, status: 'posted' });
       // Phase 3B: invoice-mode consumption — retail_amount enters the balance math
       // exactly like a credit. Agreed-price delta is reconciled at invoice time.
       const invoiceConsumption = await trx('invoice_consumption')
@@ -1326,6 +1347,7 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
         creditReceipts,
         expenses,
         employee_wage,
+        payrollPayments,
       });
 
       // Handle deficit and deductions

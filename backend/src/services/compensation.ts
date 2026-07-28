@@ -28,6 +28,7 @@ export interface CompensationPlan {
   employee_id: number;
   name: string;
   pay_schedule: PaySchedule;
+  proration_method?: 'calendar_days' | 'none';
   effective_from: string;
   effective_to?: string | null;
   status: string;

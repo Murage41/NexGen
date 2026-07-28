@@ -76,9 +76,49 @@ const compensationComponentSchema = z.object({
 export const createCompensationPlanSchema = z.object({
   name: z.string().trim().min(1, 'name is required').max(120),
   pay_schedule: z.enum(['daily', 'weekly', 'biweekly', 'monthly']),
+  proration_method: z.enum(['calendar_days', 'none']).default('calendar_days'),
   effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'effective_from must be YYYY-MM-DD'),
   notes: z.string().trim().max(1000).nullish().optional(),
   components: z.array(compensationComponentSchema).min(1).max(8),
+});
+
+// --- Payroll ---
+export const calculatePayrollRunSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  pay_schedule: z.enum(['daily', 'weekly', 'biweekly', 'monthly']),
+  period_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  period_end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+}).refine((data) => data.period_start <= data.period_end, {
+  path: ['period_end'],
+  message: 'period_end must be on or after period_start',
+});
+
+export const createPayrollDeductionSchema = z.object({
+  deduction_type: z.enum(['staff_debt', 'statutory', 'advance', 'manual']),
+  amount: z.number().finite().positive('amount must be greater than zero'),
+  authorization_reference: z.string().trim().max(200).nullish().optional(),
+  notes: z.string().trim().max(1000).nullish().optional(),
+}).superRefine((data, ctx) => {
+  if (data.deduction_type === 'staff_debt' && !data.authorization_reference) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['authorization_reference'],
+      message: 'authorization reference is required for a staff debt deduction',
+    });
+  }
+});
+
+export const createPayrollPaymentSchema = z.object({
+  amount: z.number().finite().positive('amount must be greater than zero'),
+  payment_method: z.enum(['cash', 'mpesa', 'bank_transfer', 'cheque']),
+  payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  shift_id: z.number().int().positive().nullish().optional(),
+  reference: z.string().trim().max(200).nullish().optional(),
+  notes: z.string().trim().max(1000).nullish().optional(),
+});
+
+export const payrollReasonSchema = z.object({
+  reason: z.string().trim().min(3, 'reason is required').max(1000),
 });
 
 // --- Fuel Deliveries ---

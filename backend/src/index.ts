@@ -26,6 +26,7 @@ import mpesaConfigRouter from './routes/mpesaConfig';
 import suppliersRouter from './routes/suppliers';
 import supplierInvoicesRouter from './routes/supplierInvoices';
 import supplierPaymentsRouter from './routes/supplierPayments';
+import payrollRouter from './routes/payroll';
 
 const app = express();
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -221,6 +222,7 @@ app.use('/api/mpesa-config', mpesaConfigRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/supplier-invoices', supplierInvoicesRouter);
 app.use('/api/supplier-payments', supplierPaymentsRouter);
+app.use('/api/payroll', payrollRouter);
 
 const mobileDist = path.join(__dirname, '../../mobile/dist');
 app.use('/mobile', express.static(mobileDist));

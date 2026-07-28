@@ -23,6 +23,15 @@ const notPaidFromShift = computeShiftAccountability({
 });
 assert.equal(notPaidFromShift.variance, -100);
 
+const payrollPaidFromDrawer = computeShiftAccountability({
+  ...baseInput,
+  collections: { cash_amount: 850, mpesa_amount: 0 },
+  employee_wage: 100,
+  payrollPayments: [{ amount: 50 }],
+});
+assert.equal(payrollPaidFromDrawer.variance, 0);
+assert.equal(payrollPaidFromDrawer.total_payroll_payments, 50);
+
 assert.equal(createEmployeeSchema.safeParse({
   name: 'Attendant',
   daily_wage: -1,

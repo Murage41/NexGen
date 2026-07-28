@@ -84,7 +84,7 @@ router.get('/', async (_req, res) => {
     if (todayLitresDiesel > 0) avgCosts['diesel'] = (todayFifoCosts['diesel'] || 0) / todayLitresDiesel;
 
     // Today's wages — use stored wage_paid for closed shifts, daily_wage preview for open
-    let todayWages = 0;
+    let todayLegacyWagesPaid = 0;
     if (shiftIds.length > 0) {
       const wageShifts = await db('shifts')
         .join('employees', 'shifts.employee_id', 'employees.id')
@@ -92,11 +92,30 @@ router.get('/', async (_req, res) => {
         .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
 
       for (const s of wageShifts) {
-        todayWages += s.status === 'closed'
-          ? (Number(s.wage_paid) || 0)
-          : (Number(s.daily_wage) || 0);
+        todayLegacyWagesPaid += s.status === 'closed' ? (Number(s.wage_paid) || 0) : 0;
       }
     }
+    const todayEarningsRow = await db('employee_earnings')
+      .whereNull('reversed_at')
+      .whereIn('status', ['approved', 'posted'])
+      .where({ earning_date: today })
+      .sum('gross_amount as total')
+      .first();
+    const todayWages = Number(todayEarningsRow?.total || 0);
+    const todayPayrollPaidRow = await db('payroll_payments')
+      .where({ payment_date: today, status: 'posted' })
+      .sum('amount as total')
+      .first();
+    const todayPayrollPaid = Number(todayPayrollPaidRow?.total || 0);
+    const todayPayrollPaidFromShiftsRow = shiftIds.length > 0
+      ? await db('payroll_payments')
+        .whereIn('shift_id', shiftIds)
+        .where({ status: 'posted' })
+        .sum('amount as total')
+        .first()
+      : null;
+    const todayPayrollPaidFromShifts = Number(todayPayrollPaidFromShiftsRow?.total || 0);
+    const todayWagesPaid = todayLegacyWagesPaid + todayPayrollPaid;
 
     // Today's expenses (shift + general)
     let todayShiftExpenses = 0;
@@ -129,7 +148,8 @@ router.get('/', async (_req, res) => {
       todayCreditsOnAccount +
       todayInvoiceRetail +
       todayShiftExpenses +
-      todayWages;
+      todayLegacyWagesPaid +
+      todayPayrollPaidFromShifts;
     const todayVariance = todayTotalAccounted - todayExpectedTotal;
 
     // ── Month-to-date figures ──
@@ -152,18 +172,29 @@ router.get('/', async (_req, res) => {
     }
 
     // MTD wages — use stored wage_paid for closed shifts, daily_wage preview for open
-    let mtdWages = 0;
+    let mtdLegacyWagesPaid = 0;
     if (mtdShiftIds.length > 0) {
       const mtdWageShifts = await db('shifts')
         .join('employees', 'shifts.employee_id', 'employees.id')
         .whereIn('shifts.id', mtdShiftIds)
         .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
       for (const s of mtdWageShifts) {
-        mtdWages += s.status === 'closed'
-          ? (Number(s.wage_paid) || 0)
-          : (Number(s.daily_wage) || 0);
+        mtdLegacyWagesPaid += s.status === 'closed' ? (Number(s.wage_paid) || 0) : 0;
       }
     }
+    const mtdEarningsRow = await db('employee_earnings')
+      .whereNull('reversed_at')
+      .whereIn('status', ['approved', 'posted'])
+      .whereBetween('earning_date', [monthStart, today])
+      .sum('gross_amount as total')
+      .first();
+    const mtdWages = Number(mtdEarningsRow?.total || 0);
+    const mtdPayrollPaidRow = await db('payroll_payments')
+      .where({ status: 'posted' })
+      .whereBetween('payment_date', [monthStart, today])
+      .sum('amount as total')
+      .first();
+    const mtdWagesPaid = mtdLegacyWagesPaid + Number(mtdPayrollPaidRow?.total || 0);
 
     // MTD expenses
     let mtdShiftExp = 0;
@@ -396,6 +427,7 @@ router.get('/', async (_req, res) => {
         today_net_profit: todayNetProfit,
         today_expenses: todayExpenses,
         today_wages: todayWages,
+        today_wages_paid: todayWagesPaid,
         today_collections: {
           cash: todayCash,
           mpesa: todayMpesa,
@@ -416,6 +448,8 @@ router.get('/', async (_req, res) => {
         mtd_sales: mtdSales,
         mtd_litres: mtdLitres,
         mtd_expenses: mtdExpenses,
+        mtd_wages: mtdWages,
+        mtd_wages_paid: mtdWagesPaid,
         mtd_net_profit: mtdNetProfit,
         mtd_mpesa_fees: mtdMpesaFees,
         mtd_mpesa_gross: mtdMpesaGross,

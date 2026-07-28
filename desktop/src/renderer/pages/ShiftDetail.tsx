@@ -397,6 +397,7 @@ export default function ShiftDetail() {
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
   const totalInvoiceConsumption = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
   const totalExpenses = expenses.reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
+  const totalPayrollPayments = Number(shift.total_payroll_payments || 0);
   const employeeWage = Number(shift.employee_wage || 0);
   const enteredWagePaid = Math.max(0, Number(wagePaid) || 0);
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
@@ -413,8 +414,18 @@ export default function ShiftDetail() {
   const drawerMpesa = totalMpesa;
   const drawerTotal = drawerCash + drawerMpesa;
   const expectedShiftTotal = expectedSales + totalCreditReceipts;
-  const salesAccounted = salesCollections + totalCredits + totalInvoiceConsumption + totalExpenses + enteredWagePaid;
-  const totalAccounted = drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + enteredWagePaid;
+  const salesAccounted = salesCollections
+    + totalCredits
+    + totalInvoiceConsumption
+    + totalExpenses
+    + enteredWagePaid
+    + totalPayrollPayments;
+  const totalAccounted = drawerTotal
+    + totalCredits
+    + totalInvoiceConsumption
+    + totalExpenses
+    + enteredWagePaid
+    + totalPayrollPayments;
   const variance = totalAccounted - expectedShiftTotal;
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -520,6 +531,12 @@ export default function ShiftDetail() {
             <span className="text-gray-500">Wage ({shift.employee_name})</span>
             <span className="font-medium">{formatKES(employeeWage)}</span>
           </div>
+          {totalPayrollPayments > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Payroll paid from drawer</span>
+              <span className="font-medium">{formatKES(totalPayrollPayments)}</span>
+            </div>
+          )}
         </div>
         <div className="border-t pt-2 flex justify-between items-center">
           <div className="flex justify-between flex-1 mr-8">

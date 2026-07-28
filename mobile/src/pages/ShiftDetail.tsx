@@ -146,6 +146,7 @@ export default function ShiftDetail() {
   const totalCredits = shift.total_credits || 0;
   const totalInvoiceConsumption = shift.total_invoice_consumption || 0;
   const totalExpenses = shift.total_expenses || 0;
+  const totalPayrollPayments = Number(shift.total_payroll_payments || 0);
   const employeeWage = Number(shift.employee_wage || 0);
   const enteredWagePaid = Math.max(0, Number(wagePaid) || 0);
 
@@ -170,10 +171,16 @@ export default function ShiftDetail() {
   const drawerTotal = Number(shift.drawer_total ?? (drawerCash + drawerMpesa));
   const expectedShiftTotal = Number(shift.expected_shift_total ?? (expected + totalCreditReceipts));
   const totalAccounted = Number(
-    shift.total_accounted ?? (drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage),
+    shift.total_accounted
+      ?? (drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage + totalPayrollPayments),
   );
   const variance = Number(shift.variance ?? (totalAccounted - expectedShiftTotal));
-  const closeTotalAccounted = drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + enteredWagePaid;
+  const closeTotalAccounted = drawerTotal
+    + totalCredits
+    + totalInvoiceConsumption
+    + totalExpenses
+    + enteredWagePaid
+    + totalPayrollPayments;
   const closeVariance = closeTotalAccounted - expectedShiftTotal;
 
   return (
@@ -272,6 +279,12 @@ export default function ShiftDetail() {
             <span className="text-gray-400">Wage</span>
             <span>{fmt(employeeWage)}</span>
           </div>
+          {totalPayrollPayments > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-400">Payroll from drawer</span>
+              <span>{fmt(totalPayrollPayments)}</span>
+            </div>
+          )}
         </div>
 
         <div className="border-t border-gray-200 pt-1 mt-1 flex justify-between text-sm">

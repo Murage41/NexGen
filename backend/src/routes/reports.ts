@@ -14,6 +14,25 @@ function sumMoney(rows: any[], selector: (row: any) => any): number {
   return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
 }
 
+async function getPayrollExpense(from: string, to: string): Promise<number> {
+  const row = await db('employee_earnings')
+    .whereNull('reversed_at')
+    .whereIn('status', ['approved', 'posted'])
+    .whereBetween('earning_date', [from, to])
+    .sum('gross_amount as total')
+    .first();
+  return roundMoney(Number(row?.total || 0));
+}
+
+async function getPayrollCashPaid(from: string, to: string): Promise<number> {
+  const row = await db('payroll_payments')
+    .where({ status: 'posted' })
+    .whereBetween('payment_date', [from, to])
+    .sum('amount as total')
+    .first();
+  return roundMoney(Number(row?.total || 0));
+}
+
 // ─── Daily Report ─────────────────────────────────────────────────────────────
 router.get('/daily', async (req, res) => {
   try {
@@ -71,7 +90,10 @@ router.get('/daily', async (req, res) => {
       const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
       const actualWagePaid = shift.status === 'closed'
         ? (Number(shift.wage_paid) || 0)
-        : (Number(shift.daily_wage) || 0);
+        : 0;
+      const shiftPayrollPayments = await db('payroll_payments')
+        .where({ shift_id: shift.id, status: 'posted' });
+      const shiftPayrollPaid = sumMoney(shiftPayrollPayments, (payment: any) => payment.amount);
 
       const shiftSales = readings.reduce((s: number, r: any) => s + (Number(r.amount_sold) || 0), 0);
       const shiftExpensesTotal = expenses.reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
@@ -108,7 +130,7 @@ router.get('/daily', async (req, res) => {
       const expectedMpesa = roundMoney(mpesa);
       const expectedTotalReceived = roundMoney(expectedCash + expectedMpesa);
       const shiftAccounted = roundMoney(
-        cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid,
+        cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid + shiftPayrollPaid,
       );
 
       const shiftInvoicePetrolLitres = shiftInvoiceConsumption
@@ -164,6 +186,8 @@ router.get('/daily', async (req, res) => {
         standard_wage: Number(shift.daily_wage),
         wage_deduction: wageDeduction ? Number(wageDeduction.deduction_amount) : 0,
         actual_wage_paid: actualWagePaid,
+        payroll_payments: shiftPayrollPayments,
+        payroll_paid_from_shift: shiftPayrollPaid,
         shift_accounted: shiftAccounted,
         // Debt receipts are already inside cash/M-Pesa received totals;
         // keep them separate only so old debt is not treated as new pump sales.
@@ -302,9 +326,12 @@ router.get('/daily', async (req, res) => {
       });
     }
 
+    const payrollCashPaid = await getPayrollCashPaid(date, date);
+    const payrollExpense = await getPayrollExpense(date, date);
+    totalWagesPaid = roundMoney(totalWagesPaid + payrollCashPaid);
     const totalExpenses = totalShiftExpenses + totalDayExpenses;
     const grossProfit = totalSales - cogs;
-    const netProfit = grossProfit - totalWagesPaid - totalExpenses;
+    const netProfit = grossProfit - payrollExpense - totalExpenses;
 
     res.json({
       success: true,
@@ -339,6 +366,8 @@ router.get('/daily', async (req, res) => {
         collection_rate: collectionRate,
         // Costs
         total_wages_paid: totalWagesPaid,
+        total_payroll_expense: payrollExpense,
+        total_payroll_cash_paid: payrollCashPaid,
         total_shift_expenses: totalShiftExpenses,
         total_day_expenses: totalDayExpenses,
         total_expenses: totalExpenses,
@@ -432,7 +461,8 @@ router.get('/monthly', async (req, res) => {
       .sum('credits_amount as total_credits')
       .first();
 
-    // Wages: use stored wage_paid for closed shifts, daily_wage for open
+    // Legacy shift wages are cash outflows. Payroll expense comes from the
+    // immutable earnings ledger and may be paid on a different date.
     const allShifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
       .where('shifts.shift_date', '>=', startDate)
@@ -441,9 +471,7 @@ router.get('/monthly', async (req, res) => {
 
     let totalWagesPaid = 0;
     for (const shift of allShifts) {
-      totalWagesPaid += shift.status === 'closed'
-        ? (Number(shift.wage_paid) || 0)
-        : (Number(shift.daily_wage) || 0);
+      totalWagesPaid += shift.status === 'closed' ? (Number(shift.wage_paid) || 0) : 0;
     }
 
     // General expenses
@@ -584,7 +612,21 @@ router.get('/monthly', async (req, res) => {
       const shiftExpResult = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at').sum('amount as total').first();
       dailyMap[dayKey].expenses += Number((shiftExpResult as any)?.total) || 0;
 
-      dailyMap[dayKey].wages += Number(shift.wage_paid) || 0;
+    }
+
+    const dailyEarnings = await db('employee_earnings')
+      .whereNull('reversed_at')
+      .whereIn('status', ['approved', 'posted'])
+      .whereBetween('earning_date', [startDate, endDate])
+      .select('earning_date')
+      .sum('gross_amount as total')
+      .groupBy('earning_date');
+    for (const earning of dailyEarnings) {
+      const key = String(earning.earning_date).slice(0, 10);
+      if (!dailyMap[key]) {
+        dailyMap[key] = { sales: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
+      }
+      dailyMap[key].wages += Number(earning.total || 0);
     }
 
     // Add general expenses into daily map
@@ -627,9 +669,12 @@ router.get('/monthly', async (req, res) => {
         };
       });
 
+    const payrollExpense = await getPayrollExpense(startDate, endDate);
+    const payrollCashPaid = await getPayrollCashPaid(startDate, endDate);
+    totalWagesPaid = roundMoney(totalWagesPaid + payrollCashPaid);
     const totalExpenses = (Number((generalExpenses as any)?.total) || 0) + (Number((shiftExpenses as any)?.total) || 0);
     const grossProfit = totalSales - cogs;
-    const netProfit = grossProfit - totalWagesPaid - totalExpenses;
+    const netProfit = grossProfit - payrollExpense - totalExpenses;
 
     res.json({
       success: true,
@@ -646,6 +691,8 @@ router.get('/monthly', async (req, res) => {
         total_credits: Number((collections as any)?.total_credits) || 0,
         // Costs
         total_wages_paid: totalWagesPaid,
+        total_payroll_expense: payrollExpense,
+        total_payroll_cash_paid: payrollCashPaid,
         total_expenses: totalExpenses,
         expense_categories: expenseCategories,
         // COGS breakdown
@@ -859,7 +906,7 @@ router.get('/cash-flow', async (req, res) => {
       .first();
     const totalFuelPurchases = Number((fuelPurchases as any)?.total) || 0;
 
-    // Wages paid: use stored wage_paid for closed shifts, daily_wage for open
+    // Cash flow records only money actually paid, never open-shift wage previews.
     const periodShifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
       .where('shifts.shift_date', '>=', from)
@@ -868,10 +915,9 @@ router.get('/cash-flow', async (req, res) => {
 
     let totalWagesPaid = 0;
     for (const shift of periodShifts) {
-      totalWagesPaid += shift.status === 'closed'
-        ? (Number(shift.wage_paid) || 0)
-        : (Number(shift.daily_wage) || 0);
+      totalWagesPaid += shift.status === 'closed' ? (Number(shift.wage_paid) || 0) : 0;
     }
+    totalWagesPaid = roundMoney(totalWagesPaid + await getPayrollCashPaid(from, to));
 
     // Shift expenses
     const shiftExpResult = await db('shift_expenses')
