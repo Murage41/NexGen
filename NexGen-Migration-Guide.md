@@ -277,6 +277,7 @@ local code changes that need review first.
 | Desktop app doesn't open | Check the BACKEND output — it must say "running on port 3001" first |
 | Phone can't reach the app | Confirm the station PC IP/port, Wi-Fi network, firewall, or tunnel status |
 | Database is empty after migration | Confirm file is at `E:\NexGen\backend\data\nexgen.db` (not just `E:\NexGen\nexgen.db`) |
+| Migration `032` reports `DROP TABLE "shifts"` / foreign-key failure | Keep NexGen stopped, keep the verified backup, pull the latest `main`, then rerun `npm run migrate`. Do not delete or manually edit the live database. |
 | `concurrently` not found | Run `npm install` again from `E:\NexGen` |
 | PowerShell blocks `npm.ps1` | Use Command Prompt, or run `npm.cmd` instead of `npm` |
 | Port 3001 already in use | Check Task Manager for any leftover node.exe processes and end them |

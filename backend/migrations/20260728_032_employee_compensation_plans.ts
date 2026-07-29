@@ -51,10 +51,12 @@ export async function up(knex: Knex): Promise<void> {
   }
 
   if (!(await knex.schema.hasColumn('shifts', 'compensation_plan_id'))) {
-    await knex.schema.alterTable('shifts', (table) => {
-      table.integer('compensation_plan_id').unsigned().nullable()
-        .references('id').inTable('employee_compensation_plans').onDelete('SET NULL');
-    });
+    // A referenced, populated SQLite table must not be rebuilt just to add this
+    // nullable compatibility column. Knex's rebuild path can violate live
+    // shift child-table foreign keys while dropping the original table.
+    await knex.raw(
+      'ALTER TABLE "shifts" ADD COLUMN "compensation_plan_id" INTEGER NULL',
+    );
   }
 
   const employees = await knex('employees').select('id', 'daily_wage');
@@ -109,9 +111,7 @@ export async function down(knex: Knex): Promise<void> {
   await knex.raw('DROP INDEX IF EXISTS idx_comp_plans_employee_dates');
 
   if (await knex.schema.hasColumn('shifts', 'compensation_plan_id')) {
-    await knex.schema.alterTable('shifts', (table) => {
-      table.dropColumn('compensation_plan_id');
-    });
+    await knex.raw('ALTER TABLE "shifts" DROP COLUMN "compensation_plan_id"');
   }
 
   await knex.schema.dropTableIfExists('employee_compensation_components');

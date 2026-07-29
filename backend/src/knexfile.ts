@@ -1,11 +1,13 @@
 import type { Knex } from 'knex';
 import path from 'path';
-import { getDataDirectory } from './utils/dataDirectory';
+import { ensureDataDirectory } from './utils/dataDirectory';
+
+const dataDirectory = ensureDataDirectory();
 
 const config: Knex.Config = {
   client: 'sqlite3',
   connection: {
-    filename: path.join(getDataDirectory(), 'nexgen.db'),
+    filename: path.join(dataDirectory, 'nexgen.db'),
   },
   pool: {
     afterCreate: (conn: any, done: (err: Error | null, conn?: any) => void) => {

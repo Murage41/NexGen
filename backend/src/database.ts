@@ -1,13 +1,9 @@
 import knex from 'knex';
 import config from './knexfile';
-import fs from 'fs';
-import { getDataDirectory } from './utils/dataDirectory';
+import { ensureDataDirectory } from './utils/dataDirectory';
 
 // Ensure data directory exists
-export const dataDir = getDataDirectory();
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
+export const dataDir = ensureDataDirectory();
 
 const db = knex(config);
 

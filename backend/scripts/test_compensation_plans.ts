@@ -34,6 +34,11 @@ async function main() {
       table.timestamp('start_time');
       table.string('status');
     });
+    await db.schema.createTable('shift_readings', (table) => {
+      table.increments('id').primary();
+      table.integer('shift_id').notNullable().references('id').inTable('shifts');
+      table.decimal('litres_sold', 14, 3).notNullable().defaultTo(0);
+    });
 
     const [employeeId] = await db('employees').insert({
       name: 'Legacy Employee',
@@ -45,8 +50,18 @@ async function main() {
       start_time: '2026-07-01 08:00:00',
       status: 'closed',
     });
+    const [readingId] = await db('shift_readings').insert({
+      shift_id: shiftId,
+      litres_sold: 125.5,
+    });
 
+    const migrationQueries: string[] = [];
+    const captureQuery = (query: { sql?: string }) => {
+      migrationQueries.push(String(query.sql || ''));
+    };
+    db.on('query', captureQuery);
     await migrateCompensation(db);
+    db.off('query', captureQuery);
 
     const legacyPlan = await getCompensationPlan(employeeId, '2026-07-01', db);
     assert.ok(legacyPlan);
@@ -58,6 +73,24 @@ async function main() {
 
     const migratedShift = await db('shifts').where({ id: shiftId }).first();
     assert.equal(Number(migratedShift.compensation_plan_id), legacyPlan.id);
+    const preservedReading = await db('shift_readings').where({ id: readingId }).first();
+    assert.equal(Number(preservedReading.shift_id), shiftId);
+    assert.equal(Number(preservedReading.litres_sold), 125.5);
+    assert.equal(
+      migrationQueries.some((sql) => /drop\s+table\s+["`]?shifts/i.test(sql)),
+      false,
+    );
+    assert.deepEqual(await db.raw('PRAGMA foreign_key_check'), []);
+
+    await migrateCompensation(db);
+    assert.equal(
+      Number((await db('employee_compensation_plans').count('* as count').first())?.count || 0),
+      1,
+    );
+    assert.equal(
+      Number((await db('employee_compensation_components').count('* as count').first())?.count || 0),
+      1,
+    );
 
     const validHybrid = createCompensationPlanSchema.parse({
       name: 'Monthly plus volume',
