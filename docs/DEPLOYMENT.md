@@ -147,53 +147,106 @@ If `DESKTOP_KEY` is set, build the desktop app with the same value as
 
 ## Station Update From GitHub
 
-Use this when updating the station PC from the latest committed `main`.
+Use this when updating the station PC from the latest committed `main`. The
+examples below use the station path `E:\NexGen`. Change every path consistently
+if a different PC uses another drive.
 
-Run these commands in PowerShell while signed in as the Windows user that
-normally runs NexGen:
+First identify the shell from its prompt:
 
-```powershell
-cd D:\NexGen
+```text
+E:\NexGen>     Command Prompt
+PS E:\NexGen>  PowerShell
+```
+
+Do not enter PowerShell commands such as `$backup`, `New-Item`, `Copy-Item`, or
+`Test-Path` at a Command Prompt.
+
+### Command Prompt update
+
+Run this block at a normal Command Prompt. These are interactive commands, so
+the `for` variable uses one percent sign (`%I`).
+
+```cmd
+cd /d E:\NexGen
 
 git branch --show-current
 git status --short
 git rev-parse --short HEAD
-```
 
-The branch must be `main`. If `git status --short` lists files, identify them
-before continuing. Do not overwrite station-side code changes.
-
-Stop NexGen and back up the complete SQLite data directory:
-
-```powershell
 npm run dev:stop
+dir E:\NexGen\backend\data\nexgen.db
 
-$backup = "D:\NexGen-Backups\before-main-update-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-New-Item -ItemType Directory -Force -Path $backup
-Copy-Item -LiteralPath "D:\NexGen\backend\data" -Destination (Join-Path $backup "data") -Recurse -Force
-Test-Path (Join-Path $backup "data\nexgen.db")
+for /f %I in ('powershell.exe -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "STAMP=%I"
+set "BACKUP=E:\NexGen-Backups\before-main-update-%STAMP%"
+mkdir "%BACKUP%"
+xcopy "E:\NexGen\backend\data" "%BACKUP%\data\" /E /I /H /K /Y
+
+if exist "%BACKUP%\data\nexgen.db" (echo BACKUP VERIFIED: "%BACKUP%\data\nexgen.db") else (echo BACKUP FAILED & exit /b 1)
 ```
 
-`Test-Path` must return `True`. Then pull, install, build the phone interface,
-and migrate the database:
+Do not continue unless `dir` found the live database and the final command
+prints `BACKUP VERIFIED`. Then run:
 
-```powershell
-cd D:\NexGen
+```cmd
+cd /d E:\NexGen
 git pull --ff-only origin main
 
 npm install
 npm run build:mobile
 
-cd backend
+cd /d E:\NexGen\backend
 npm run migrate
-cd ..
 
+cd /d E:\NexGen
 npm run startup:install
 npm run station:bg
-Start-Sleep -Seconds 15
+timeout /t 15 /nobreak
 npm run dev:status
+curl.exe http://127.0.0.1:3001/api/health
+```
+
+### PowerShell update
+
+Run this block only when the prompt starts with `PS`. `npm.cmd` avoids the
+PowerShell `npm.ps1` execution-policy restriction.
+
+```powershell
+Set-Location E:\NexGen
+
+git branch --show-current
+git status --short
+git rev-parse --short HEAD
+
+npm.cmd run dev:stop
+Get-Item -LiteralPath "E:\NexGen\backend\data\nexgen.db"
+
+$backup = "E:\NexGen-Backups\before-main-update-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+New-Item -ItemType Directory -Force -Path $backup
+Copy-Item -LiteralPath "E:\NexGen\backend\data" -Destination (Join-Path $backup "data") -Recurse -Force
+
+if (-not (Test-Path (Join-Path $backup "data\nexgen.db"))) {
+  throw "BACKUP FAILED: nexgen.db is missing"
+}
+Write-Host "BACKUP VERIFIED: $(Join-Path $backup 'data\nexgen.db')"
+
+git pull --ff-only origin main
+
+npm.cmd install
+npm.cmd run build:mobile
+
+Set-Location E:\NexGen\backend
+npm.cmd run migrate
+
+Set-Location E:\NexGen
+npm.cmd run startup:install
+npm.cmd run station:bg
+Start-Sleep -Seconds 15
+npm.cmd run dev:status
 Invoke-RestMethod http://127.0.0.1:3001/api/health
 ```
+
+The branch must be `main`. If `git status --short` lists files, identify them
+before pulling. Do not overwrite station-side code changes.
 
 `git pull --ff-only origin main` is the production-safe form. It downloads only
 the commits that the station PC does not already have, then advances `main`
