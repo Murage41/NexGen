@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import db from '../database';
 import { validate } from '../middleware/validate';
 import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema } from '../schemas';
@@ -982,6 +983,360 @@ async function getRetailPriceAsOf(
   return row ? Number(row.price_per_litre) : null;
 }
 
+export async function buildConsumptionCorrectionPreview(
+  trx: any,
+  shiftId: number,
+  entryId: number,
+  proposed: { litres: number; pump_id?: number | null; tank_id?: number | null },
+) {
+  const shift = await trx('shifts').where({ id: shiftId }).first();
+  if (!shift) throw Object.assign(new Error('Shift not found'), { http: 404 });
+  if (shift.status !== 'closed') {
+    throw Object.assign(
+      new Error('Use the normal edit action while the shift is open.'),
+      { http: 400 },
+    );
+  }
+
+  const entry = await trx('invoice_consumption')
+    .where({ id: entryId, shift_id: shiftId })
+    .whereNull('deleted_at')
+    .first();
+  if (!entry) throw Object.assign(new Error('Consumption entry not found'), { http: 404 });
+  if (entry.invoice_line_id) {
+    throw Object.assign(
+      new Error('Reserved or invoiced consumption must be corrected through the invoice document workflow.'),
+      { http: 400 },
+    );
+  }
+
+  const litres = Number(proposed.litres);
+  if (!Number.isFinite(litres) || litres <= 0) {
+    throw Object.assign(new Error('litres must be a positive number'), { http: 400 });
+  }
+
+  const source = await resolveConsumptionSource(trx, {
+    fuelType: entry.fuel_type,
+    pumpId: proposed.pump_id !== undefined
+      ? (proposed.pump_id ? Number(proposed.pump_id) : null)
+      : (entry.pump_id ? Number(entry.pump_id) : null),
+    tankId: proposed.tank_id !== undefined
+      ? (proposed.tank_id ? Number(proposed.tank_id) : null)
+      : (entry.tank_id ? Number(entry.tank_id) : null),
+  });
+  if (source.source_required) {
+    throw Object.assign(
+      new Error('Select the pump/nozzle source before correcting a closed-shift entry.'),
+      { http: 400 },
+    );
+  }
+
+  const readings = await trx('pump_readings')
+    .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+    .where('pump_readings.shift_id', shiftId)
+    .select('pump_readings.*', 'pumps.fuel_type');
+  const collections = await trx('shift_collections').where({ shift_id: shiftId }).first();
+  const expenses = await trx('shift_expenses').where({ shift_id: shiftId }).whereNull('deleted_at');
+  const shiftCredits = await trx('shift_credits').where({ shift_id: shiftId }).whereNull('deleted_at');
+  const creditReceipts = await trx('credit_payments')
+    .where({ shift_id: shiftId })
+    .whereNull('deleted_at');
+  const payrollPayments = await trx('payroll_payments')
+    .where({ shift_id: shiftId, status: 'posted' })
+    .where((query: any) => {
+      query.whereNull('reference').orWhere('reference', 'not like', 'SHIFT-WAGE:%');
+    });
+  const activeConsumption = await trx('invoice_consumption')
+    .where({ shift_id: shiftId })
+    .whereNull('deleted_at')
+    .orderBy('id');
+
+  const replacement = {
+    account_id: entry.account_id,
+    shift_id: shiftId,
+    pump_id: source.pump_id,
+    tank_id: source.tank_id,
+    fuel_type: entry.fuel_type,
+    litres,
+    retail_price_at_time: Number(entry.retail_price_at_time),
+    retail_amount: roundMoney(litres * Number(entry.retail_price_at_time)),
+  };
+  const correctedConsumption = activeConsumption.map((row: any) => (
+    Number(row.id) === entryId ? replacement : row
+  ));
+  const litre_validation = validateInvoiceConsumptionAgainstReadings(
+    readings,
+    correctedConsumption,
+  );
+
+  const common = {
+    readings,
+    collections,
+    shiftCredits,
+    creditReceipts,
+    expenses,
+    employee_wage: Number(shift.wage_paid || 0),
+    payrollPayments,
+  };
+  const before = computeShiftAccountability({
+    ...common,
+    invoiceConsumption: activeConsumption,
+  });
+  const after = computeShiftAccountability({
+    ...common,
+    invoiceConsumption: correctedConsumption,
+  });
+  const deficitBefore = Math.max(0, roundMoney(-before.variance));
+  const deficitAfter = Math.max(0, roundMoney(-after.variance));
+  const deficitChange = roundMoney(deficitAfter - deficitBefore);
+  const amountDelta = roundMoney(replacement.retail_amount - Number(entry.retail_amount));
+
+  const revision = activeConsumption.map((row: any) => ({
+    id: Number(row.id),
+    updated_at: row.updated_at || row.created_at || null,
+    litres: Number(row.litres),
+    retail_amount: Number(row.retail_amount),
+    pump_id: row.pump_id ? Number(row.pump_id) : null,
+    deleted_at: row.deleted_at || null,
+  }));
+  const confirmationToken = crypto
+    .createHash('sha256')
+    .update(JSON.stringify({
+      shift_id: shiftId,
+      entry_id: entryId,
+      replacement,
+      variance_before: before.variance,
+      variance_after: after.variance,
+      revision,
+    }))
+    .digest('hex');
+
+  return {
+    shift,
+    entry,
+    replacement,
+    before,
+    after,
+    amount_delta: amountDelta,
+    deficit_before: deficitBefore,
+    deficit_after: deficitAfter,
+    deficit_change: deficitChange,
+    litre_validation,
+    confirmation_token: confirmationToken,
+  };
+}
+
+async function recomputeEmployeeDebtAccount(employeeId: number, trx: any) {
+  const row = await trx('staff_debts')
+    .where({ employee_id: employeeId })
+    .where('balance', '>', 0)
+    .sum('balance as total')
+    .first();
+  const balance = roundMoney(Number((row as any)?.total || 0));
+  const account = await trx('credit_accounts')
+    .where({ employee_id: employeeId, type: 'employee' })
+    .first();
+  if (account) {
+    await trx('credit_accounts').where({ id: account.id }).update({ balance });
+  } else if (balance > 0) {
+    const employee = await trx('employees').where({ id: employeeId }).first();
+    await trx('credit_accounts').insert({
+      name: employee?.name || `Employee ${employeeId}`,
+      type: 'employee',
+      employee_id: employeeId,
+      balance,
+    });
+  }
+  return balance;
+}
+
+async function applyCorrectionDebtImpact(
+  trx: any,
+  preview: any,
+  accountabilityAdjustmentId: number,
+  reason: string,
+  actorId: number | null,
+) {
+  const deficitChange = roundMoney(Number(preview.deficit_change || 0));
+  const employeeId = Number(preview.shift.employee_id);
+  const adjustments: any[] = [];
+  let reviewRequired = 0;
+
+  if (deficitChange > 0) {
+    const [debtId] = await trx('staff_debts').insert({
+      employee_id: employeeId,
+      shift_id: preview.shift.id,
+      original_deficit: deficitChange,
+      deducted_from_wage: 0,
+      carried_forward: deficitChange,
+      balance: deficitChange,
+      status: 'outstanding',
+    });
+    const [adjustmentId] = await trx('staff_debt_adjustments').insert({
+      shift_id: preview.shift.id,
+      staff_debt_id: debtId,
+      accountability_adjustment_id: accountabilityAdjustmentId,
+      adjustment_type: 'increase',
+      amount: deficitChange,
+      balance_before: 0,
+      balance_after: deficitChange,
+      status: 'posted',
+      reason,
+      created_by_employee_id: actorId,
+    });
+    adjustments.push(await trx('staff_debt_adjustments').where({ id: adjustmentId }).first());
+  } else if (deficitChange < 0) {
+    let relief = Math.abs(deficitChange);
+    const debts = await trx('staff_debts')
+      .where({ shift_id: preview.shift.id, employee_id: employeeId })
+      .where('balance', '>', 0)
+      .orderBy('created_at', 'asc')
+      .orderBy('id', 'asc');
+    for (const debt of debts) {
+      if (relief <= 0) break;
+      const before = roundMoney(Number(debt.balance || 0));
+      const applied = Math.min(relief, before);
+      const after = roundMoney(before - applied);
+      await trx('staff_debts').where({ id: debt.id }).update({
+        balance: after,
+        status: after === 0 ? 'cleared' : 'outstanding',
+      });
+      const [adjustmentId] = await trx('staff_debt_adjustments').insert({
+        shift_id: preview.shift.id,
+        staff_debt_id: debt.id,
+        accountability_adjustment_id: accountabilityAdjustmentId,
+        adjustment_type: 'decrease',
+        amount: applied,
+        balance_before: before,
+        balance_after: after,
+        status: 'posted',
+        reason,
+        created_by_employee_id: actorId,
+      });
+      adjustments.push(await trx('staff_debt_adjustments').where({ id: adjustmentId }).first());
+      relief = roundMoney(relief - applied);
+    }
+
+    if (relief > 0) {
+      reviewRequired = relief;
+      const [adjustmentId] = await trx('staff_debt_adjustments').insert({
+        shift_id: preview.shift.id,
+        staff_debt_id: null,
+        accountability_adjustment_id: accountabilityAdjustmentId,
+        adjustment_type: 'employee_credit_review',
+        amount: relief,
+        balance_before: null,
+        balance_after: null,
+        status: 'review_required',
+        reason: `${reason} Existing debt or wage deduction was already settled; review employee reimbursement.`,
+        created_by_employee_id: actorId,
+      });
+      adjustments.push(await trx('staff_debt_adjustments').where({ id: adjustmentId }).first());
+    }
+  }
+
+  const employeeDebtBalance = await recomputeEmployeeDebtAccount(employeeId, trx);
+  return {
+    adjustments,
+    employee_debt_balance: employeeDebtBalance,
+    review_required_amount: reviewRequired,
+  };
+}
+
+export async function postConsumptionCorrection(
+  conn: any,
+  input: {
+    shiftId: number;
+    entryId: number;
+    litres: number;
+    pumpId?: number | null;
+    tankId?: number | null;
+    reason: string;
+    confirmationToken: string;
+    actorId?: number | null;
+  },
+) {
+  const reason = String(input.reason || '').trim();
+  if (reason.length < 10) {
+    throw Object.assign(
+      new Error('A correction reason of at least 10 characters is required.'),
+      { http: 400 },
+    );
+  }
+  if (!input.confirmationToken) {
+    throw Object.assign(new Error('Preview this correction before posting it.'), { http: 400 });
+  }
+
+  return conn.transaction(async (trx: any) => {
+    const preview = await buildConsumptionCorrectionPreview(
+      trx,
+      input.shiftId,
+      input.entryId,
+      {
+        litres: input.litres,
+        pump_id: input.pumpId,
+        tank_id: input.tankId,
+      },
+    );
+    if (preview.confirmation_token !== input.confirmationToken) {
+      throw Object.assign(
+        new Error('The shift changed after the preview. Review the correction again before posting.'),
+        { http: 409 },
+      );
+    }
+
+    const actorId = input.actorId && input.actorId > 0 ? Number(input.actorId) : null;
+    const now = new Date().toISOString();
+    const [replacementId] = await trx('invoice_consumption').insert({
+      ...preview.replacement,
+      invoice_line_id: null,
+      correction_of_id: preview.entry.id,
+      entry_status: 'active',
+      correction_reason: reason,
+      created_by_employee_id: actorId,
+      created_at: now,
+    });
+    await trx('invoice_consumption').where({ id: preview.entry.id }).update({
+      entry_status: 'reversed',
+      reversed_at: now,
+      reversed_by_employee_id: actorId,
+      correction_reason: reason,
+      updated_at: now,
+      deleted_at: now,
+    });
+
+    const [accountabilityAdjustmentId] = await trx('shift_accountability_adjustments').insert({
+      shift_id: preview.shift.id,
+      adjustment_type: 'invoice_consumption_correction',
+      reference_id: replacementId,
+      amount_delta: preview.amount_delta,
+      variance_before: preview.before.variance,
+      variance_after: preview.after.variance,
+      reason,
+      created_by_employee_id: actorId,
+    });
+    const debtImpact = await applyCorrectionDebtImpact(
+      trx,
+      preview,
+      accountabilityAdjustmentId,
+      reason,
+      actorId,
+    );
+    const replacement = await trx('invoice_consumption').where({ id: replacementId }).first();
+
+    return {
+      replacement,
+      reversed_entry_id: preview.entry.id,
+      accountability_adjustment_id: accountabilityAdjustmentId,
+      amount_delta: preview.amount_delta,
+      variance_before: preview.before.variance,
+      variance_after: preview.after.variance,
+      deficit_change: preview.deficit_change,
+      debt_impact: debtImpact,
+    };
+  });
+}
+
 // POST /shifts/:id/invoice-consumption
 // Body: { account_id, tank_id?, fuel_type: 'petrol' | 'diesel', litres }
 router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
@@ -1158,6 +1513,83 @@ router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftO
     res.json({ success: true });
   } catch (err: any) {
     res.status(err.http || 500).json({ success: false, error: err.message });
+  }
+});
+
+// Preview a closed-shift correction without changing any records.
+router.post('/:id/invoice-consumption/:entryId/correction-preview', requireAdmin, async (req: any, res) => {
+  try {
+    const preview = await db.transaction(async (trx) => buildConsumptionCorrectionPreview(
+      trx,
+      Number(req.params.id),
+      Number(req.params.entryId),
+      {
+        litres: Number(req.body.litres),
+        pump_id: req.body.pump_id,
+        tank_id: req.body.tank_id,
+      },
+    ));
+    res.json({
+      success: true,
+      data: {
+        original: preview.entry,
+        replacement: preview.replacement,
+        amount_delta: preview.amount_delta,
+        variance_before: preview.before.variance,
+        variance_after: preview.after.variance,
+        deficit_before: preview.deficit_before,
+        deficit_after: preview.deficit_after,
+        deficit_change: preview.deficit_change,
+        litre_validation: preview.litre_validation,
+        confirmation_token: preview.confirmation_token,
+      },
+    });
+  } catch (err: any) {
+    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message });
+  }
+});
+
+// Correct a closed-shift, unreserved consumption row through reversal + replacement.
+router.post('/:id/invoice-consumption/:entryId/correct', requireAdmin, async (req: any, res) => {
+  try {
+    const reason = String(req.body.reason || '').trim();
+    if (reason.length < 10) {
+      return res.status(400).json({
+        success: false,
+        error: 'A correction reason of at least 10 characters is required.',
+      });
+    }
+    if (!req.body.confirmation_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'Preview this correction before posting it.',
+      });
+    }
+
+    const result = await postConsumptionCorrection(db, {
+      shiftId: Number(req.params.id),
+      entryId: Number(req.params.entryId),
+      litres: Number(req.body.litres),
+      pumpId: req.body.pump_id,
+      tankId: req.body.tank_id,
+      reason,
+      confirmationToken: req.body.confirmation_token,
+      actorId: req.employee?.id,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: result,
+      ...(result.debt_impact.review_required_amount > 0
+        ? {
+            warnings: [
+              `KES ${result.debt_impact.review_required_amount.toFixed(2)} requires manager review because the related employee debt or wage deduction was already settled.`,
+            ],
+          }
+        : {}),
+    });
+  } catch (err: any) {
+    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message });
   }
 });
 

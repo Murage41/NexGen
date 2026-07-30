@@ -77,6 +77,22 @@ export const updateInvoiceConsumption = (shiftId: number, entryId: number, data:
   api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
 export const deleteInvoiceConsumption = (shiftId: number, entryId: number) =>
   api.delete(`/shifts/${shiftId}/invoice-consumption/${entryId}`);
+export const previewInvoiceConsumptionCorrection = (
+  shiftId: number,
+  entryId: number,
+  data: { litres: number; pump_id?: number | null; tank_id?: number | null },
+) => api.post(`/shifts/${shiftId}/invoice-consumption/${entryId}/correction-preview`, data);
+export const correctInvoiceConsumption = (
+  shiftId: number,
+  entryId: number,
+  data: {
+    litres: number;
+    pump_id?: number | null;
+    tank_id?: number | null;
+    reason: string;
+    confirmation_token: string;
+  },
+) => api.post(`/shifts/${shiftId}/invoice-consumption/${entryId}/correct`, data);
 
 // Employees
 export const getEmployees = () => api.get('/employees');
