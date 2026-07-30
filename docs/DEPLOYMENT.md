@@ -151,6 +151,11 @@ Use this when updating the station PC from the latest committed `main`. The
 examples below use the station path `E:\NexGen`. Change every path consistently
 if a different PC uses another drive.
 
+This procedure updates the current transitional station installation that is
+run from the repository with `npm run station:bg`. It does not install the
+packaged Windows application. Do not mix these two deployment models during
+one update.
+
 First identify the shell from its prompt:
 
 ```text
@@ -160,6 +165,21 @@ PS E:\NexGen>  PowerShell
 
 Do not enter PowerShell commands such as `$backup`, `New-Item`, `Copy-Item`, or
 `Test-Path` at a Command Prompt.
+
+Before the maintenance window:
+
+1. Confirm the current POSitive installation can sell and print normally.
+2. Close NexGen on every desktop and phone.
+3. Confirm the Windows account has access to `E:\NexGen` and the backup drive.
+4. Confirm the station has Node.js `22.12.0` or newer and npm `10` or newer.
+5. Do not proceed unless the Git branch is `main` and the working tree is clean.
+
+Check the required runtime from either shell:
+
+```cmd
+node --version
+npm --version
+```
 
 ### Command Prompt update
 
@@ -191,11 +211,12 @@ prints `BACKUP VERIFIED`. Then run:
 cd /d E:\NexGen
 git pull --ff-only origin main
 
-npm install
+npm ci
 
 cd /d E:\NexGen\backend
 npm run build
 npm run migrate
+npm run audit:receivables
 
 cd /d E:\NexGen
 npm run build:mobile
@@ -232,11 +253,12 @@ Write-Host "BACKUP VERIFIED: $(Join-Path $backup 'data\nexgen.db')"
 
 git pull --ff-only origin main
 
-npm.cmd install
+npm.cmd ci
 
 Set-Location E:\NexGen\backend
 npm.cmd run build
 npm.cmd run migrate
+npm.cmd run audit:receivables
 
 Set-Location E:\NexGen
 npm.cmd run build:mobile
@@ -263,33 +285,91 @@ Git history instead of trying to merge it automatically.
 The current station stack runs backend and desktop source through their
 development runners, so separate backend and desktop builds are not required
 for this mode. The mobile build is required because the backend serves the
-phone interface from `mobile/dist`.
+phone interface from `mobile/dist`. The backend build above is still required
+as an update gate because it catches TypeScript errors before the live stack is
+restarted. `audit:receivables` is read-only; stop and investigate if it reports
+any integrity problem.
+
+### Verify the station update
+
+Do not declare the update complete after the health endpoint alone:
+
+1. Open NexGen on the station PC and sign in.
+2. Open the phone interface at the station's existing `/mobile` address and
+   sign in with a test employee or admin account.
+3. Open **Invoice Customers**, select a customer, and confirm consumption,
+   invoices, and payments load.
+4. Filter consumption by date and shift, then move to the next page if there
+   are enough records.
+5. Open a current shift and start an invoice-customer consumption entry. For a
+   fuel with several pumps, confirm the exact pump/source is required. Cancel
+   without posting unless this is a real transaction.
+6. Preview a closed-shift correction and cancel it. Do not use a live
+   correction merely as a smoke test.
+7. Confirm shifts, tank balances, credits, reports, employee payroll, and the
+   latest backup still display.
+8. Restart Windows, sign in as the account that owns the scheduled task, wait
+   15 seconds, and repeat `npm run dev:status` and the health check.
+9. Confirm POSitive can still sell, print, use eTIMS, and complete its normal
+   backup.
+
+Follow `docs/INVOICE-CUSTOMER-WORKFLOW.md` for the full invoice-customer
+acceptance test and operating rules.
+
+### Roll back a failed update
+
+Stop NexGen first. Restore the repository version and the matching database
+backup as one release unit. Do not run an older commit against a database that
+has already received newer irreversible migrations. Preserve the failed data
+directory for investigation, then record the attempted commit, error, and
+restored backup path.
 
 ## Build And Run
+
+### Transitional source deployment
 
 Build mobile first so the backend can serve it:
 
 ```cmd
-cd D:\NexGen\mobile
-npm run build
+cd /d E:\NexGen
+npm run build:mobile
 ```
 
 Build backend:
 
 ```cmd
-cd D:\NexGen\backend
+cd /d E:\NexGen\backend
 npm run build
 ```
 
 Run backend:
 
 ```cmd
-cd D:\NexGen\backend
+cd /d E:\NexGen\backend
 npm start
 ```
 
 For production, run the backend as a Windows service using NSSM, PM2, or
 Task Scheduler. A service is better than a logged-in terminal window.
+
+### Packaged Windows application
+
+Build the Windows installer once on a controlled release machine from the
+tested Git commit:
+
+```cmd
+cd /d D:\NexGen\desktop
+npm run build
+```
+
+Distribute that exact signed installer and its published SHA-256 checksum to
+each station. Do not rebuild it independently on the live station. The current
+installer uses the default Electron icon and is not code-signed, so it is for
+controlled testing only and is blocked from production distribution.
+
+The installed desktop application is a client. It does not replace the backend
+service or host the SQLite database by itself. Install and configure the
+backend host first, then point the desktop application at that host.
 
 ## Current Background Startup
 

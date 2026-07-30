@@ -1,6 +1,6 @@
 # NexGen Production Security, Operations, and Compliance Baseline
 
-Reviewed: 2026-07-23
+Reviewed: 2026-07-31
 
 This document defines the minimum baseline for putting NexGen into production
 at a filling station. It is an engineering and operations checklist, not legal
@@ -219,7 +219,10 @@ The main branch already has useful controls: authentication is applied to API
 routes after login endpoints, many sensitive routes require admin access,
 production secrets have minimum lengths, CORS is configurable, login attempts
 are limited, SQLite uses WAL/busy timeout, and Electron uses context isolation
-with Node integration disabled.
+with Node integration disabled. Invoice-customer payments reject overpayment,
+financial reversals are retained, draft consumption is reserved, closed-shift
+corrections are audited, and invoice accounting differences are posted
+explicitly.
 
 These controls do not yet make the current main branch production-ready.
 
@@ -411,23 +414,35 @@ must use documented or vendor-approved APIs and the station's authorised data.
 
 ## 11. Release and Update Security
 
-The root dependency audit run with `--omit=dev` on 2026-07-23 reported 33
-vulnerabilities: 3 low, 8 moderate, 20 high, and 2 critical. The root manifest
-currently lists many transitive and build-tool packages as direct production
-dependencies, so the audit must be classified after the manifests are cleaned
-up. The result also changes as advisories and packages change.
+The workspace manifests were normalised on 2026-07-31. The reviewed runtime
+baseline is Node.js `22.12.0` or newer, SQLite runtime `6.0.1`, Electron
+`43.2.0`, and `tsx` `4.23.1`.
+
+On that date, `npm audit --omit=dev` reported two moderate React Router
+advisories and no critical or high production-runtime findings. The application
+uses `HashRouter`, no server-side rendering or data-router error
+deserialisation, and only fixed paths or validated numeric record IDs for
+navigation. Those constraints reduce exposure but do not close the advisories.
+Track the upstream packages, upgrade when a compatible patched release exists,
+and repeat route/login regression tests.
+
+The full `npm audit` reported 18 findings: the same two moderate runtime
+findings and 16 high findings in the Electron Builder packaging dependency
+chain. Those build-only packages are not shipped as the running backend, but
+the findings must still be fixed upstream, isolated in a controlled build
+environment, or formally risk-accepted before a production release.
 
 **REQUIRED BEFORE PRODUCTION**
 
-- Normalise each workspace manifest. Keep only actual direct runtime
-  dependencies in `dependencies` and put build/test/packaging tools in
+- Keep each workspace manifest normalised. Only direct runtime dependencies
+  belong in `dependencies`; build, test, and packaging tools belong in
   `devDependencies`.
 - Resolve, remove, replace, or formally assess every critical and high
-  production-runtime finding.
+  production-runtime finding and every release-tool finding.
 - Do not run `npm audit fix --force` on the live station. Update in a branch,
   review breaking changes, rebuild, and run regression tests first.
-- Pin and test a supported Node.js LTS release. Do not operate on an
-  end-of-life runtime.
+- Enforce the declared Node.js and npm minimum versions. Review and move to a
+  supported LTS baseline before the current runtime reaches end of life.
 - Produce builds from a clean tagged Git commit in a controlled CI/release
   environment.
 - Build backend, desktop, and Android artifacts once; promote the same tested
@@ -443,7 +458,8 @@ up. The result also changes as advisories and packages change.
   restore.
 
 Electron and Node.js must be reviewed on a regular patch cycle. Unsigned
-installers and the current development startup model are not acceptable as the
+installers, the default Electron application icon, unresolved release-tool
+findings, and the current development startup model are not acceptable as the
 final production package.
 
 ## 12. Production Release Gates
