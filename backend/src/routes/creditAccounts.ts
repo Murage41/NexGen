@@ -48,8 +48,18 @@ router.get('/:id', async (req, res) => {
     let credits: any[] = [];
     let payments: any[] = [];
     let debts: any[] = [];
+    let customerInvoices: any[] = [];
 
-    if (account.type === 'customer') {
+    if (account.type === 'customer' && account.billing_mode === 'invoice') {
+      customerInvoices = await db('customer_invoices')
+        .where({ account_id: account.id })
+        .whereNull('deleted_at')
+        .orderBy('id', 'desc');
+      payments = await db('invoice_payments')
+        .where({ account_id: account.id })
+        .orderBy('payment_date', 'desc')
+        .orderBy('id', 'desc');
+    } else if (account.type === 'customer') {
       credits = await db('credits')
         .where({ account_id: account.id })
         .whereNull('deleted_at')
@@ -69,7 +79,9 @@ router.get('/:id', async (req, res) => {
       data: {
         ...account,
         outstanding_balance: Number(account.balance || 0),
-        ...(account.type === 'customer' ? { credits, payments } : { debts }),
+        ...(account.type === 'customer'
+          ? { credits, payments, customer_invoices: customerInvoices }
+          : { debts }),
       },
     });
   } catch (err: any) {
@@ -271,7 +283,33 @@ router.get('/:id/statement', async (req, res) => {
       credit_amount: number;
     }> = [];
 
-    if (account.type === 'customer') {
+    if (account.type === 'customer' && account.billing_mode === 'invoice') {
+      const events = await db('invoice_accounting_events as event')
+        .leftJoin('customer_invoices as invoice', 'event.invoice_id', 'invoice.id')
+        .leftJoin('invoice_adjustment_notes as note', 'event.adjustment_note_id', 'note.id')
+        .where('event.account_id', account.id)
+        .select(
+          'event.posting_date as date',
+          'event.event_type',
+          'event.receivable_delta',
+          'event.reason',
+          'invoice.invoice_number',
+          'note.note_number',
+        )
+        .orderBy('event.posting_date', 'asc')
+        .orderBy('event.id', 'asc');
+      for (const event of events as any[]) {
+        const delta = Number(event.receivable_delta || 0);
+        const documentNumber = event.note_number || event.invoice_number;
+        const label = String(event.event_type || 'invoice event').replace(/_/g, ' ');
+        entries.push({
+          date: event.date,
+          description: event.reason || `${label}${documentNumber ? ` (${documentNumber})` : ''}`,
+          debit_amount: delta > 0 ? delta : 0,
+          credit_amount: delta < 0 ? Math.abs(delta) : 0,
+        });
+      }
+    } else if (account.type === 'customer') {
       // Debits: credits added (money owed increases)
       const credits = await db('credits')
         .where({ account_id: account.id })

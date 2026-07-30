@@ -137,10 +137,11 @@ export default function Reports() {
           {dailyData && (
             <div className="space-y-6">
               {/* Summary cards */}
-              <div className="grid grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1">Total Sales</p>
-                  <p className="text-xl font-bold text-gray-800">{kes(dailyData.total_sales)}</p>
+                  <p className="text-xs text-gray-500 mb-1">Net Sales</p>
+                  <p className="text-xl font-bold text-gray-800">{kes(dailyData.net_sales ?? dailyData.total_sales)}</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Retail {kes(dailyData.total_sales)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
                   <p className="text-xs text-gray-500 mb-1">Petrol Sold</p>
@@ -153,7 +154,7 @@ export default function Reports() {
                 <div className="bg-white rounded-lg shadow p-4">
                   <p className="text-xs text-gray-500 mb-1">Gross Margin</p>
                   <p className={`text-xl font-bold ${dailyData.gross_profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {pct(dailyData.total_sales > 0 ? (dailyData.gross_profit / dailyData.total_sales) * 100 : 0)}
+                    {pct((dailyData.net_sales ?? dailyData.total_sales) > 0 ? (dailyData.gross_profit / (dailyData.net_sales ?? dailyData.total_sales)) * 100 : 0)}
                   </p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
@@ -190,7 +191,14 @@ export default function Reports() {
                     <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Profit & Loss</h2>
                   </div>
                   <div className="py-2">
-                    <PnLRow label="Revenue (Sales)" value={dailyData.total_sales} bold color="text-gray-800" />
+                    <PnLRow label="Pump Sales at Retail" value={dailyData.total_sales} color="text-gray-800" />
+                    <PnLRow
+                      label="Invoice Price Adjustments"
+                      value={dailyData.invoice_price_adjustments}
+                      indent
+                      color={Number(dailyData.invoice_price_adjustments || 0) >= 0 ? 'text-green-700' : 'text-red-600'}
+                    />
+                    <PnLRow label="Net Sales Revenue" value={dailyData.net_sales ?? dailyData.total_sales} bold border color="text-gray-800" />
                     <PnLRow label="Cost of Fuel (COGS)" value={-dailyData.cogs} indent color="text-red-600" />
                     <PnLRow label="Gross Profit" value={dailyData.gross_profit} bold border
                       color={dailyData.gross_profit >= 0 ? 'text-green-700' : 'text-red-600'} />
@@ -397,8 +405,9 @@ export default function Reports() {
               {/* Summary cards */}
               <div className="grid grid-cols-5 gap-4">
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1">Total Revenue</p>
+                  <p className="text-xs text-gray-500 mb-1">Net Sales Revenue</p>
                   <p className="text-xl font-bold text-gray-800">{kes(monthlyData.total_sales)}</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Retail {kes(monthlyData.retail_sales || 0)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
                   <p className="text-xs text-gray-500 mb-1">Total Litres Sold</p>
@@ -451,7 +460,14 @@ export default function Reports() {
                     <p className="text-xs text-gray-400 mt-0.5">{monthlyData.month}</p>
                   </div>
                   <div className="py-2">
-                    <PnLRow label="Revenue" value={monthlyData.total_sales} bold color="text-gray-800" />
+                    <PnLRow label="Pump Sales at Retail" value={monthlyData.retail_sales} color="text-gray-800" />
+                    <PnLRow
+                      label="Invoice Price Adjustments"
+                      value={monthlyData.invoice_price_adjustments}
+                      indent
+                      color={Number(monthlyData.invoice_price_adjustments || 0) >= 0 ? 'text-green-700' : 'text-red-600'}
+                    />
+                    <PnLRow label="Net Sales Revenue" value={monthlyData.total_sales} bold border color="text-gray-800" />
                     <PnLRow label="Cost of Goods Sold (COGS)" value={-monthlyData.cogs} indent color="text-red-600" />
                     <PnLRow label="Gross Profit" value={monthlyData.gross_profit} bold border
                       color={monthlyData.gross_profit >= 0 ? 'text-green-700' : 'text-red-600'} />
@@ -519,10 +535,21 @@ export default function Reports() {
                   </div>
                   <div className="py-2">
                     <PnLRow label="Opening Receivables" value={monthlyData.opening_receivables} />
-                    <PnLRow label="+ New Credits Issued" value={monthlyData.total_credits} color="text-amber-600" indent />
-                    <PnLRow label="- Payments Received" value={-monthlyData.credit_payments_received} color="text-green-600" indent />
+                    <PnLRow label="+ Money Credits Issued" value={monthlyData.money_credits_issued} color="text-amber-600" indent />
+                    <PnLRow label="+ Customer Invoices Issued" value={monthlyData.invoice_receivables_issued} color="text-amber-600" indent />
+                    <PnLRow
+                      label="+/- Credit & Debit Notes / Voids"
+                      value={monthlyData.invoice_receivable_adjustments}
+                      color={Number(monthlyData.invoice_receivable_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-green-700'}
+                      indent
+                    />
+                    <PnLRow label="- Money Credit Payments" value={-monthlyData.money_credit_payments_received} color="text-green-600" indent />
+                    <PnLRow label="- Invoice Payments (net)" value={-monthlyData.invoice_payments_received} color="text-green-600" indent />
                     <PnLRow label="Closing Receivables" value={monthlyData.closing_receivables} bold border
                       color={monthlyData.closing_receivables > 0 ? 'text-amber-600' : 'text-green-600'} />
+                    <p className="px-4 pt-2 text-[11px] text-gray-400">
+                      Money {kes(monthlyData.closing_money_receivables || 0)} · Invoices {kes(monthlyData.closing_invoice_receivables || 0)}
+                    </p>
                   </div>
                 </div>
 
@@ -533,9 +560,10 @@ export default function Reports() {
                   <div className="py-2">
                     <PnLRow label="Cash" value={monthlyData.total_cash} />
                     <PnLRow label="M-Pesa" value={monthlyData.total_mpesa} />
-                    <PnLRow label="Credits (on account)" value={monthlyData.total_credits} color="text-amber-600" />
+                    <PnLRow label="Money Credits (on account)" value={monthlyData.total_credits} color="text-amber-600" />
+                    <PnLRow label="Invoice Consumption at Retail" value={monthlyData.total_invoice_retail} color="text-amber-600" />
                     <PnLRow label="Total"
-                      value={(monthlyData.total_cash || 0) + (monthlyData.total_mpesa || 0) + (monthlyData.total_credits || 0)}
+                      value={(monthlyData.total_cash || 0) + (monthlyData.total_mpesa || 0) + (monthlyData.total_credits || 0) + (monthlyData.total_invoice_retail || 0)}
                       bold border />
                   </div>
                 </div>
@@ -763,16 +791,20 @@ export default function Reports() {
                   <p className="text-xl font-bold text-red-600">{kes(debtorData.summary.total_outstanding)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1">Current (0-30d)</p>
-                  <p className="text-xl font-bold text-gray-800">{kes(debtorData.summary.current_0_30)}</p>
+                  <p className="text-xs text-gray-500 mb-1">Not Due</p>
+                  <p className="text-xl font-bold text-gray-800">{kes(debtorData.summary.not_due)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1">31-60 Days</p>
-                  <p className="text-xl font-bold text-amber-600">{kes(debtorData.summary.days_31_60)}</p>
+                  <p className="text-xs text-gray-500 mb-1">1-30 Overdue</p>
+                  <p className="text-xl font-bold text-amber-600">{kes(debtorData.summary.days_1_30)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1">61-90 Days</p>
-                  <p className="text-xl font-bold text-orange-600">{kes(debtorData.summary.days_61_90)}</p>
+                  <p className="text-xs text-gray-500 mb-1">31-60 Overdue</p>
+                  <p className="text-xl font-bold text-orange-600">{kes(debtorData.summary.days_31_60)}</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                  <p className="text-xs text-gray-500 mb-1">61-90 Overdue</p>
+                  <p className="text-xl font-bold text-orange-700">{kes(debtorData.summary.days_61_90)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
                   <p className="text-xs text-gray-500 mb-1">Over 90 Days</p>
@@ -786,11 +818,12 @@ export default function Reports() {
                   <thead className="bg-gray-50 border-b">
                     <tr>
                       <th className="text-left p-3 font-medium text-gray-600">Customer</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Phone</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Mode / Oldest Due</th>
                       <th className="text-right p-3 font-medium text-gray-600">Total</th>
-                      <th className="text-right p-3 font-medium text-gray-600">0-30d</th>
-                      <th className="text-right p-3 font-medium text-gray-600">31-60d</th>
-                      <th className="text-right p-3 font-medium text-gray-600">61-90d</th>
+                      <th className="text-right p-3 font-medium text-gray-600">Not Due</th>
+                      <th className="text-right p-3 font-medium text-gray-600">1-30</th>
+                      <th className="text-right p-3 font-medium text-gray-600">31-60</th>
+                      <th className="text-right p-3 font-medium text-gray-600">61-90</th>
                       <th className="text-right p-3 font-medium text-gray-600">90d+</th>
                     </tr>
                   </thead>
@@ -798,20 +831,21 @@ export default function Reports() {
                     {debtorData.accounts.map((a: any, i: number) => (
                       <tr key={i} className="border-t hover:bg-gray-50">
                         <td className="p-3 font-medium">{a.name}</td>
-                        <td className="p-3 text-gray-500">
-                          {a.phone ? (
-                            <span className="flex items-center gap-1"><Phone size={12} />{a.phone}</span>
-                          ) : '—'}
+                        <td className="p-3 text-gray-500 text-xs">
+                          <span className="capitalize font-medium text-gray-700">{a.billing_mode}</span>
+                          <span className="block">{a.oldest_due_date || '—'} · {a.document_count} document{a.document_count === 1 ? '' : 's'}</span>
+                          {a.phone && <span className="flex items-center gap-1"><Phone size={12} />{a.phone}</span>}
                         </td>
                         <td className="p-3 text-right font-bold text-red-600">{kes(a.total_outstanding)}</td>
-                        <td className="p-3 text-right">{a.current_0_30 > 0 ? kes(a.current_0_30) : '—'}</td>
+                        <td className="p-3 text-right">{a.not_due > 0 ? kes(a.not_due) : '—'}</td>
+                        <td className="p-3 text-right text-amber-600">{a.days_1_30 > 0 ? kes(a.days_1_30) : '—'}</td>
                         <td className="p-3 text-right text-amber-600">{a.days_31_60 > 0 ? kes(a.days_31_60) : '—'}</td>
                         <td className="p-3 text-right text-orange-600">{a.days_61_90 > 0 ? kes(a.days_61_90) : '—'}</td>
                         <td className="p-3 text-right text-red-700 font-medium">{a.days_90_plus > 0 ? kes(a.days_90_plus) : '—'}</td>
                       </tr>
                     ))}
                     {debtorData.accounts.length === 0 && (
-                      <tr><td colSpan={7} className="p-8 text-center text-gray-400">No outstanding debts.</td></tr>
+                      <tr><td colSpan={8} className="p-8 text-center text-gray-400">No outstanding debts.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -875,9 +909,10 @@ export default function Reports() {
                     <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wide">Cash Inflows</h2>
                   </div>
                   <div className="py-2">
-                    <PnLRow label="Cash Sales" value={cfData.inflows.cash_sales} color="text-green-600" />
-                    <PnLRow label="M-Pesa Sales" value={cfData.inflows.mpesa_sales} color="text-green-600" />
-                    <PnLRow label="Credit Payments Received" value={cfData.inflows.credit_payments_received} color="text-green-600" />
+                    <PnLRow label="Shift Cash Received" value={cfData.inflows.shift_cash_received ?? cfData.inflows.cash_sales} color="text-green-600" />
+                    <PnLRow label="Shift M-Pesa Received" value={cfData.inflows.shift_mpesa_received ?? cfData.inflows.mpesa_sales} color="text-green-600" />
+                    <PnLRow label="Direct Money-Credit Payments" value={cfData.inflows.credit_payments_received} color="text-green-600" />
+                    <PnLRow label="Invoice Payments (net)" value={cfData.inflows.invoice_payments_received} color="text-green-600" />
                     <PnLRow label="Total Inflows" value={cfData.inflows.total} bold border color="text-green-700" />
                   </div>
                 </div>
@@ -902,7 +937,9 @@ export default function Reports() {
                 <p className="text-sm text-amber-700 font-medium">
                   Outstanding Receivables (not yet collected): {kes(cfData.outstanding_receivables)}
                 </p>
-                <p className="text-xs text-amber-600 mt-0.5">This amount is owed by credit customers and not included in cash inflows above.</p>
+                <p className="text-xs text-amber-600 mt-0.5">
+                  Money credits {kes(cfData.outstanding_money_receivables || 0)} · Customer invoices {kes(cfData.outstanding_invoice_receivables || 0)}
+                </p>
               </div>
             </div>
           )}

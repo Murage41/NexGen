@@ -7,6 +7,7 @@ import {
   getTotalPayrollCashOutflow,
   getUnmirroredShiftWagesPaid,
 } from '../services/payrollAccounting';
+import { getCurrentReceivableTotals } from '../services/receivableReporting';
 
 const router = Router();
 
@@ -132,9 +133,15 @@ router.get('/', async (_req, res) => {
     const todayGeneralExpenses = Number((geResult as any)?.total) || 0;
     const todayExpenses = todayShiftExpenses + todayGeneralExpenses;
 
-    const todayGrossProfit = todaySales - todayCogs;
+    const todayInvoiceRevenueRow = await db('invoice_accounting_events')
+      .where({ posting_date: today })
+      .sum({ total: 'revenue_adjustment' })
+      .first();
+    const todayInvoicePriceAdjustments = Number((todayInvoiceRevenueRow as any)?.total || 0);
+    const todayNetSales = todaySales + todayInvoicePriceAdjustments;
+    const todayGrossProfit = todayNetSales - todayCogs;
     const todayNetProfit = todayGrossProfit - todayWages - todayExpenses;
-    const todayGrossMargin = todaySales > 0 ? (todayGrossProfit / todaySales) * 100 : 0;
+    const todayGrossMargin = todayNetSales > 0 ? (todayGrossProfit / todayNetSales) * 100 : 0;
 
     // Today's variance must match shift detail. Shift-linked debt receipts
     // are included inside entered cash/M-Pesa totals, not added on top.
@@ -196,7 +203,13 @@ router.get('/', async (_req, res) => {
     // MTD COGS from FIFO batch consumption
     const mtdFifoCosts = await getFIFOCostByFuelType(monthStart, today);
     const mtdCogs = (mtdFifoCosts['petrol'] || 0) + (mtdFifoCosts['diesel'] || 0);
-    const mtdNetProfit = mtdSales - mtdCogs - mtdWages - mtdExpenses;
+    const mtdInvoiceRevenueRow = await db('invoice_accounting_events')
+      .whereBetween('posting_date', [monthStart, today])
+      .sum({ total: 'revenue_adjustment' })
+      .first();
+    const mtdInvoicePriceAdjustments = Number((mtdInvoiceRevenueRow as any)?.total || 0);
+    const mtdNetSales = mtdSales + mtdInvoicePriceAdjustments;
+    const mtdNetProfit = mtdNetSales - mtdCogs - mtdWages - mtdExpenses;
 
     // ── Phase 1A: MTD M-Pesa fees ──
     let mtdMpesaFees = 0;
@@ -223,13 +236,8 @@ router.get('/', async (_req, res) => {
     }
 
     // ── Outstanding credits (receivables) ──
-    const creditsResult = await db('credits')
-      .whereNull('deleted_at')
-      .whereNot('status', 'paid')
-      .where('balance', '>', 0)
-      .sum('balance as total')
-      .first();
-    const totalOutstandingCredits = Number((creditsResult as any)?.total) || 0;
+    const receivables = await getCurrentReceivableTotals(db);
+    const totalOutstandingCredits = receivables.total_receivables;
 
     // ── Outstanding staff debts (unrecovered losses) ──
     const staffDebtResult = await db('staff_debts')
@@ -399,6 +407,8 @@ router.get('/', async (_req, res) => {
       data: {
         // Today
         today_sales: todaySales,
+        today_net_sales: todayNetSales,
+        today_invoice_price_adjustments: todayInvoicePriceAdjustments,
         today_litres_petrol: todayLitresPetrol,
         today_litres_diesel: todayLitresDiesel,
         today_variance: todayVariance,
@@ -429,6 +439,8 @@ router.get('/', async (_req, res) => {
         },
         // Month-to-date
         mtd_sales: mtdSales,
+        mtd_net_sales: mtdNetSales,
+        mtd_invoice_price_adjustments: mtdInvoicePriceAdjustments,
         mtd_litres: mtdLitres,
         mtd_expenses: mtdExpenses,
         mtd_wages: mtdWages,
@@ -438,6 +450,8 @@ router.get('/', async (_req, res) => {
         mtd_mpesa_gross: mtdMpesaGross,
         // Business health
         total_outstanding_credits: totalOutstandingCredits,
+        total_outstanding_money_credits: receivables.money_receivables,
+        total_outstanding_invoice_receivables: receivables.invoice_receivables,
         total_outstanding_staff_debts: totalOutstandingStaffDebts,
         tank_stock_summary: tankStockSummary,
         margin_per_litre: marginPerLitre,

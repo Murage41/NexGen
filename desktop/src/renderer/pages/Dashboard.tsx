@@ -64,8 +64,13 @@ export default function Dashboard() {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-500">Today's Sales</p>
-              <p className="text-2xl font-bold text-gray-800">{formatKES(data.today_sales)}</p>
+              <p className="text-sm text-gray-500">Today's Net Sales</p>
+              <p className="text-2xl font-bold text-gray-800">{formatKES(data.today_net_sales ?? data.today_sales)}</p>
+              {Number(data.today_invoice_price_adjustments || 0) !== 0 && (
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Retail {formatKES(data.today_sales)} · Invoice adj. {formatKES(data.today_invoice_price_adjustments)}
+                </p>
+              )}
             </div>
             <DollarSign className="text-green-500" size={32} />
           </div>
@@ -113,9 +118,11 @@ export default function Dashboard() {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-500">Month-to-Date Sales</p>
-              <p className="text-2xl font-bold text-gray-800">{formatKES(data.mtd_sales)}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{Number(data.mtd_litres || 0).toFixed(0)} L sold</p>
+              <p className="text-sm text-gray-500">Month-to-Date Net Sales</p>
+              <p className="text-2xl font-bold text-gray-800">{formatKES(data.mtd_net_sales ?? data.mtd_sales)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {Number(data.mtd_litres || 0).toFixed(0)} L · Retail {formatKES(data.mtd_sales)}
+              </p>
             </div>
             <BarChart3 className="text-blue-400" size={28} />
           </div>
@@ -140,9 +147,12 @@ export default function Dashboard() {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-500">Outstanding Credits</p>
+              <p className="text-sm text-gray-500">Outstanding Receivables</p>
               <p className={`text-2xl font-bold ${data.total_outstanding_credits > 0 ? 'text-amber-600' : 'text-green-600'}`}>
                 {formatKES(data.total_outstanding_credits)}
+              </p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Credits {formatKES(data.total_outstanding_money_credits || 0)} · Invoices {formatKES(data.total_outstanding_invoice_receivables || 0)}
               </p>
             </div>
             <CreditCard className="text-amber-400" size={28} />

@@ -9,6 +9,14 @@ import {
   getTotalPayrollCashOutflow,
   isShiftWageMirror,
 } from '../services/payrollAccounting';
+import {
+  getCombinedDebtorAging,
+  getCurrentReceivableTotals,
+  getDirectReceivableCashInflows,
+  getReceivableActivity,
+  getReceivablePositionAsOf,
+  previousBusinessDate,
+} from '../services/receivableReporting';
 
 const router = Router();
 
@@ -322,7 +330,13 @@ router.get('/daily', async (req, res) => {
     const payrollExpense = await getPayrollExpense(date, date);
     totalWagesPaid = await getTotalPayrollCashOutflow(date, date);
     const totalExpenses = totalShiftExpenses + totalDayExpenses;
-    const grossProfit = totalSales - cogs;
+    const invoiceRevenueRow = await db('invoice_accounting_events')
+      .where({ posting_date: date })
+      .sum({ total: 'revenue_adjustment' })
+      .first();
+    const invoicePriceAdjustments = roundMoney(Number((invoiceRevenueRow as any)?.total || 0));
+    const netSales = roundMoney(totalSales + invoicePriceAdjustments);
+    const grossProfit = netSales - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
 
     res.json({
@@ -333,6 +347,8 @@ router.get('/daily', async (req, res) => {
         expenses: dayExpenses,
         // Sales
         total_sales: totalSales,
+        net_sales: netSales,
+        invoice_price_adjustments: invoicePriceAdjustments,
         total_litres: totalPetrolLitres + totalDieselLitres,
         petrol_litres: totalPetrolLitres,
         diesel_litres: totalDieselLitres,
@@ -425,6 +441,12 @@ router.get('/monthly', async (req, res) => {
 
     const totalSales = fuelSales.reduce((s: number, r: any) => s + (Number(r.total_sales) || 0), 0);
     const totalLitres = fuelSales.reduce((s: number, r: any) => s + (Number(r.total_litres) || 0), 0);
+    const invoiceRevenueRow = await db('invoice_accounting_events')
+      .whereBetween('posting_date', [startDate, endDate])
+      .sum({ total: 'revenue_adjustment' })
+      .first();
+    const invoicePriceAdjustments = roundMoney(Number((invoiceRevenueRow as any)?.total || 0));
+    const netSales = roundMoney(totalSales + invoicePriceAdjustments);
 
     // Cost per litre from FIFO
     const avgCosts: Record<string, number> = {};
@@ -452,6 +474,16 @@ router.get('/monthly', async (req, res) => {
       .sum('mpesa_amount as total_mpesa')
       .sum('credits_amount as total_credits')
       .first();
+    const invoiceRetailRow = await db('invoice_consumption as consumption')
+      .join('shifts', 'consumption.shift_id', 'shifts.id')
+      .whereNull('consumption.deleted_at')
+      .where(function (this: any) {
+        this.whereNull('consumption.entry_status').orWhere('consumption.entry_status', 'active');
+      })
+      .whereBetween('shifts.shift_date', [startDate, endDate])
+      .sum({ total: 'consumption.retail_amount' })
+      .first();
+    const totalInvoiceRetail = Number((invoiceRetailRow as any)?.total || 0);
 
     // Legacy shift wages are cash outflows. Payroll expense comes from the
     // immutable earnings ledger and may be paid on a different date.
@@ -547,22 +579,14 @@ router.get('/monthly', async (req, res) => {
     // Primary COGS from FIFO consumption; stock-based as secondary verification
     const cogs = (fifoCosts['petrol'] || 0) + (fifoCosts['diesel'] || 0);
 
-    // Receivables movement
-    const openingReceivables = await db('credits')
-      .where('created_at', '<', startDate + 'T00:00:00')
-      .whereNot('status', 'paid')
-      .sum('balance as total')
-      .first();
-    const closingReceivables = await db('credits')
-      .where('created_at', '<=', endDate + 'T23:59:59')
-      .whereNot('status', 'paid')
-      .sum('balance as total')
-      .first();
-    const creditPaymentsReceived = await db('credit_payments')
-      .where('date', '>=', startDate)
-      .where('date', '<=', endDate)
-      .sum('amount as total')
-      .first();
+    // Receivables movement reconstructed from source documents and immutable
+    // invoice accounting events, rather than today's remaining balances.
+    const openingReceivables = await getReceivablePositionAsOf(
+      db,
+      previousBusinessDate(startDate),
+    );
+    const closingReceivables = await getReceivablePositionAsOf(db, endDate);
+    const receivableActivity = await getReceivableActivity(db, startDate, endDate);
 
     // Outstanding staff debts for the period
     const staffDebtResult = await db('staff_debts')
@@ -582,12 +606,19 @@ router.get('/monthly', async (req, res) => {
       .where('shifts.status', 'closed')
       .select('shifts.id', 'shifts.shift_date', 'shifts.start_time', 'shifts.wage_paid', 'employees.daily_wage');
 
-    const dailyMap: Record<string, { sales: number; petrol_litres: number; diesel_litres: number; expenses: number; wages: number }> = {};
+    const dailyMap: Record<string, {
+      sales: number;
+      invoice_price_adjustments: number;
+      petrol_litres: number;
+      diesel_litres: number;
+      expenses: number;
+      wages: number;
+    }> = {};
 
     for (const shift of closedShifts) {
       const dayKey = shift.shift_date || (shift.start_time as string).split('T')[0];
       if (!dailyMap[dayKey]) {
-        dailyMap[dayKey] = { sales: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
+        dailyMap[dayKey] = { sales: 0, invoice_price_adjustments: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
       }
 
       const readings = await db('pump_readings')
@@ -616,7 +647,7 @@ router.get('/monthly', async (req, res) => {
     for (const earning of dailyEarnings) {
       const key = String(earning.earning_date).slice(0, 10);
       if (!dailyMap[key]) {
-        dailyMap[key] = { sales: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
+        dailyMap[key] = { sales: 0, invoice_price_adjustments: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
       }
       dailyMap[key].wages += Number(earning.total || 0);
     }
@@ -631,9 +662,22 @@ router.get('/monthly', async (req, res) => {
     for (const e of allGeneralExpenses) {
       const key = e.date as string;
       if (!dailyMap[key]) {
-        dailyMap[key] = { sales: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
+        dailyMap[key] = { sales: 0, invoice_price_adjustments: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
       }
       dailyMap[key].expenses += Number(e.amount) || 0;
+    }
+
+    const dailyInvoiceAdjustments = await db('invoice_accounting_events')
+      .whereBetween('posting_date', [startDate, endDate])
+      .select('posting_date')
+      .sum({ total: 'revenue_adjustment' })
+      .groupBy('posting_date');
+    for (const adjustment of dailyInvoiceAdjustments as any[]) {
+      const key = String(adjustment.posting_date).slice(0, 10);
+      if (!dailyMap[key]) {
+        dailyMap[key] = { sales: 0, invoice_price_adjustments: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
+      }
+      dailyMap[key].invoice_price_adjustments += Number(adjustment.total || 0);
     }
 
     // Get FIFO cost per day for daily breakdown
@@ -648,16 +692,19 @@ router.get('/monthly', async (req, res) => {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, d]) => {
         const dayCogs = dailyFifoCosts[date] || 0;
+        const dayNetSales = roundMoney(d.sales + d.invoice_price_adjustments);
         return {
           date,
-          sales: d.sales,
+          sales: dayNetSales,
+          retail_sales: d.sales,
+          invoice_price_adjustments: roundMoney(d.invoice_price_adjustments),
           petrol_litres: d.petrol_litres,
           diesel_litres: d.diesel_litres,
           cogs: dayCogs,
           expenses: d.expenses,
           wages: d.wages,
-          gross_profit: d.sales - dayCogs,
-          net: d.sales - dayCogs - d.expenses - d.wages,
+          gross_profit: dayNetSales - dayCogs,
+          net: dayNetSales - dayCogs - d.expenses - d.wages,
         };
       });
 
@@ -665,7 +712,7 @@ router.get('/monthly', async (req, res) => {
     const payrollCashPaid = await getPayrollCashPaid(startDate, endDate);
     totalWagesPaid = await getTotalPayrollCashOutflow(startDate, endDate);
     const totalExpenses = (Number((generalExpenses as any)?.total) || 0) + (Number((shiftExpenses as any)?.total) || 0);
-    const grossProfit = totalSales - cogs;
+    const grossProfit = netSales - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
 
     res.json({
@@ -674,13 +721,16 @@ router.get('/monthly', async (req, res) => {
         month,
         // Fuel breakdown
         fuel_sales: fuelSales,
-        total_sales: totalSales,
+        total_sales: netSales,
+        retail_sales: totalSales,
+        invoice_price_adjustments: invoicePriceAdjustments,
         total_litres: totalLitres,
         margin_per_litre: marginPerLitre,
         // Collections
         total_cash: Number((collections as any)?.total_cash) || 0,
         total_mpesa: Number((collections as any)?.total_mpesa) || 0,
         total_credits: Number((collections as any)?.total_credits) || 0,
+        total_invoice_retail: totalInvoiceRetail,
         // Costs
         total_wages_paid: totalWagesPaid,
         total_payroll_expense: payrollExpense,
@@ -697,9 +747,18 @@ router.get('/monthly', async (req, res) => {
         gross_profit: grossProfit,
         net_profit: netProfit,
         // Receivables
-        opening_receivables: Number((openingReceivables as any)?.total) || 0,
-        closing_receivables: Number((closingReceivables as any)?.total) || 0,
-        credit_payments_received: Number((creditPaymentsReceived as any)?.total) || 0,
+        opening_receivables: openingReceivables.total_receivables,
+        opening_money_receivables: openingReceivables.money_receivables,
+        opening_invoice_receivables: openingReceivables.invoice_receivables,
+        closing_receivables: closingReceivables.total_receivables,
+        closing_money_receivables: closingReceivables.money_receivables,
+        closing_invoice_receivables: closingReceivables.invoice_receivables,
+        credit_payments_received: receivableActivity.total_payments_received,
+        money_credit_payments_received: receivableActivity.money_payments_received,
+        invoice_payments_received: receivableActivity.invoice_payments_received,
+        money_credits_issued: receivableActivity.money_credits_issued,
+        invoice_receivables_issued: receivableActivity.invoice_receivables_issued,
+        invoice_receivable_adjustments: receivableActivity.invoice_adjustments,
         unrecovered_losses: unrecoveredLosses,
         // Breakdown
         daily_breakdown: dailyBreakdown,
@@ -796,66 +855,11 @@ router.get('/stock-reconciliation', async (req, res) => {
 // ─── Debtor Aging Report ──────────────────────────────────────────────────────
 router.get('/debtor-aging', async (_req, res) => {
   try {
-    const now = new Date();
-    const accounts = await db('credit_accounts').where('type', 'customer');
-
-    const aging = [];
-    let totalCurrent = 0, total31_60 = 0, total61_90 = 0, total90Plus = 0;
-
-    for (const account of accounts) {
-      const credits = await db('credits')
-        .where({ account_id: account.id })
-        .whereNot('status', 'paid')
-        .where('balance', '>', 0)
-        .select('balance', 'created_at');
-
-      if (credits.length === 0) continue;
-
-      let current = 0, d31_60 = 0, d61_90 = 0, d90plus = 0;
-
-      for (const credit of credits) {
-        const daysOld = Math.floor((now.getTime() - new Date(credit.created_at).getTime()) / (1000 * 60 * 60 * 24));
-        const balance = Number(credit.balance);
-
-        if (daysOld <= 30) current += balance;
-        else if (daysOld <= 60) d31_60 += balance;
-        else if (daysOld <= 90) d61_90 += balance;
-        else d90plus += balance;
-      }
-
-      const total = current + d31_60 + d61_90 + d90plus;
-      totalCurrent += current;
-      total31_60 += d31_60;
-      total61_90 += d61_90;
-      total90Plus += d90plus;
-
-      aging.push({
-        account_id: account.id,
-        name: account.name,
-        phone: account.phone,
-        total_outstanding: total,
-        current_0_30: current,
-        days_31_60: d31_60,
-        days_61_90: d61_90,
-        days_90_plus: d90plus,
-      });
-    }
-
-    // Sort by total outstanding descending
-    aging.sort((a, b) => b.total_outstanding - a.total_outstanding);
-
+    const asOfDate = getKenyaDate();
+    const data = await getCombinedDebtorAging(db, asOfDate);
     res.json({
       success: true,
-      data: {
-        accounts: aging,
-        summary: {
-          total_outstanding: totalCurrent + total31_60 + total61_90 + total90Plus,
-          current_0_30: totalCurrent,
-          days_31_60: total31_60,
-          days_61_90: total61_90,
-          days_90_plus: total90Plus,
-        },
-      },
+      data,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -877,17 +881,23 @@ router.get('/cash-flow', async (req, res) => {
       .sum('mpesa_amount as mpesa')
       .sum('credits_amount as credits_on_account')
       .first();
-    const cashSales = Number((collResult as any)?.cash) || 0;
-    const mpesaSales = Number((collResult as any)?.mpesa) || 0;
+    const shiftCashReceived = Number((collResult as any)?.cash) || 0;
+    const shiftMpesaReceived = Number((collResult as any)?.mpesa) || 0;
 
-    const creditPayments = await db('credit_payments')
-      .where('date', '>=', from)
-      .where('date', '<=', to)
-      .sum('amount as total')
-      .first();
-    const creditPaymentsReceived = Number((creditPayments as any)?.total) || 0;
+    // Shift-linked debt receipts are already inside shift cash/M-Pesa totals.
+    // Only direct back-office receivable payments are added separately.
+    const directReceivableCash = await getDirectReceivableCashInflows(db, from, to);
+    const creditPaymentsReceived = directReceivableCash.money_credit_payments;
+    const directMoneyByMethod = directReceivableCash.money_credit_payments_by_method;
+    const invoicePaymentsReceived = directReceivableCash.invoice_payments;
+    const invoicePaymentsByAccount = directReceivableCash.invoice_payments_by_account;
 
-    const totalInflows = cashSales + mpesaSales + creditPaymentsReceived;
+    const totalInflows = roundMoney(
+      shiftCashReceived
+      + shiftMpesaReceived
+      + creditPaymentsReceived
+      + invoicePaymentsReceived,
+    );
 
     // Cash Outflows
     const fuelPurchases = await db('fuel_deliveries')
@@ -922,22 +932,21 @@ router.get('/cash-flow', async (req, res) => {
 
     const totalOutflows = totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses;
 
-    // Outstanding receivables
-    const outstandingReceivables = await db('credits')
-      .whereNull('deleted_at')
-      .whereNot('status', 'paid')
-      .where('balance', '>', 0)
-      .sum('balance as total')
-      .first();
+    const outstandingReceivables = await getCurrentReceivableTotals(db);
 
     res.json({
       success: true,
       data: {
         period: { from, to },
         inflows: {
-          cash_sales: cashSales,
-          mpesa_sales: mpesaSales,
+          cash_sales: shiftCashReceived,
+          mpesa_sales: shiftMpesaReceived,
+          shift_cash_received: shiftCashReceived,
+          shift_mpesa_received: shiftMpesaReceived,
           credit_payments_received: creditPaymentsReceived,
+          direct_money_credit_payments: directMoneyByMethod,
+          invoice_payments_received: invoicePaymentsReceived,
+          invoice_payments_by_account: invoicePaymentsByAccount,
           total: totalInflows,
         },
         outflows: {
@@ -948,7 +957,9 @@ router.get('/cash-flow', async (req, res) => {
           total: totalOutflows,
         },
         net_cash_flow: totalInflows - totalOutflows,
-        outstanding_receivables: Number((outstandingReceivables as any)?.total) || 0,
+        outstanding_receivables: outstandingReceivables.total_receivables,
+        outstanding_money_receivables: outstandingReceivables.money_receivables,
+        outstanding_invoice_receivables: outstandingReceivables.invoice_receivables,
       },
     });
   } catch (err: any) {

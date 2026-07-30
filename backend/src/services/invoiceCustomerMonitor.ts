@@ -207,7 +207,11 @@ export async function getInvoiceCustomerMonitor(qb: Knex, opts: InvoiceCustomerM
   const customers = Object.values(customerMap)
     .map((customer: any) => ({
       ...customer,
-      total_exposure: round2(customer.issued_balance + customer.unbilled_retail_amount),
+      total_exposure: round2(
+        customer.issued_balance
+        + customer.draft_total
+        + customer.unbilled_retail_amount,
+      ),
     }))
     .sort((a: any, b: any) =>
       b.total_exposure - a.total_exposure ||
@@ -225,6 +229,7 @@ export async function getInvoiceCustomerMonitor(qb: Knex, opts: InvoiceCustomerM
       acc.total_exposure = round2(acc.total_exposure + customer.total_exposure);
       acc.open_invoice_count += customer.open_invoice_count;
       acc.draft_count += customer.draft_count;
+      acc.draft_total = round2(acc.draft_total + customer.draft_total);
       return acc;
     },
     {
@@ -236,6 +241,7 @@ export async function getInvoiceCustomerMonitor(qb: Knex, opts: InvoiceCustomerM
       total_exposure: 0,
       open_invoice_count: 0,
       draft_count: 0,
+      draft_total: 0,
     },
   );
 
