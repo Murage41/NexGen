@@ -153,6 +153,18 @@ export const getCustomerInvoices = (params?: { account_id?: number; status?: str
   api.get('/customer-invoices', { params });
 export const getInvoiceCustomerMonitor = (params?: { recent_limit?: number }) =>
   api.get('/customer-invoices/customers/monitor', { params });
+export const getInvoiceCustomerConsumption = (
+  accountId: number,
+  params?: {
+    from?: string;
+    to?: string;
+    fuel_type?: string;
+    status?: string;
+    shift_id?: number;
+    page?: number;
+    page_size?: number;
+  },
+) => api.get(`/customer-invoices/customers/${accountId}/consumption`, { params });
 export const getCustomerInvoice = (id: number) => api.get(`/customer-invoices/${id}`);
 export const previewCustomerInvoice = (params: { account_id: number; from: string; to: string }) =>
   api.get('/customer-invoices/preview/scan', { params });

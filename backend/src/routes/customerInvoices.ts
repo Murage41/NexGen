@@ -23,6 +23,10 @@ import {
   issueReservedCustomerInvoice,
   voidIssuedCustomerInvoice,
 } from '../services/invoiceLifecycle';
+import {
+  getInvoiceConsumptionHistory,
+  type ConsumptionHistoryStatus,
+} from '../services/invoiceConsumptionHistory';
 
 const router = Router();
 
@@ -64,6 +68,23 @@ router.get('/customers/monitor', async (req, res) => {
     res.json({ success: true, data });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/customers/:accountId/consumption', async (req, res) => {
+  try {
+    const data = await getInvoiceConsumptionHistory(db, Number(req.params.accountId), {
+      from: req.query.from as string | undefined,
+      to: req.query.to as string | undefined,
+      fuelType: req.query.fuel_type as string | undefined,
+      status: req.query.status as ConsumptionHistoryStatus | undefined,
+      shiftId: req.query.shift_id ? Number(req.query.shift_id) : undefined,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      pageSize: req.query.page_size ? Number(req.query.page_size) : undefined,
+    });
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 
