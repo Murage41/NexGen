@@ -2,16 +2,9 @@ import { Router } from 'express';
 import db from '../database';
 import { getKenyaDate } from '../utils/timezone';
 import { requireAdmin } from '../middleware/requireAdmin';
-import { recomputeAccountBalance } from '../services/accountBalance';
+import { paymentHttpStatus, recordMoneyAccountPayment } from '../services/receivablePayments';
 
 const router = Router();
-
-function excludeOpenShiftCredits(query: any, trx: any) {
-  query.where(function (this: any) {
-    this.whereNull('shift_id')
-      .orWhereNotIn('shift_id', trx('shifts').select('id').where({ status: 'open' }));
-  });
-}
 
 // GET / - List all credit accounts with running balance
 router.get('/', async (req, res) => {
@@ -186,94 +179,21 @@ router.put('/:id', requireAdmin, async (req, res) => {
 // Auto-settles outstanding credits FIFO (oldest first) for audit continuity.
 router.post('/:id/payments', requireAdmin, async (req, res) => {
   try {
-    const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
-    if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
-
-    if (account.type !== 'customer') {
-      return res.status(400).json({
-        success: false,
-        error: 'Payments can only be recorded against customer accounts',
-      });
-    }
-
-    if ((account.billing_mode || 'money') !== 'money') {
-      return res.status(400).json({
-        success: false,
-        error: `Account "${account.name}" is invoice-mode. Use customer invoice payments instead.`,
-      });
-    }
-
     const amount = Number(req.body.amount);
     if (!amount || amount <= 0) {
       return res.status(400).json({ success: false, error: 'Amount must be positive' });
-    }
-
-    const currentBalance = Number(account.balance || 0);
-    if (amount > currentBalance) {
-      return res.status(400).json({
-        success: false,
-        error: `Payment amount (${amount}) exceeds account balance (${currentBalance}). Maximum payable: ${currentBalance}`,
-      });
     }
 
     const paymentMethod = req.body.payment_method || 'cash';
     const paymentDate = req.body.date || req.body.payment_date || getKenyaDate();
     const notes = req.body.notes || null;
 
-    const result = await db.transaction(async (trx) => {
-      const openCredits = await trx('credits')
-        .where({ account_id: account.id })
-        .whereNull('deleted_at')
-        .whereNot('status', 'paid')
-        .where('balance', '>', 0)
-        .modify((query: any) => excludeOpenShiftCredits(query, trx))
-        .orderBy('created_at', 'asc');
-      const eligibleBalance = Math.round(
-        openCredits.reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0) * 100,
-      ) / 100;
-
-      if (amount > eligibleBalance) {
-        throw Object.assign(
-          new Error(
-            eligibleBalance > 0
-              ? `Payment amount (${amount}) exceeds closed-shift debt (${eligibleBalance}). Credits issued in open shifts can be paid after their shifts are closed.`
-              : 'This account only has open-shift credit. Close the shift before recording a payment against it.',
-          ),
-          { http: 400 },
-        );
-      }
-      // 1. Record the payment against the account (credit_id is null — it's an account-level payment)
-      const [paymentId] = await trx('credit_payments').insert({
-        credit_id: null,
-        account_id: account.id,
-        amount,
-        payment_method: paymentMethod,
-        payment_type: 'account',
-        date: paymentDate,
-        notes,
-      });
-
-      // 2. Auto-settle outstanding credits FIFO so individual rows stay consistent.
-      let remaining = amount;
-      for (const credit of openCredits) {
-        if (remaining <= 0) break;
-        const creditBalance = Number(credit.balance);
-        const apply = Math.min(remaining, creditBalance);
-        const newBalance = creditBalance - apply;
-        await trx('credits').where({ id: credit.id }).update({
-          balance: Math.max(0, newBalance),
-          status: newBalance <= 0 ? 'paid' : 'partial',
-        });
-        remaining -= apply;
-      }
-
-      // 3. Recompute account balance from source rows (Phase 1 stale-cache fix:
-      //    replaces decrement pattern that risks drift over time)
-      await recomputeAccountBalance(account.id, trx);
-
-      const updatedAccount = await trx('credit_accounts').where({ id: account.id }).first();
-      const payment = await trx('credit_payments').where({ id: paymentId }).first();
-      return { account: updatedAccount, payment };
+    const result = await recordMoneyAccountPayment(db, {
+      accountId: Number(req.params.id),
+      amount,
+      paymentMethod,
+      paymentDate,
+      notes,
     });
 
     res.status(201).json({
@@ -286,7 +206,7 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
     });
   } catch (err: any) {
     console.error('[creditAccounts:payment] ERROR', err.message, err.stack);
-    res.status(err.http || 500).json({ success: false, error: err.message });
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
   }
 });
 

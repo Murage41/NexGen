@@ -20,8 +20,10 @@
     "test:payroll-ledger": "tsx scripts/test_payroll_ledger.ts",
     "test:payroll-schedules": "tsx scripts/test_payroll_schedules.ts",
     "test:shift-debt-receipts": "tsx scripts/test_shift_debt_receipts.ts",
+    "test:receivable-payments": "tsx scripts/test_receivable_payment_integrity.ts",
     "test:delivery-policy": "tsx scripts/test_delivery_policy.ts",
     "test:delivery-replay": "tsx scripts/test_delivery_replay.ts",
+    "audit:receivables": "tsx scripts/audit_receivable_integrity.ts",
     "maintenance:delivery-timestamps:dry-run": "tsx scripts/dry_run_delivery_timestamp_normalization.ts"
   },
   "dependencies": {

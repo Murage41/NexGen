@@ -12,16 +12,12 @@ import type { Knex } from 'knex';
  * calling it after every mutation.
  *
  * Truth formula:
- *   balance = SUM(credits.amount  WHERE account_id = X AND deleted_at IS NULL)
- *           - SUM(credit_payments.amount
- *                 WHERE deleted_at IS NULL
- *                 AND (account_id = X OR credit_id IN
- *                      (SELECT id FROM credits WHERE account_id = X AND deleted_at IS NULL)))
+ *   money mode   = SUM(active credits.balance)
+ *   invoice mode = SUM(active issued/partial customer_invoices.balance)
  *
- * **Important**: This function does NOT fix overpayment / per-credit balance
- * issues — those are a separate Phase 6 concern (see
- * production-readiness-debug-plan.md). It only ensures the account-level
- * cache reflects the sum of valid amounts/payments.
+ * Payments are allocated into those source-row balances. Rebuilding from
+ * remaining balances prevents an old unallocated payment from reducing the
+ * account cache while leaving individual documents outstanding.
  *
  * Triggers (callers):
  *  - credits.ts POST/PUT/DELETE
@@ -35,60 +31,28 @@ export async function recomputeAccountBalance(
 ): Promise<number> {
   const qb = conn || db;
 
-  // Phase 3B/3C: branch on billing_mode. Invoice-mode accounts' balance is
-  // driven by issued customer_invoices minus invoice_payments, not by the
-  // money-mode credits/credit_payments tables.
+  // Invoice-mode truth is the sum of each open invoice's remaining balance.
   const acct = await qb('credit_accounts').where({ id: accountId }).first('billing_mode');
   if (acct && acct.billing_mode === 'invoice') {
-    const totalIssuedRow = await qb('customer_invoices')
+    const outstandingRow = await qb('customer_invoices')
       .where({ account_id: accountId })
       .whereNull('deleted_at')
-      .whereIn('status', ['issued', 'partial', 'paid'])
-      .sum('total_amount as total')
+      .whereIn('status', ['issued', 'partial'])
+      .sum('balance as total')
       .first();
-    const totalIssued = parseFloat((totalIssuedRow as any)?.total) || 0;
-
-    const totalPaidRow = await qb('invoice_payments')
-      .where({ account_id: accountId })
-      .whereNull('deleted_at')
-      .sum('amount as total')
-      .first();
-    const totalPaid = parseFloat((totalPaidRow as any)?.total) || 0;
-
-    const invBalance = Math.max(0, totalIssued - totalPaid);
+    const invBalance = Math.max(0, parseFloat((outstandingRow as any)?.total) || 0);
     await qb('credit_accounts').where({ id: accountId }).update({ balance: invBalance });
     return invBalance;
   }
 
+  // Money-mode truth is the sum of each credit line's remaining balance.
   const creditsSum = await qb('credits')
     .where('account_id', accountId)
     .whereNull('deleted_at')
-    .sum('amount as total')
+    .where('balance', '>', 0)
+    .sum('balance as total')
     .first();
-  const totalCredits = parseFloat(creditsSum?.total) || 0;
-
-  // Active credit IDs for this account
-  const activeCreditIds: number[] = (
-    await qb('credits')
-      .where('account_id', accountId)
-      .whereNull('deleted_at')
-      .pluck('id')
-  );
-
-  let totalPayments = 0;
-  if (activeCreditIds.length || true) {
-    const paySum = await qb('credit_payments')
-      .whereNull('deleted_at')
-      .where((q: any) => {
-        q.where('account_id', accountId);
-        if (activeCreditIds.length) q.orWhereIn('credit_id', activeCreditIds);
-      })
-      .sum('amount as total')
-      .first();
-    totalPayments = parseFloat(paySum?.total) || 0;
-  }
-
-  const balance = totalCredits - totalPayments;
+  const balance = Math.max(0, parseFloat(creditsSum?.total) || 0);
 
   const before = await qb('credit_accounts').where({ id: accountId }).first('balance');
   await qb('credit_accounts').where({ id: accountId }).update({ balance });

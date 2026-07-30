@@ -4,6 +4,11 @@ import { requireAdmin } from '../middleware/requireAdmin';
 import { getKenyaDate } from '../utils/timezone';
 import { recomputeAccountBalance } from '../services/accountBalance';
 import { getInvoiceCustomerMonitor } from '../services/invoiceCustomerMonitor';
+import {
+  paymentHttpStatus,
+  recomputeInvoiceTotals,
+  recordInvoicePayment,
+} from '../services/receivablePayments';
 
 const router = Router();
 
@@ -19,85 +24,6 @@ async function nextInvoiceNumber(trx: any): Promise<string> {
     .first();
   const seq = String((Number((row as any)?.c) || 0) + 1).padStart(3, '0');
   return `${prefix}${seq}`;
-}
-
-/**
- * FIFO-allocate a payment across an account's unpaid invoices.
- *
- * Walks `customer_invoices` for the account in (issue_date asc, id asc) order,
- * applies as much of `amount` to each invoice as fits its current balance,
- * inserts an `invoice_payment_allocations` row per touched invoice, and
- * recomputes that invoice's totals (which flips status: issued → partial → paid).
- *
- * Returns the per-invoice allocation breakdown plus any leftover (unallocated)
- * amount when the payment exceeds total outstanding. Unallocated amounts are
- * NOT auto-refunded — they remain on the payment and the account balance bottoms
- * out at 0 (per `recomputeAccountBalance`'s Math.max(0, ...) clamp).
- */
-async function allocatePayment(
-  trx: any,
-  accountId: number,
-  paymentId: number,
-  amount: number,
-): Promise<{ allocations: Array<{ invoice_id: number; invoice_number: string; amount_applied: number }>; unallocated: number }> {
-  let remaining = Math.round(amount * 100) / 100;
-  const allocations: Array<{ invoice_id: number; invoice_number: string; amount_applied: number }> = [];
-
-  const unpaid = await trx('customer_invoices')
-    .where({ account_id: accountId })
-    .whereNull('deleted_at')
-    .whereIn('status', ['issued', 'partial'])
-    .orderBy('issue_date', 'asc')
-    .orderBy('id', 'asc')
-    .select('id', 'invoice_number', 'balance');
-
-  for (const inv of unpaid) {
-    if (remaining <= 0) break;
-    const balance = Math.round(parseFloat(inv.balance) * 100) / 100;
-    if (balance <= 0) continue;
-    const apply = Math.min(remaining, balance);
-    await trx('invoice_payment_allocations').insert({
-      payment_id: paymentId,
-      invoice_id: inv.id,
-      amount_applied: apply,
-    });
-    remaining = Math.round((remaining - apply) * 100) / 100;
-    allocations.push({ invoice_id: inv.id, invoice_number: inv.invoice_number, amount_applied: apply });
-    await recomputeInvoiceTotals(inv.id, trx);
-  }
-
-  return { allocations, unallocated: remaining };
-}
-
-/** Recompute invoice.total_amount + invoice.balance from lines + payments. */
-async function recomputeInvoiceTotals(invoiceId: number, trx: any): Promise<void> {
-  const linesRow = await trx('invoice_lines')
-    .where({ invoice_id: invoiceId })
-    .sum('line_total as total')
-    .first();
-  const total = Math.round((parseFloat((linesRow as any)?.total) || 0) * 100) / 100;
-
-  const paidRow = await trx('invoice_payment_allocations')
-    .where({ invoice_id: invoiceId })
-    .sum('amount_applied as total')
-    .first();
-  const paid = Math.round((parseFloat((paidRow as any)?.total) || 0) * 100) / 100;
-
-  const balance = Math.max(0, Math.round((total - paid) * 100) / 100);
-
-  const current = await trx('customer_invoices').where({ id: invoiceId }).first();
-  let nextStatus = current.status;
-  if (current.status !== 'draft' && current.status !== 'void') {
-    if (paid >= total && total > 0) nextStatus = 'paid';
-    else if (paid > 0) nextStatus = 'partial';
-    else nextStatus = 'issued';
-  }
-
-  await trx('customer_invoices').where({ id: invoiceId }).update({
-    total_amount: total,
-    balance,
-    status: nextStatus,
-  });
 }
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
@@ -179,7 +105,7 @@ router.get('/payments', async (req, res) => {
 
 // POST /payments — record a payment + FIFO-allocate it across unpaid invoices.
 // Body: { account_id, amount, payment_method?, payment_date?, reference?, notes? }
-// Response: { payment, allocations[], unallocated_amount }
+// Response: { payment, allocations[], outstanding_balance }
 router.post('/payments', requireAdmin, async (req, res) => {
   try {
     const { account_id, amount, payment_method, payment_date, reference, notes } = req.body;
@@ -191,35 +117,18 @@ router.post('/payments', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'amount must be a positive number' });
     }
 
-    const result = await db.transaction(async (trx) => {
-      const acct = await trx('credit_accounts').where({ id: account_id }).whereNull('deleted_at').first();
-      if (!acct) throw Object.assign(new Error('Account not found'), { http: 404 });
-      if (acct.billing_mode !== 'invoice') {
-        throw Object.assign(
-          new Error(`Account "${acct.name}" is money-mode. Use POST /credit-accounts/:id/payments instead.`),
-          { http: 400 },
-        );
-      }
-
-      const [paymentId] = await trx('invoice_payments').insert({
-        account_id,
-        amount: amt,
-        payment_method: payment_method || 'cash',
-        payment_date: payment_date || getKenyaDate(),
-        reference: reference || null,
-        notes: notes || null,
-      });
-
-      const { allocations, unallocated } = await allocatePayment(trx, account_id, paymentId, amt);
-      await recomputeAccountBalance(account_id, trx);
-
-      const payment = await trx('invoice_payments').where({ id: paymentId }).first();
-      return { payment, allocations, unallocated_amount: unallocated };
+    const result = await recordInvoicePayment(db, {
+      accountId: Number(account_id),
+      amount: amt,
+      paymentMethod: payment_method || 'cash',
+      paymentDate: payment_date || getKenyaDate(),
+      reference,
+      notes,
     });
 
     res.status(201).json({ success: true, data: result });
   } catch (err: any) {
-    const status = err.http || 500;
+    const status = paymentHttpStatus(err);
     res.status(status).json({ success: false, error: err.message });
   }
 });

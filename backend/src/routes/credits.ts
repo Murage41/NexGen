@@ -4,6 +4,7 @@ import { validate } from '../middleware/validate';
 import { createCreditSchema, creditPaymentSchema } from '../schemas';
 import { getKenyaDate } from '../utils/timezone';
 import { recomputeAccountBalance } from '../services/accountBalance';
+import { paymentHttpStatus, roundMoney } from '../services/receivablePayments';
 
 const router = Router();
 
@@ -75,35 +76,42 @@ router.post('/', validate(createCreditSchema), async (req, res) => {
 router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => {
   try {
     const { amount, payment_method, date, payment_date, notes } = req.body;
-    const credit = await db('credits').where({ id: req.params.id }).whereNull('deleted_at').first();
-    if (!credit) return res.status(404).json({ success: false, error: 'Credit not found' });
-    if (credit.status === 'paid') {
-      return res.status(400).json({ success: false, error: 'Credit is already fully paid' });
+    const normalizedAmount = roundMoney(Number(amount));
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return res.status(400).json({ success: false, error: 'Amount must be positive' });
     }
-    if (credit.shift_id) {
-      const shift = await db('shifts').where({ id: credit.shift_id }).select('status').first();
-      if (shift?.status === 'open') {
-        return res.status(400).json({
-          success: false,
-          error: 'Credit issued in an open shift cannot be collected until that shift is closed.',
-        });
-      }
-    }
-
-    if (amount > credit.balance) {
-      return res.status(400).json({
-        success: false,
-        error: `Payment amount (${amount}) exceeds outstanding balance (${credit.balance}). Maximum payable: ${credit.balance}`,
-      });
-    }
-
     const resolvedDate = date || payment_date || getKenyaDate();
     const resolvedMethod = payment_method || 'cash';
 
     const updated = await db.transaction(async (trx) => {
+      const credit = await trx('credits').where({ id: req.params.id }).whereNull('deleted_at').first();
+      if (!credit) throw Object.assign(new Error('Credit not found'), { http: 404 });
+      if (credit.status === 'paid' || Number(credit.balance || 0) <= 0) {
+        throw Object.assign(new Error('Credit is already fully paid'), { http: 400 });
+      }
+      if (credit.shift_id) {
+        const shift = await trx('shifts').where({ id: credit.shift_id }).select('status').first();
+        if (shift?.status === 'open') {
+          throw Object.assign(
+            new Error('Credit issued in an open shift cannot be collected until that shift is closed.'),
+            { http: 400 },
+          );
+        }
+      }
+
+      const currentBalance = roundMoney(Number(credit.balance || 0));
+      if (normalizedAmount > currentBalance) {
+        throw Object.assign(
+          new Error(
+            `Payment KES ${normalizedAmount.toFixed(2)} exceeds the outstanding balance of KES ${currentBalance.toFixed(2)}.`,
+          ),
+          { http: 400 },
+        );
+      }
+
       await trx('credit_payments').insert({
         credit_id: credit.id,
-        amount,
+        amount: normalizedAmount,
         payment_method: resolvedMethod,
         payment_type: 'credit',
         date: resolvedDate,
@@ -111,7 +119,7 @@ router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => 
         ...(credit.account_id ? { account_id: credit.account_id } : {}),
       });
 
-      const newBalance = credit.balance - amount;
+      const newBalance = roundMoney(currentBalance - normalizedAmount);
       const status = newBalance <= 0 ? 'paid' : 'partial';
       await trx('credits').where({ id: credit.id }).update({ balance: Math.max(0, newBalance), status });
 
@@ -127,7 +135,7 @@ router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => 
     res.status(201).json({ success: true, data: updated });
   } catch (err: any) {
     console.error('[credits:payment] ERROR', err.message, err.stack);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
   }
 });
 

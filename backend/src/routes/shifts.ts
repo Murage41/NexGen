@@ -19,18 +19,12 @@ import {
   getCompensationPlan,
   getCompensationPlanById,
 } from '../services/compensation';
+import { paymentHttpStatus, recordMoneyAccountPayment } from '../services/receivablePayments';
 
 const router = Router();
 
 function toSqliteDateTime(value: string): string {
   return String(value).slice(0, 19).replace('T', ' ');
-}
-
-function excludeOpenShiftCredits(query: any, trx: any) {
-  query.where(function (this: any) {
-    this.whereNull('shift_id')
-      .orWhereNotIn('shift_id', trx('shifts').select('id').where({ status: 'open' }));
-  });
 }
 
 function roundMoney(value: number): number {
@@ -1152,97 +1146,21 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
       });
     }
 
-    const account = await db('credit_accounts')
-      .where({ id: account_id })
-      .whereNull('deleted_at')
-      .first();
-    if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
-    if (account.type !== 'customer') {
-      return res.status(400).json({
-        success: false,
-        error: 'Shift credit receipts can only be recorded for customer accounts',
-      });
-    }
-    if ((account.billing_mode || 'money') !== 'money') {
-      return res.status(400).json({
-        success: false,
-        error: `Account "${account.name}" is invoice-mode. Record invoice payments from Customer Invoices instead.`,
-      });
-    }
-
-    const balance = Number(account.balance);
-    if (pay > balance) {
-      return res.status(400).json({
-        success: false,
-        error: `Payment KES ${pay} exceeds account balance KES ${balance}`,
-      });
-    }
-
     const today = getKenyaDate();
-
-    const receipt = await db.transaction(async (trx) => {
-      const openCredits = await trx('credits')
-        .where({ account_id })
-        .whereNull('deleted_at')
-        .whereNot('status', 'paid')
-        .where('balance', '>', 0)
-        .modify((query: any) => excludeOpenShiftCredits(query, trx))
-        .orderBy('created_at', 'asc');
-      const eligibleBalance = Math.round(
-        openCredits.reduce((sum: number, credit: any) => sum + Number(credit.balance || 0), 0) * 100,
-      ) / 100;
-
-      if (pay > eligibleBalance) {
-        throw Object.assign(
-          new Error(
-            eligibleBalance > 0
-              ? `Payment KES ${pay} exceeds prior closed-shift debt KES ${eligibleBalance}. Credit issued in an open shift must be collected after that shift is closed.`
-              : 'No prior closed-shift debt is available for collection. Credit issued in an open shift must be collected after that shift is closed.',
-          ),
-          { http: 400 },
-        );
-      }
-
-      // 1. Record credit payment linked to this shift
-      const [paymentId] = await trx('credit_payments').insert({
-        account_id,
-        credit_id: null,
-        payment_type: 'account',
-        payment_method: method,
-        amount: pay,
-        date: today,
-        notes: notes || null,
-        shift_id: shiftId,
-      });
-
-      // 2. FIFO settle oldest individual credit line items
-      let remaining = pay;
-      for (const credit of openCredits) {
-        if (remaining <= 0) break;
-        const apply = Math.min(remaining, Number(credit.balance));
-        const newBal = Math.round((Number(credit.balance) - apply) * 100) / 100;
-        await trx('credits').where({ id: credit.id }).update({
-          balance: newBal,
-          status: newBal <= 0 ? 'paid' : 'partial',
-        });
-        remaining = Math.round((remaining - apply) * 100) / 100;
-      }
-
-      // 3. Recompute account balance from source rows (Phase 1 stale-cache fix)
-      await recomputeAccountBalance(account_id, trx);
-
-      // 4. Return the receipt. Shift collections remain sales-only; drawer totals
-      // are derived by adding these receipts on read.
-      return trx('credit_payments')
-        .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
-        .where('credit_payments.id', paymentId)
-        .select('credit_payments.*', 'credit_accounts.name as account_name')
-        .first();
+    const result = await recordMoneyAccountPayment(db, {
+      accountId: Number(account_id),
+      amount: pay,
+      paymentMethod: method,
+      paymentDate: today,
+      notes,
+      shiftId,
     });
 
+    const account = await db('credit_accounts').where({ id: Number(account_id) }).first('name');
+    const receipt = { ...result.payment, account_name: account?.name || null };
     res.status(201).json({ success: true, data: receipt });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
   }
 });
 
