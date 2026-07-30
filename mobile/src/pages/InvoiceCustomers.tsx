@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ChevronDown, ChevronRight, Droplets, FileText, Search } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { getInvoiceCustomerMonitor } from '../services/api';
@@ -43,6 +44,7 @@ const fmtLitres = (n: number) =>
   `${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`;
 
 export default function InvoiceCustomers() {
+  const navigate = useNavigate();
   const [monitor, setMonitor] = useState<MonitorData | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -223,6 +225,13 @@ export default function InvoiceCustomers() {
                     Last use: {customer.last_consumption_date || 'None'}
                     {customer.first_unbilled_date && ` | Unbilled: ${customer.first_unbilled_date} to ${customer.last_unbilled_date}`}
                   </div>
+
+                  <button
+                    onClick={() => navigate(`/invoice-customers/${customer.id}`)}
+                    className="w-full border border-blue-200 bg-blue-50 text-blue-700 rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-2"
+                  >
+                    <FileText size={16} /> Open Customer Records
+                  </button>
                 </div>
               )}
             </div>

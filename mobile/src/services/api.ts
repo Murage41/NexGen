@@ -178,6 +178,29 @@ export const addAccountPayment = (accountId: number, data: any) =>
 // Invoice Customers
 export const getInvoiceCustomerMonitor = (params?: { recent_limit?: number }) =>
   api.get('/customer-invoices/customers/monitor', { params });
+export const getInvoiceCustomerConsumption = (
+  accountId: number,
+  params?: {
+    from?: string;
+    to?: string;
+    fuel_type?: string;
+    status?: string;
+    shift_id?: number;
+    page?: number;
+    page_size?: number;
+  },
+) => api.get(`/customer-invoices/customers/${accountId}/consumption`, { params });
+export const getCustomerInvoices = (params?: {
+  account_id?: number;
+  status?: string;
+  from?: string;
+  to?: string;
+}) => api.get('/customer-invoices', { params });
+export const getInvoicePayments = (params?: {
+  account_id?: number;
+  from?: string;
+  to?: string;
+}) => api.get('/customer-invoices/payments', { params });
 
 // Reports
 export const getDailyReport = (date?: string) => api.get('/reports/daily', { params: { date } });

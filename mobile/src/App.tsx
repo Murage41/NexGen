@@ -19,6 +19,7 @@ import Reports from './pages/Reports';
 import Suppliers from './pages/Suppliers';
 import SupplierDetail from './pages/SupplierDetail';
 import InvoiceCustomers from './pages/InvoiceCustomers';
+import InvoiceCustomerDetail from './pages/InvoiceCustomerDetail';
 import More from './pages/More';
 import Payroll from './pages/Payroll';
 
@@ -49,6 +50,7 @@ export default function App() {
               <Route path="/suppliers" element={<Suppliers />} />
               <Route path="/suppliers/:id" element={<SupplierDetail />} />
               <Route path="/invoice-customers" element={<InvoiceCustomers />} />
+              <Route path="/invoice-customers/:id" element={<InvoiceCustomerDetail />} />
               <Route path="/prices" element={<FuelPricing />} />
               <Route path="/reports" element={<Reports />} />
             </>

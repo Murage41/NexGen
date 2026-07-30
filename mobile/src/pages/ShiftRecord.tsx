@@ -26,7 +26,11 @@ export default function ShiftRecord() {
   const [newCredit, setNewCredit] = useState({ customer_name: '', amount: '', description: '', account_id: null as number | null });
   const [newReceipt, setNewReceipt] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
   // Phase 3B: invoice-mode form — shown only when the selected account is invoice-mode
-  const [newInvoice, setNewInvoice] = useState({ fuel_type: 'petrol' as 'petrol' | 'diesel', litres: '' });
+  const [newInvoice, setNewInvoice] = useState({
+    fuel_type: 'petrol' as 'petrol' | 'diesel',
+    litres: '',
+    pump_id: '',
+  });
   const [selectedBillingMode, setSelectedBillingMode] = useState<'money' | 'invoice' | null>(null);
   const [tab, setTab] = useState<'readings' | 'collections' | 'credits' | 'expenses'>('readings');
   const [saving, setSaving] = useState(false);
@@ -268,13 +272,31 @@ export default function ShiftRecord() {
       alert('Litres must be a positive number');
       return;
     }
+    const matchingSources = readings.filter((reading) => reading.fuel_type === newInvoice.fuel_type);
+    const selectedPumpId = newInvoice.pump_id
+      ? Number(newInvoice.pump_id)
+      : matchingSources.length === 1
+        ? Number(matchingSources[0].pump_id)
+        : null;
+    if (matchingSources.length === 0) {
+      alert('No pump or nozzle is available for this fuel on the shift.');
+      return;
+    }
+    if (
+      !selectedPumpId
+      || !matchingSources.some((source) => Number(source.pump_id) === selectedPumpId)
+    ) {
+      alert('Select the pump or nozzle that supplied these litres.');
+      return;
+    }
     try {
       await addInvoiceConsumption(parseInt(id!), {
         account_id: newCredit.account_id,
         fuel_type: newInvoice.fuel_type,
         litres: litresNum,
+        pump_id: selectedPumpId,
       });
-      setNewInvoice({ fuel_type: 'petrol', litres: '' });
+      setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
       setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
       setAccountSearch('');
       setSelectedBillingMode(null);
@@ -317,6 +339,7 @@ export default function ShiftRecord() {
   const filteredAccounts = creditAccounts.filter(a =>
     a.type === 'customer' && a.name.toLowerCase().includes(accountSearch.toLowerCase())
   );
+  const invoiceSources = readings.filter((reading) => reading.fuel_type === newInvoice.fuel_type);
 
   async function handleDeleteCredit(creditId: number) {
     await deleteShiftCredit(parseInt(id!), creditId);
@@ -698,7 +721,11 @@ export default function ShiftRecord() {
                     onChange={e => {
                       setAccountSearch(e.target.value);
                       setShowAccountDropdown(true);
-                      if (!e.target.value) setNewCredit({ ...newCredit, customer_name: '', account_id: null });
+                      if (!e.target.value) {
+                        setNewCredit({ ...newCredit, customer_name: '', account_id: null });
+                        setSelectedBillingMode(null);
+                        setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
+                      }
                     }}
                     onFocus={() => setShowAccountDropdown(true)}
                     placeholder="Search customer account..."
@@ -763,14 +790,41 @@ export default function ShiftRecord() {
                 </div>
                 <div className="flex gap-2 mb-2">
                   <button
-                    onClick={() => setNewInvoice({ ...newInvoice, fuel_type: 'petrol' })}
+                    onClick={() => setNewInvoice({
+                      ...newInvoice,
+                      fuel_type: 'petrol',
+                      pump_id: readings.filter((reading) => reading.fuel_type === 'petrol').length === 1
+                        ? String(readings.find((reading) => reading.fuel_type === 'petrol')?.pump_id || '')
+                        : '',
+                    })}
                     className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${newInvoice.fuel_type === 'petrol' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
                   >Petrol</button>
                   <button
-                    onClick={() => setNewInvoice({ ...newInvoice, fuel_type: 'diesel' })}
+                    onClick={() => setNewInvoice({
+                      ...newInvoice,
+                      fuel_type: 'diesel',
+                      pump_id: readings.filter((reading) => reading.fuel_type === 'diesel').length === 1
+                        ? String(readings.find((reading) => reading.fuel_type === 'diesel')?.pump_id || '')
+                        : '',
+                    })}
                     className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${newInvoice.fuel_type === 'diesel' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
                   >Diesel</button>
                 </div>
+                {invoiceSources.length > 0 && (
+                  <select
+                    value={newInvoice.pump_id || (invoiceSources.length === 1 ? String(invoiceSources[0].pump_id) : '')}
+                    onChange={e => setNewInvoice({ ...newInvoice, pump_id: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm bg-white"
+                  >
+                    {invoiceSources.length > 1 && <option value="">Select pump / nozzle</option>}
+                    {invoiceSources.map((source) => (
+                      <option key={source.pump_id} value={source.pump_id}>
+                        {[source.pump_label, source.nozzle_label].filter(Boolean).join(' / ')}
+                        {' - '}{Number(source.litres_sold || 0).toFixed(2)} L sold
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <input type="number" step="0.01" value={newInvoice.litres} onChange={e => setNewInvoice({ ...newInvoice, litres: e.target.value })}
                   placeholder="Litres" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
                 <button onClick={handleAddInvoice}
