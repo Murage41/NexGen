@@ -17,6 +17,8 @@ const tablesToClear = [
   'supplier_payment_allocations',
   'supplier_payments',
   'supplier_invoices',
+  'staff_debt_adjustments',
+  'shift_accountability_adjustments',
   'invoice_payment_allocations',
   'invoice_payments',
   'invoice_lines',

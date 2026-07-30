@@ -71,9 +71,9 @@ export const getStaffDebts = (employeeId: number) => api.get(`/shifts/staff-debt
 export const repayDebt = (shiftId: number, amount: number) => api.put(`/shifts/${shiftId}/repay-debt`, { amount });
 export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }) =>
   api.post(`/shifts/${shiftId}/credit-receipts`, data);
-export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }) =>
+export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; pump_id?: number | null; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }) =>
   api.post(`/shifts/${shiftId}/invoice-consumption`, data);
-export const updateInvoiceConsumption = (shiftId: number, entryId: number, data: { litres?: number; tank_id?: number | null }) =>
+export const updateInvoiceConsumption = (shiftId: number, entryId: number, data: { litres?: number; pump_id?: number | null; tank_id?: number | null }) =>
   api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
 export const deleteInvoiceConsumption = (shiftId: number, entryId: number) =>
   api.delete(`/shifts/${shiftId}/invoice-consumption/${entryId}`);

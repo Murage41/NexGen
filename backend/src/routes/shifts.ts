@@ -20,6 +20,10 @@ import {
   getCompensationPlanById,
 } from '../services/compensation';
 import { paymentHttpStatus, recordMoneyAccountPayment } from '../services/receivablePayments';
+import {
+  resolveConsumptionSource,
+  validateInvoiceConsumptionAgainstReadings,
+} from '../services/invoiceConsumption';
 
 const router = Router();
 
@@ -260,12 +264,17 @@ router.get('/:id', async (req, res) => {
     // Phase 3B: invoice-mode consumption (litre ledger, retail-priced for shift balance)
     const invoiceConsumption = await db('invoice_consumption')
       .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
+      .leftJoin('pumps as invoice_pumps', 'invoice_consumption.pump_id', 'invoice_pumps.id')
+      .leftJoin('tanks as invoice_tanks', 'invoice_consumption.tank_id', 'invoice_tanks.id')
       .where('invoice_consumption.shift_id', shift.id)
       .whereNull('invoice_consumption.deleted_at')
       .select(
         'invoice_consumption.*',
         'credit_accounts.name as account_name',
         'credit_accounts.phone as account_phone',
+        'invoice_pumps.label as pump_label',
+        'invoice_pumps.nozzle_label as nozzle_label',
+        'invoice_tanks.label as tank_label',
       )
       .orderBy('invoice_consumption.created_at', 'asc');
 
@@ -979,7 +988,7 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
   try {
     if (!(await requireOpenShift(req, res))) return;
     const shiftId = Number(req.params.id);
-    const { account_id, tank_id, fuel_type, litres } = req.body;
+    const { account_id, pump_id, tank_id, fuel_type, litres } = req.body;
 
     if (!account_id || !fuel_type || litres === undefined) {
       return res
@@ -1012,6 +1021,9 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
 
       const shift = await trx('shifts').where({ id: shiftId }).first();
       if (!shift) throw Object.assign(new Error('Shift not found'), { http: 404 });
+      if (shift.status !== 'open') {
+        throw Object.assign(new Error('Cannot modify a closed shift.'), { http: 400 });
+      }
 
       const priceAsOf = shift.shift_date || getKenyaDate();
       const retailPrice = await getRetailPriceAsOf(trx, fuel_type, priceAsOf);
@@ -1022,17 +1034,27 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
         );
       }
       const retailAmount = Math.round(litresNum * retailPrice * 100) / 100;
+      const source = await resolveConsumptionSource(trx, {
+        fuelType: fuel_type,
+        pumpId: pump_id ? Number(pump_id) : null,
+        tankId: tank_id ? Number(tank_id) : null,
+      });
 
       const [id] = await trx('invoice_consumption').insert({
         account_id,
         shift_id: shiftId,
-        tank_id: tank_id || null,
+        pump_id: source.pump_id,
+        tank_id: source.tank_id,
         fuel_type,
         litres: litresNum,
         retail_price_at_time: retailPrice,
         retail_amount: retailAmount,
+        created_by_employee_id: (req as any).employee?.id > 0
+          ? (req as any).employee.id
+          : null,
       });
-      return trx('invoice_consumption').where({ id }).first();
+      const created = await trx('invoice_consumption').where({ id }).first();
+      return { ...created, source_required: source.source_required };
     });
 
     res.status(201).json({ success: true, data: entry });
@@ -1043,43 +1065,62 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
 });
 
 // PUT /shifts/:id/invoice-consumption/:entryId
-// Editable: litres, tank_id. fuel_type & account_id are frozen — delete & re-add to change those.
+// Editable: litres and source. fuel_type/account_id remain frozen.
 router.put('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const shiftId = Number(req.params.id);
     const entryId = Number(req.params.entryId);
 
-    const entry = await db('invoice_consumption')
-      .where({ id: entryId, shift_id: shiftId })
-      .whereNull('deleted_at')
-      .first();
-    if (!entry) return res.status(404).json({ success: false, error: 'Consumption entry not found' });
-    if (entry.invoice_line_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'Entry has already been invoiced and cannot be edited from the shift. Adjust via the invoice instead.',
-      });
-    }
-
-    const update: any = {};
-    if (req.body.tank_id !== undefined) update.tank_id = req.body.tank_id || null;
-    if (req.body.litres !== undefined) {
-      const litresNum = Number(req.body.litres);
-      if (!Number.isFinite(litresNum) || litresNum <= 0) {
-        return res.status(400).json({ success: false, error: 'litres must be a positive number' });
+    const updated = await db.transaction(async (trx) => {
+      const shift = await trx('shifts').where({ id: shiftId }).first();
+      if (!shift) throw Object.assign(new Error('Shift not found'), { http: 404 });
+      if (shift.status !== 'open') {
+        throw Object.assign(new Error('Cannot modify a closed shift.'), { http: 400 });
       }
-      update.litres = litresNum;
-      update.retail_amount = Math.round(litresNum * Number(entry.retail_price_at_time) * 100) / 100;
-    }
 
-    if (Object.keys(update).length > 0) {
-      await db('invoice_consumption').where({ id: entryId }).update(update);
-    }
-    const updated = await db('invoice_consumption').where({ id: entryId }).first();
+      const entry = await trx('invoice_consumption')
+        .where({ id: entryId, shift_id: shiftId })
+        .whereNull('deleted_at')
+        .first();
+      if (!entry) throw Object.assign(new Error('Consumption entry not found'), { http: 404 });
+      if (entry.invoice_line_id) {
+        throw Object.assign(
+          new Error('Entry is reserved or invoiced and cannot be edited from the shift.'),
+          { http: 400 },
+        );
+      }
+
+      const update: any = { updated_at: new Date().toISOString() };
+      if (req.body.litres !== undefined) {
+        const litresNum = Number(req.body.litres);
+        if (!Number.isFinite(litresNum) || litresNum <= 0) {
+          throw Object.assign(new Error('litres must be a positive number'), { http: 400 });
+        }
+        update.litres = litresNum;
+        update.retail_amount = Math.round(litresNum * Number(entry.retail_price_at_time) * 100) / 100;
+      }
+
+      if (req.body.pump_id !== undefined || req.body.tank_id !== undefined) {
+        const source = await resolveConsumptionSource(trx, {
+          fuelType: entry.fuel_type,
+          pumpId: req.body.pump_id !== undefined
+            ? (req.body.pump_id ? Number(req.body.pump_id) : null)
+            : (entry.pump_id ? Number(entry.pump_id) : null),
+          tankId: req.body.tank_id !== undefined
+            ? (req.body.tank_id ? Number(req.body.tank_id) : null)
+            : (entry.tank_id ? Number(entry.tank_id) : null),
+        });
+        update.pump_id = source.pump_id;
+        update.tank_id = source.tank_id;
+      }
+
+      await trx('invoice_consumption').where({ id: entryId }).update(update);
+      return trx('invoice_consumption').where({ id: entryId }).first();
+    });
     res.json({ success: true, data: updated });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -1090,24 +1131,33 @@ router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftO
     const shiftId = Number(req.params.id);
     const entryId = Number(req.params.entryId);
 
-    const entry = await db('invoice_consumption')
-      .where({ id: entryId, shift_id: shiftId })
-      .whereNull('deleted_at')
-      .first();
-    if (!entry) return res.status(404).json({ success: false, error: 'Consumption entry not found' });
-    if (entry.invoice_line_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'Entry has already been invoiced and cannot be deleted. Void the invoice instead.',
-      });
-    }
+    await db.transaction(async (trx) => {
+      const shift = await trx('shifts').where({ id: shiftId }).first();
+      if (!shift) throw Object.assign(new Error('Shift not found'), { http: 404 });
+      if (shift.status !== 'open') {
+        throw Object.assign(new Error('Cannot modify a closed shift.'), { http: 400 });
+      }
 
-    await db('invoice_consumption')
-      .where({ id: entryId })
-      .update({ deleted_at: new Date().toISOString() });
+      const entry = await trx('invoice_consumption')
+        .where({ id: entryId, shift_id: shiftId })
+        .whereNull('deleted_at')
+        .first();
+      if (!entry) throw Object.assign(new Error('Consumption entry not found'), { http: 404 });
+      if (entry.invoice_line_id) {
+        throw Object.assign(
+          new Error('Entry is reserved or invoiced and cannot be deleted.'),
+          { http: 400 },
+        );
+      }
+
+      const now = new Date().toISOString();
+      await trx('invoice_consumption')
+        .where({ id: entryId })
+        .update({ deleted_at: now, updated_at: now, entry_status: 'deleted' });
+    });
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -1281,6 +1331,15 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
       const invoiceConsumption = await trx('invoice_consumption')
         .where({ shift_id: shift.id })
         .whereNull('deleted_at');
+      const invoiceLitreValidation = validateInvoiceConsumptionAgainstReadings(
+        readings,
+        invoiceConsumption,
+      );
+      if (invoiceLitreValidation.missing_source_entries > 0) {
+        warnings.push(
+          `${invoiceLitreValidation.missing_source_entries} invoice-consumption entr${invoiceLitreValidation.missing_source_entries === 1 ? 'y has' : 'ies have'} no pump/nozzle source. Fuel totals were validated, but source-level reconciliation is incomplete.`,
+        );
+      }
 
       const employee_wage = normalizedWage;
       const compensationPlan = shift.compensation_plan_id
