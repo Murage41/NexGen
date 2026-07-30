@@ -9,10 +9,12 @@ import {
   refreshCustomerInvoiceDraft,
   voidCustomerInvoice,
   deleteCustomerInvoiceDraft,
+  createCustomerInvoiceAdjustment,
+  reverseCustomerInvoiceAdjustment,
   getCreditAccounts,
   getInvoicePayments,
   createInvoicePayment,
-  deleteInvoicePayment,
+  reverseInvoicePayment,
   getInvoiceCustomerMonitor,
 } from '../services/api';
 import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet, Users, Droplets, AlertTriangle, Clock, RefreshCw } from 'lucide-react';
@@ -108,6 +110,18 @@ export default function CustomerInvoices() {
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [editPrice, setEditPrice] = useState('');
   const [refreshingDraft, setRefreshingDraft] = useState(false);
+  const [showAdjustment, setShowAdjustment] = useState(false);
+  const [submittingAdjustment, setSubmittingAdjustment] = useState(false);
+  const [adjustmentForm, setAdjustmentForm] = useState({
+    note_type: 'credit_note' as 'credit_note' | 'debit_note',
+    note_date: today(),
+    mode: 'amount' as 'amount' | 'quantity',
+    amount: '',
+    fuel_type: 'petrol',
+    litres: '',
+    unit_price: '',
+    reason: '',
+  });
 
   // Phase 3D — Payments
   const [tab, setTab] = useState<'customers' | 'invoices' | 'payments'>('customers');
@@ -203,10 +217,11 @@ export default function CustomerInvoices() {
     }
   }
 
-  async function handleDeletePayment(paymentId: number) {
-    if (!confirm('Delete this payment? Allocations will be reversed and invoice balances updated.')) return;
+  async function handleReversePayment(paymentId: number) {
+    const reason = prompt('Reason for reversing this payment (at least 10 characters):');
+    if (!reason) return;
     try {
-      await deleteInvoicePayment(paymentId);
+      await reverseInvoicePayment(paymentId, { reason, reversal_date: today() });
       await loadInvoices();
       await loadPayments();
       await loadMonitor();
@@ -345,9 +360,10 @@ export default function CustomerInvoices() {
   }
 
   async function handleVoid(id: number) {
-    if (!confirm('Void this invoice? Consumption rows will be unlinked and can be re-invoiced.')) return;
+    const reason = prompt('Reason for voiding this invoice (at least 10 characters):');
+    if (!reason) return;
     try {
-      await voidCustomerInvoice(id);
+      await voidCustomerInvoice(id, { reason });
       setDetail(null);
       await loadInvoices();
       await loadMonitor();
@@ -361,6 +377,63 @@ export default function CustomerInvoices() {
     try {
       await deleteCustomerInvoiceDraft(id);
       setDetail(null);
+      await loadInvoices();
+      await loadMonitor();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || err?.message);
+    }
+  }
+
+  function openAdjustment(noteType: 'credit_note' | 'debit_note') {
+    setAdjustmentForm({
+      note_type: noteType,
+      note_date: today(),
+      mode: 'amount',
+      amount: '',
+      fuel_type: detail?.lines?.[0]?.fuel_type || 'petrol',
+      litres: '',
+      unit_price: '',
+      reason: '',
+    });
+    setShowAdjustment(true);
+  }
+
+  async function submitAdjustment() {
+    if (!detail) return;
+    try {
+      setSubmittingAdjustment(true);
+      const payload: any = {
+        note_type: adjustmentForm.note_type,
+        note_date: adjustmentForm.note_date,
+        reason: adjustmentForm.reason,
+      };
+      if (adjustmentForm.mode === 'quantity') {
+        payload.fuel_type = adjustmentForm.fuel_type;
+        payload.litres = Number(adjustmentForm.litres);
+        payload.unit_price = Number(adjustmentForm.unit_price);
+      } else {
+        payload.amount = Number(adjustmentForm.amount);
+      }
+      await createCustomerInvoiceAdjustment(detail.id, payload);
+      setShowAdjustment(false);
+      const refreshed = await getCustomerInvoice(detail.id);
+      setDetail(refreshed.data.data);
+      await loadInvoices();
+      await loadMonitor();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || err?.message);
+    } finally {
+      setSubmittingAdjustment(false);
+    }
+  }
+
+  async function handleReverseAdjustment(noteId: number) {
+    const reason = prompt('Reason for reversing this note (at least 10 characters):');
+    if (!reason || !detail) return;
+    try {
+      await reverseCustomerInvoiceAdjustment(noteId, { reason, reversal_date: today() });
+      const refreshed = await getCustomerInvoice(detail.id);
+      setDetail(refreshed.data.data);
       await loadInvoices();
       await loadMonitor();
     } catch (err: any) {
@@ -722,10 +795,15 @@ export default function CustomerInvoices() {
                   const allocSum = (p.allocations || []).reduce((s: number, a: any) => s + Number(a.amount_applied), 0);
                   const unallocated = Number(p.amount) - allocSum;
                   return (
-                    <tr key={p.id} className="border-t border-gray-100 hover:bg-gray-50 align-top">
+                    <tr key={p.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${p.status === 'reversed' ? 'bg-red-50/40 text-gray-500' : ''}`}>
                       <td className="px-4 py-2.5 text-gray-600">{p.payment_date}</td>
                       <td className="px-4 py-2.5 font-medium">{p.account_name}</td>
-                      <td className="px-4 py-2.5 capitalize">{p.payment_method}</td>
+                      <td className="px-4 py-2.5">
+                        <span className="capitalize">{p.payment_method}</span>
+                        {p.status === 'reversed' && (
+                          <span className="block text-[11px] font-medium text-red-600">Reversed</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 text-gray-500 text-xs">{p.reference || '—'}</td>
                       <td className="px-4 py-2.5 text-right font-semibold">{fmt(p.amount)}</td>
                       <td className="px-4 py-2.5 text-xs">
@@ -749,13 +827,15 @@ export default function CustomerInvoices() {
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                        <button
-                          onClick={() => handleDeletePayment(p.id)}
-                          className="text-red-500 hover:text-red-700 p-1"
-                          title="Delete payment"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {p.status !== 'reversed' && (
+                          <button
+                            onClick={() => handleReversePayment(p.id)}
+                            className="text-red-500 hover:text-red-700 p-1"
+                            title="Reverse payment"
+                          >
+                            <Ban size={14} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1184,6 +1264,72 @@ export default function CustomerInvoices() {
                 </table>
               </div>
 
+              {detail.status !== 'draft' && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-px border border-gray-200 bg-gray-200 text-sm">
+                  <div className="bg-white p-2.5">
+                    <p className="text-[11px] text-gray-500">Issue date</p>
+                    <p className="font-medium">{detail.issue_date}</p>
+                  </div>
+                  <div className="bg-white p-2.5">
+                    <p className="text-[11px] text-gray-500">Due date</p>
+                    <p className="font-medium">{detail.due_date || detail.issue_date}</p>
+                  </div>
+                  <div className="bg-white p-2.5">
+                    <p className="text-[11px] text-gray-500">Retail baseline</p>
+                    <p className="font-medium">{fmt(detail.retail_baseline_amount)}</p>
+                  </div>
+                  <div className="bg-white p-2.5">
+                    <p className="text-[11px] text-gray-500">Price adjustment</p>
+                    <p className={`font-medium ${Number(detail.price_adjustment_amount || 0) < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                      {fmt(detail.price_adjustment_amount)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {detail.adjustment_notes && detail.adjustment_notes.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-600 mb-1">Credit and debit notes</p>
+                  <table className="w-full text-xs border border-gray-200">
+                    <thead className="bg-gray-50 text-gray-500">
+                      <tr>
+                        <th className="text-left px-2 py-1.5">Date</th>
+                        <th className="text-left px-2 py-1.5">Document</th>
+                        <th className="text-left px-2 py-1.5">Reason</th>
+                        <th className="text-right px-2 py-1.5">Amount</th>
+                        <th className="w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.adjustment_notes.map((note: any) => (
+                        <tr key={note.id} className={`border-t border-gray-100 ${note.status === 'reversed' ? 'text-gray-400 line-through' : ''}`}>
+                          <td className="px-2 py-1.5">{note.note_date}</td>
+                          <td className="px-2 py-1.5">
+                            <span className="font-mono">{note.note_number}</span>
+                            <span className="block capitalize text-gray-500">{String(note.note_type).replace('_', ' ')}</span>
+                          </td>
+                          <td className="px-2 py-1.5">{note.reason}</td>
+                          <td className={`px-2 py-1.5 text-right font-medium ${Number(note.signed_amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                            {fmt(note.signed_amount)}
+                          </td>
+                          <td className="px-1 py-1.5">
+                            {note.status === 'posted' && (
+                              <button
+                                onClick={() => handleReverseAdjustment(note.id)}
+                                className="p-1 text-red-500 hover:text-red-700"
+                                title="Reverse note"
+                              >
+                                <Ban size={13} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* Payment allocations */}
               {detail.allocations && detail.allocations.length > 0 && (
                 <div>
@@ -1252,10 +1398,40 @@ export default function CustomerInvoices() {
                   <p className="text-sm text-gray-700 bg-gray-50 rounded p-2">{detail.notes}</p>
                 </div>
               )}
+
+              {detail.accounting_events && detail.accounting_events.length > 0 && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-xs text-gray-600 font-medium">
+                    Accounting event trail ({detail.accounting_events.length})
+                  </summary>
+                  <table className="w-full text-xs mt-2 border border-gray-200">
+                    <thead className="bg-gray-50 text-gray-500">
+                      <tr>
+                        <th className="text-left px-2 py-1">Date</th>
+                        <th className="text-left px-2 py-1">Event</th>
+                        <th className="text-right px-2 py-1">Receivable</th>
+                        <th className="text-right px-2 py-1">Cash</th>
+                        <th className="text-right px-2 py-1">Revenue adj.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.accounting_events.map((event: any) => (
+                        <tr key={event.id} className="border-t border-gray-100">
+                          <td className="px-2 py-1">{event.posting_date}</td>
+                          <td className="px-2 py-1 capitalize">{String(event.event_type).replace(/_/g, ' ')}</td>
+                          <td className="px-2 py-1 text-right">{fmt(event.receivable_delta)}</td>
+                          <td className="px-2 py-1 text-right">{fmt(event.cash_delta)}</td>
+                          <td className="px-2 py-1 text-right">{fmt(event.revenue_adjustment)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </details>
+              )}
             </div>
 
             {/* Actions */}
-            <div className="flex items-center justify-between gap-2 p-4 border-t bg-gray-50">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-t bg-gray-50">
               <div>
                 {detail.status === 'draft' && (
                   <button
@@ -1274,7 +1450,23 @@ export default function CustomerInvoices() {
                   </button>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {['issued', 'partial', 'paid'].includes(detail.status) && (
+                  <>
+                    <button
+                      onClick={() => openAdjustment('credit_note')}
+                      className="px-3 py-2 text-sm border border-red-200 bg-white text-red-700 rounded-lg font-medium hover:bg-red-50"
+                    >
+                      Credit note
+                    </button>
+                    <button
+                      onClick={() => openAdjustment('debit_note')}
+                      className="px-3 py-2 text-sm border border-green-200 bg-white text-green-700 rounded-lg font-medium hover:bg-green-50"
+                    >
+                      Debit note
+                    </button>
+                  </>
+                )}
                 <button onClick={() => setDetail(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">
                   Close
                 </button>
@@ -1298,6 +1490,140 @@ export default function CustomerInvoices() {
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAdjustment && detail && (
+        <div className="fixed inset-0 bg-black/45 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h2 className="text-lg font-bold">
+                  {adjustmentForm.note_type === 'credit_note' ? 'Create Credit Note' : 'Create Debit Note'}
+                </h2>
+                <p className="text-xs text-gray-500">{detail.invoice_number}</p>
+              </div>
+              <button onClick={() => setShowAdjustment(false)} className="p-1 text-gray-400 hover:text-gray-700">
+                <X size={19} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Note type</label>
+                <div className="grid grid-cols-2 border border-gray-300 rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setAdjustmentForm({ ...adjustmentForm, note_type: 'credit_note' })}
+                    className={`px-3 py-2 text-sm font-medium ${adjustmentForm.note_type === 'credit_note' ? 'bg-red-50 text-red-700' : 'bg-white text-gray-600'}`}
+                  >
+                    Credit note
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdjustmentForm({ ...adjustmentForm, note_type: 'debit_note' })}
+                    className={`px-3 py-2 text-sm font-medium border-l border-gray-300 ${adjustmentForm.note_type === 'debit_note' ? 'bg-green-50 text-green-700' : 'bg-white text-gray-600'}`}
+                  >
+                    Debit note
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={adjustmentForm.note_date}
+                    max={today()}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, note_date: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Correction basis</label>
+                  <select
+                    value={adjustmentForm.mode}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, mode: e.target.value as 'amount' | 'quantity' })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="amount">Amount only</option>
+                    <option value="quantity">Litres and price</option>
+                  </select>
+                </div>
+              </div>
+              {adjustmentForm.mode === 'amount' ? (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Amount</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={adjustmentForm.amount}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, amount: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Fuel</label>
+                    <select
+                      value={adjustmentForm.fuel_type}
+                      onChange={e => setAdjustmentForm({ ...adjustmentForm, fuel_type: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+                    >
+                      {(detail.lines || []).map((line: any) => (
+                        <option key={line.id} value={line.fuel_type}>{line.fuel_type}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Litres</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={adjustmentForm.litres}
+                      onChange={e => setAdjustmentForm({ ...adjustmentForm, litres: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Unit price</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={adjustmentForm.unit_price}
+                      onChange={e => setAdjustmentForm({ ...adjustmentForm, unit_price: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+                <textarea
+                  rows={3}
+                  value={adjustmentForm.reason}
+                  onChange={e => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })}
+                  placeholder="Describe the approved correction"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t bg-gray-50">
+              <button onClick={() => setShowAdjustment(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">
+                Cancel
+              </button>
+              <button
+                onClick={submitAdjustment}
+                disabled={submittingAdjustment}
+                className={`px-4 py-2 text-sm text-white rounded-lg font-medium disabled:opacity-50 ${adjustmentForm.note_type === 'credit_note' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-700 hover:bg-green-800'}`}
+              >
+                {submittingAdjustment ? 'Posting...' : 'Post note'}
+              </button>
             </div>
           </div>
         </div>

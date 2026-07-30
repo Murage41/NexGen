@@ -167,8 +167,14 @@ export const updateCustomerInvoiceLine = (invoiceId: number, lineId: number, dat
   api.put(`/customer-invoices/${invoiceId}/lines/${lineId}`, data);
 export const issueCustomerInvoice = (id: number) => api.post(`/customer-invoices/${id}/issue`);
 export const refreshCustomerInvoiceDraft = (id: number) => api.post(`/customer-invoices/${id}/refresh`);
-export const voidCustomerInvoice = (id: number) => api.post(`/customer-invoices/${id}/void`);
+export const voidCustomerInvoice = (id: number, data: { reason: string }) => api.post(`/customer-invoices/${id}/void`, data);
 export const deleteCustomerInvoiceDraft = (id: number) => api.delete(`/customer-invoices/${id}`);
+export const createCustomerInvoiceAdjustment = (id: number, data: any) =>
+  api.post(`/customer-invoices/${id}/adjustments`, data);
+export const reverseCustomerInvoiceAdjustment = (noteId: number, data: { reason: string; reversal_date?: string }) =>
+  api.post(`/customer-invoices/adjustments/${noteId}/reverse`, data);
+export const getInvoiceAccountingEvents = (params?: any) =>
+  api.get('/customer-invoices/accounting-events', { params });
 
 // ─── Customer Invoice Payments (Phase 3D) ───
 export const getInvoicePayments = (params?: { account_id?: number; from?: string; to?: string }) =>
@@ -181,8 +187,8 @@ export const createInvoicePayment = (data: {
   reference?: string;
   notes?: string;
 }) => api.post('/customer-invoices/payments', data);
-export const deleteInvoicePayment = (paymentId: number) =>
-  api.delete(`/customer-invoices/payments/${paymentId}`);
+export const reverseInvoicePayment = (paymentId: number, data: { reason: string; reversal_date?: string }) =>
+  api.post(`/customer-invoices/payments/${paymentId}/reverse`, data);
 
 // ============ Fuel Deliveries ============
 export const getFuelDeliveries = (params?: any) => api.get('/fuel-deliveries', { params });

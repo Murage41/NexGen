@@ -21,6 +21,7 @@ router.get('/', async (req, res) => {
       'ca.phone',
       'ca.type',
       'ca.billing_mode',
+      'ca.payment_terms_days',
       'ca.employee_id',
       'ca.balance as outstanding_balance',
       'ca.created_at',
@@ -81,17 +82,25 @@ router.get('/:id', async (req, res) => {
 // first fuel-up. Money-mode accounts are still auto-created on shift credits.
 router.post('/', requireAdmin, async (req, res) => {
   try {
-    const { name, phone, billing_mode } = req.body;
+    const { name, phone, billing_mode, payment_terms_days } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ success: false, error: 'name is required' });
     }
     const mode = billing_mode === 'invoice' ? 'invoice' : 'money';
+    const termsDays = Number(payment_terms_days ?? 0);
+    if (!Number.isInteger(termsDays) || termsDays < 0 || termsDays > 365) {
+      return res.status(400).json({
+        success: false,
+        error: 'payment_terms_days must be a whole number from 0 to 365',
+      });
+    }
 
     const [id] = await db('credit_accounts').insert({
       name: name.trim(),
       phone: phone || null,
       type: 'customer',
       billing_mode: mode,
+      payment_terms_days: mode === 'invoice' ? termsDays : 0,
       balance: 0,
     });
     const account = await db('credit_accounts').where({ id }).first();
@@ -115,10 +124,20 @@ router.put('/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Only customer accounts are editable here' });
     }
 
-    const { name, phone, billing_mode } = req.body;
+    const { name, phone, billing_mode, payment_terms_days } = req.body;
     const update: any = {};
     if (name !== undefined) update.name = String(name).trim();
     if (phone !== undefined) update.phone = phone || null;
+    if (payment_terms_days !== undefined) {
+      const termsDays = Number(payment_terms_days);
+      if (!Number.isInteger(termsDays) || termsDays < 0 || termsDays > 365) {
+        return res.status(400).json({
+          success: false,
+          error: 'payment_terms_days must be a whole number from 0 to 365',
+        });
+      }
+      update.payment_terms_days = termsDays;
+    }
 
     if (billing_mode !== undefined && billing_mode !== account.billing_mode) {
       if (billing_mode !== 'money' && billing_mode !== 'invoice') {
@@ -162,6 +181,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
         }
       }
       update.billing_mode = billing_mode;
+      if (billing_mode === 'money') update.payment_terms_days = 0;
     }
 
     if (Object.keys(update).length > 0) {

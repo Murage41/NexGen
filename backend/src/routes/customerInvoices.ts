@@ -2,36 +2,31 @@ import { Router } from 'express';
 import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { getKenyaDate } from '../utils/timezone';
-import { recomputeAccountBalance } from '../services/accountBalance';
 import { getInvoiceCustomerMonitor } from '../services/invoiceCustomerMonitor';
 import {
   paymentHttpStatus,
   recomputeInvoiceTotals,
   recordInvoicePayment,
+  reverseInvoicePayment,
 } from '../services/receivablePayments';
 import {
   createReservedInvoiceDraft,
   getReservableConsumption,
   refreshInvoiceDraftReservation,
   releaseInvoiceReservation,
-  validateDraftReservationForIssue,
 } from '../services/invoiceDraftReservations';
+import {
+  postInvoiceAdjustment,
+  reverseInvoiceAdjustment,
+} from '../services/invoiceAdjustments';
+import {
+  issueReservedCustomerInvoice,
+  voidIssuedCustomerInvoice,
+} from '../services/invoiceLifecycle';
 
 const router = Router();
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-/** Generate next invoice number: CINV-YYYYMMDD-NNN (reset per day). */
-async function nextInvoiceNumber(trx: any): Promise<string> {
-  const today = getKenyaDate().replace(/-/g, '');
-  const prefix = `CINV-${today}-`;
-  const row = await trx('customer_invoices')
-    .where('invoice_number', 'like', `${prefix}%`)
-    .count('* as c')
-    .first();
-  const seq = String((Number((row as any)?.c) || 0) + 1).padStart(3, '0');
-  return `${prefix}${seq}`;
-}
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
@@ -83,7 +78,6 @@ router.get('/payments', async (req, res) => {
     const { account_id, from, to } = req.query as any;
     let q = db('invoice_payments as p')
       .leftJoin('credit_accounts as a', 'p.account_id', 'a.id')
-      .whereNull('p.deleted_at')
       .select('p.*', 'a.name as account_name');
     if (account_id) q = q.where('p.account_id', Number(account_id));
     if (from) q = q.where('p.payment_date', '>=', from);
@@ -124,13 +118,19 @@ router.post('/payments', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'amount must be a positive number' });
     }
 
+    const effectivePaymentDate = payment_date || getKenyaDate();
+    if (effectivePaymentDate > getKenyaDate()) {
+      return res.status(400).json({ success: false, error: 'Payment date cannot be in the future.' });
+    }
     const result = await recordInvoicePayment(db, {
       accountId: Number(account_id),
       amount: amt,
       paymentMethod: payment_method || 'cash',
-      paymentDate: payment_date || getKenyaDate(),
+      paymentDate: effectivePaymentDate,
       reference,
       notes,
+      receivingAccount: req.body.received_into,
+      actorId: (req as any).employee?.id,
     });
 
     res.status(201).json({ success: true, data: result });
@@ -140,34 +140,64 @@ router.post('/payments', requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE /payments/:paymentId — soft-delete payment, hard-delete its allocations,
-// recompute affected invoices' totals + status, recompute account balance.
-router.delete('/payments/:paymentId', requireAdmin, async (req, res) => {
+router.post('/payments/:paymentId/reverse', requireAdmin, async (req: any, res) => {
   try {
-    const paymentId = Number(req.params.paymentId);
-    await db.transaction(async (trx) => {
-      const payment = await trx('invoice_payments').where({ id: paymentId }).whereNull('deleted_at').first();
-      if (!payment) throw Object.assign(new Error('Payment not found'), { http: 404 });
-
-      const affectedInvoices: number[] = await trx('invoice_payment_allocations')
-        .where({ payment_id: paymentId })
-        .pluck('invoice_id');
-
-      // Hard-delete the allocations — they are derived data, regenerable from
-      // payments. Soft-deleting them would require recomputeInvoiceTotals to
-      // join through invoice_payments to filter deleted_at, which it doesn't.
-      await trx('invoice_payment_allocations').where({ payment_id: paymentId }).delete();
-      await trx('invoice_payments').where({ id: paymentId }).update({ deleted_at: trx.fn.now() });
-
-      for (const invId of affectedInvoices) {
-        await recomputeInvoiceTotals(invId, trx);
-      }
-      await recomputeAccountBalance(payment.account_id, trx);
+    const reversalDate = req.body.reversal_date || getKenyaDate();
+    if (reversalDate > getKenyaDate()) {
+      return res.status(400).json({ success: false, error: 'Reversal date cannot be in the future.' });
+    }
+    const result = await reverseInvoicePayment(db, {
+      paymentId: Number(req.params.paymentId),
+      reason: req.body.reason,
+      reversalDate,
+      actorId: req.employee?.id,
     });
-    res.json({ success: true });
+    res.json({ success: true, data: result });
   } catch (err: any) {
-    const status = err.http || (String(err.code || '').includes('SQLITE_BUSY') ? 409 : 500);
-    res.status(status).json({ success: false, error: err.message });
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/payments/:paymentId', requireAdmin, (_req, res) => {
+  res.status(405).json({
+    success: false,
+    error: 'Payments are not deleted. Use the reversal action and provide a reason.',
+  });
+});
+
+router.get('/accounting-events', async (req, res) => {
+  try {
+    const { account_id, invoice_id, from, to, event_type } = req.query as any;
+    let query = db('invoice_accounting_events as event')
+      .leftJoin('credit_accounts as account', 'event.account_id', 'account.id')
+      .select('event.*', 'account.name as account_name');
+    if (account_id) query = query.where('event.account_id', Number(account_id));
+    if (invoice_id) query = query.where('event.invoice_id', Number(invoice_id));
+    if (event_type) query = query.where('event.event_type', event_type);
+    if (from) query = query.where('event.posting_date', '>=', from);
+    if (to) query = query.where('event.posting_date', '<=', to);
+    const rows = await query.orderBy('event.posting_date', 'desc').orderBy('event.id', 'desc');
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/adjustments/:noteId/reverse', requireAdmin, async (req: any, res) => {
+  try {
+    const reversalDate = req.body.reversal_date || getKenyaDate();
+    if (reversalDate > getKenyaDate()) {
+      return res.status(400).json({ success: false, error: 'Reversal date cannot be in the future.' });
+    }
+    const result = await reverseInvoiceAdjustment(db, {
+      noteId: Number(req.params.noteId),
+      reversalDate,
+      reason: req.body.reason,
+      actorId: req.employee?.id,
+    });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
   }
 });
 
@@ -199,10 +229,30 @@ router.get('/:id', async (req, res) => {
       .leftJoin('invoice_payments as p', 'a.payment_id', 'p.id')
       .where('a.invoice_id', invoice.id)
       .whereNull('p.deleted_at')
+      .where('p.status', 'posted')
       .select('a.*', 'p.payment_date', 'p.payment_method', 'p.reference')
       .orderBy('p.payment_date', 'asc');
 
-    res.json({ success: true, data: { ...invoice, lines, consumption, allocations } });
+    const adjustmentNotes = await db('invoice_adjustment_notes')
+      .where({ invoice_id: invoice.id })
+      .orderBy('note_date', 'asc')
+      .orderBy('id', 'asc');
+    const accountingEvents = await db('invoice_accounting_events')
+      .where({ invoice_id: invoice.id })
+      .orderBy('posting_date', 'asc')
+      .orderBy('id', 'asc');
+
+    res.json({
+      success: true,
+      data: {
+        ...invoice,
+        lines,
+        consumption,
+        allocations,
+        adjustment_notes: adjustmentNotes,
+        accounting_events: accountingEvents,
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -334,33 +384,14 @@ router.post('/:id/refresh', requireAdmin, async (req, res) => {
 // POST /:id/issue — draft → issued
 // Uses only the rows already reserved by this draft. Later consumption is
 // included only when an administrator explicitly refreshes the draft.
-router.post('/:id/issue', requireAdmin, async (req, res) => {
+router.post('/:id/issue', requireAdmin, async (req: any, res) => {
   try {
     const invoiceId = Number(req.params.id);
-    await db.transaction(async (trx) => {
-      const invoice = await trx('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first();
-      if (!invoice) throw Object.assign(new Error('Invoice not found'), { http: 404 });
-      if (invoice.status !== 'draft') {
-        throw Object.assign(new Error('Only draft invoices can be issued'), { http: 400 });
-      }
-
-      await validateDraftReservationForIssue(trx, invoice);
-
-      // Assign invoice_number + flip to issued
-      const invoiceNumber = await nextInvoiceNumber(trx);
-      await trx('customer_invoices').where({ id: invoiceId }).update({
-        invoice_number: invoiceNumber,
-        issue_date: getKenyaDate(),
-        status: 'issued',
-        reservation_status: 'issued',
-        reservation_updated_at: trx.fn.now(),
-      });
-
-      await recomputeInvoiceTotals(invoiceId, trx);
-      await recomputeAccountBalance(invoice.account_id, trx);
+    const issued = await issueReservedCustomerInvoice(db, {
+      invoiceId,
+      issueDate: getKenyaDate(),
+      actorId: req.employee?.id,
     });
-
-    const issued = await db('customer_invoices').where({ id: invoiceId }).first();
     res.json({ success: true, data: issued });
   } catch (err: any) {
     const status = err.http || 500;
@@ -368,38 +399,39 @@ router.post('/:id/issue', requireAdmin, async (req, res) => {
   }
 });
 
+router.post('/:id/adjustments', requireAdmin, async (req: any, res) => {
+  try {
+    const noteDate = req.body.note_date || getKenyaDate();
+    if (noteDate > getKenyaDate()) {
+      return res.status(400).json({ success: false, error: 'Adjustment date cannot be in the future.' });
+    }
+    const result = await postInvoiceAdjustment(db, {
+      invoiceId: Number(req.params.id),
+      noteType: req.body.note_type,
+      noteDate,
+      amount: req.body.amount,
+      fuelType: req.body.fuel_type,
+      litres: req.body.litres,
+      unitPrice: req.body.unit_price,
+      reason: req.body.reason,
+      actorId: req.employee?.id,
+    });
+    res.status(201).json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
+  }
+});
+
 // POST /:id/void — issued → void (only if no payments allocated)
-router.post('/:id/void', requireAdmin, async (req, res) => {
+router.post('/:id/void', requireAdmin, async (req: any, res) => {
   try {
     const invoiceId = Number(req.params.id);
-    await db.transaction(async (trx) => {
-      const invoice = await trx('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first();
-      if (!invoice) throw Object.assign(new Error('Invoice not found'), { http: 404 });
-      if (invoice.status === 'void' || invoice.status === 'draft') {
-        throw Object.assign(new Error('Only issued invoices can be voided'), { http: 400 });
-      }
-
-      const paid = await trx('invoice_payment_allocations')
-        .where({ invoice_id: invoiceId })
-        .sum('amount_applied as total')
-        .first();
-      if (Number((paid as any)?.total || 0) > 0) {
-        throw Object.assign(new Error('Cannot void an invoice with allocated payments'), { http: 400 });
-      }
-
-      await releaseInvoiceReservation(trx, invoiceId);
-
-      await trx('customer_invoices').where({ id: invoiceId }).update({
-        status: 'void',
-        balance: 0,
-        reservation_status: 'released',
-        reservation_updated_at: trx.fn.now(),
-      });
-
-      await recomputeAccountBalance(invoice.account_id, trx);
+    const voided = await voidIssuedCustomerInvoice(db, {
+      invoiceId,
+      voidDate: getKenyaDate(),
+      reason: req.body.reason,
+      actorId: req.employee?.id,
     });
-
-    const voided = await db('customer_invoices').where({ id: invoiceId }).first();
     res.json({ success: true, data: voided });
   } catch (err: any) {
     const status = err.http || 500;

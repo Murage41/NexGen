@@ -59,6 +59,7 @@ async function createSchema(db: Knex) {
     t.string('issue_date').nullable();
     t.string('status').notNullable();
     t.decimal('total_amount', 14, 2).notNullable();
+    t.decimal('adjustment_total', 14, 2).notNullable().defaultTo(0);
     t.decimal('balance', 14, 2).notNullable();
     t.timestamp('deleted_at').nullable();
   });
@@ -75,6 +76,12 @@ async function createSchema(db: Knex) {
     t.string('payment_date').notNullable();
     t.string('reference').nullable();
     t.text('notes').nullable();
+    t.string('status').notNullable().defaultTo('posted');
+    t.string('received_into').nullable();
+    t.integer('created_by_employee_id').nullable();
+    t.timestamp('reversed_at').nullable();
+    t.integer('reversed_by_employee_id').nullable();
+    t.text('reversal_reason').nullable();
     t.timestamp('deleted_at').nullable();
   });
   await db.schema.createTable('invoice_payment_allocations', (t) => {
@@ -82,6 +89,33 @@ async function createSchema(db: Knex) {
     t.integer('payment_id').notNullable();
     t.integer('invoice_id').notNullable();
     t.decimal('amount_applied', 14, 2).notNullable();
+  });
+  await db.schema.createTable('invoice_adjustment_notes', (t) => {
+    t.increments('id').primary();
+    t.integer('account_id').notNullable();
+    t.integer('invoice_id').notNullable();
+    t.string('status').notNullable();
+    t.decimal('signed_amount', 14, 2).notNullable();
+  });
+  await db.schema.createTable('invoice_accounting_events', (t) => {
+    t.increments('id').primary();
+    t.string('source_key').notNullable().unique();
+    t.integer('account_id').notNullable();
+    t.integer('invoice_id').nullable();
+    t.integer('payment_id').nullable();
+    t.integer('adjustment_note_id').nullable();
+    t.string('event_type').notNullable();
+    t.string('posting_date').notNullable();
+    t.decimal('receivable_delta', 14, 2).notNullable();
+    t.decimal('cash_delta', 14, 2).notNullable();
+    t.decimal('revenue_adjustment', 14, 2).notNullable();
+    t.decimal('retail_baseline_amount', 14, 2).notNullable();
+    t.decimal('document_amount', 14, 2).notNullable();
+    t.string('payment_method').nullable();
+    t.string('receiving_account').nullable();
+    t.integer('reversal_of_event_id').nullable();
+    t.text('reason').nullable();
+    t.integer('created_by_employee_id').nullable();
   });
 }
 

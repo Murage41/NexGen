@@ -135,6 +135,7 @@ app.get('/api/health/db-stats', requireAdmin, async (_req, res) => {
       'credits', 'credit_accounts', 'credit_payments',
       'invoice_consumption', 'customer_invoices', 'invoice_lines',
       'invoice_payments', 'invoice_payment_allocations',
+      'invoice_adjustment_notes', 'invoice_accounting_events', 'invoice_document_sequences',
       'shift_accountability_adjustments', 'staff_debt_adjustments',
       'expenses', 'staff_debts',
       'suppliers', 'supplier_invoices', 'supplier_payments',

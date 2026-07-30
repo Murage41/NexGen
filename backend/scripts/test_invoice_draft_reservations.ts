@@ -55,6 +55,7 @@ async function createSchema(db: Knex) {
     table.timestamp('reserved_at').nullable();
     table.timestamp('reservation_updated_at').nullable();
     table.decimal('total_amount', 14, 2).notNullable();
+    table.decimal('adjustment_total', 14, 2).notNullable().defaultTo(0);
     table.decimal('balance', 14, 2).notNullable();
     table.text('notes').nullable();
     table.timestamp('deleted_at').nullable();
@@ -85,6 +86,17 @@ async function createSchema(db: Knex) {
     table.integer('payment_id').notNullable();
     table.integer('invoice_id').notNullable();
     table.decimal('amount_applied', 14, 2).notNullable();
+  });
+  await db.schema.createTable('invoice_payments', (table) => {
+    table.increments('id').primary();
+    table.string('status').notNullable().defaultTo('posted');
+    table.timestamp('deleted_at').nullable();
+  });
+  await db.schema.createTable('invoice_adjustment_notes', (table) => {
+    table.increments('id').primary();
+    table.integer('invoice_id').notNullable();
+    table.string('status').notNullable();
+    table.decimal('signed_amount', 14, 2).notNullable();
   });
 }
 

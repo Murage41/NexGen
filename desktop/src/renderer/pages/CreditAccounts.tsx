@@ -22,8 +22,8 @@ export default function CreditAccounts() {
     notes: '',
   });
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [accountForm, setAccountForm] = useState<{ id: number | null; name: string; phone: string; billing_mode: 'money' | 'invoice' }>({
-    id: null, name: '', phone: '', billing_mode: 'money',
+  const [accountForm, setAccountForm] = useState<{ id: number | null; name: string; phone: string; billing_mode: 'money' | 'invoice'; payment_terms_days: string }>({
+    id: null, name: '', phone: '', billing_mode: 'money', payment_terms_days: '0',
   });
   const [accountError, setAccountError] = useState<string | null>(null);
 
@@ -149,7 +149,7 @@ export default function CreditAccounts() {
   }
 
   function openNewAccount() {
-    setAccountForm({ id: null, name: '', phone: '', billing_mode: 'money' });
+    setAccountForm({ id: null, name: '', phone: '', billing_mode: 'money', payment_terms_days: '0' });
     setAccountError(null);
     setShowAccountModal(true);
   }
@@ -160,6 +160,7 @@ export default function CreditAccounts() {
       name: account.name || '',
       phone: account.phone || '',
       billing_mode: account.billing_mode === 'invoice' ? 'invoice' : 'money',
+      payment_terms_days: String(account.payment_terms_days || 0),
     });
     setAccountError(null);
     setShowAccountModal(true);
@@ -174,12 +175,14 @@ export default function CreditAccounts() {
           name: accountForm.name,
           phone: accountForm.phone || null,
           billing_mode: accountForm.billing_mode,
+          payment_terms_days: Number(accountForm.payment_terms_days || 0),
         });
       } else {
         await updateCreditAccount(accountForm.id, {
           name: accountForm.name,
           phone: accountForm.phone || null,
           billing_mode: accountForm.billing_mode,
+          payment_terms_days: Number(accountForm.payment_terms_days || 0),
         });
       }
       setShowAccountModal(false);
@@ -573,9 +576,27 @@ export default function CreditAccounts() {
                     : 'For companies billed on invoice (e.g. Diwafa, Mugendi Stores Kamuwongo). Shift records litres per fuel type; invoice issued later at an agreed price.'}
                 </p>
                 {accountForm.billing_mode === 'invoice' && (
-                  <p className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2 mt-2">
-                    ⚠ Invoice-mode accounts are managed from the <strong>Customer Invoices</strong> page and won't appear in this list after saving.
-                  </p>
+                  <>
+                    <div className="mt-3">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Payment terms</label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">Net</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="365"
+                          step="1"
+                          value={accountForm.payment_terms_days}
+                          onChange={e => setAccountForm({ ...accountForm, payment_terms_days: e.target.value })}
+                          className="w-24 border border-gray-300 rounded-lg p-2"
+                        />
+                        <span className="text-sm text-gray-500">days</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2 mt-2">
+                      Invoice-mode accounts are managed from the <strong>Customer Invoices</strong> page and won't appear in this list after saving.
+                    </p>
+                  </>
                 )}
               </div>
               <div className="flex gap-2 pt-2">
@@ -597,4 +618,3 @@ export default function CreditAccounts() {
     </div>
   );
 }
-

@@ -7,7 +7,9 @@ export type ReceivableIntegrityIssue = {
     | 'invoice_overallocated'
     | 'invoice_balance_mismatch'
     | 'money_account_overpaid'
-    | 'account_cache_mismatch';
+    | 'account_cache_mismatch'
+    | 'accounting_event_missing'
+    | 'accounting_balance_mismatch';
   account_id: number;
   record_id?: number;
   expected?: number;
@@ -32,6 +34,7 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
 
   const invoicePayments = await db('invoice_payments as p')
     .whereNull('p.deleted_at')
+    .where('p.status', 'posted')
     .leftJoin('invoice_payment_allocations as a', 'a.payment_id', 'p.id')
     .select('p.id', 'p.account_id', 'p.amount')
     .sum('a.amount_applied as allocated')
@@ -54,30 +57,38 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
 
   const invoices = await db('customer_invoices as i')
     .whereNull('i.deleted_at')
-    .leftJoin('invoice_payment_allocations as a', 'a.invoice_id', 'i.id')
-    .leftJoin('invoice_payments as p', function (this: any) {
-      this.on('p.id', '=', 'a.payment_id').andOnNull('p.deleted_at');
-    })
-    .select('i.id', 'i.account_id', 'i.status', 'i.total_amount', 'i.balance')
-    .sum('a.amount_applied as allocated')
-    .groupBy('i.id', 'i.account_id', 'i.status', 'i.total_amount', 'i.balance');
+    .select('i.id', 'i.account_id', 'i.status', 'i.total_amount', 'i.balance');
   for (const invoice of invoices as any[]) {
     if (invoice.status === 'draft' || invoice.status === 'void') continue;
     const total = roundMoney(Number(invoice.total_amount || 0));
-    const allocated = roundMoney(Number(invoice.allocated || 0));
+    const paidRow = await db('invoice_payment_allocations as allocation')
+      .join('invoice_payments as payment', 'allocation.payment_id', 'payment.id')
+      .where('allocation.invoice_id', invoice.id)
+      .where('payment.status', 'posted')
+      .whereNull('payment.deleted_at')
+      .sum('allocation.amount_applied as total')
+      .first();
+    const adjustmentRow = await db('invoice_adjustment_notes')
+      .where({ invoice_id: invoice.id, status: 'posted' })
+      .sum('signed_amount as total')
+      .first();
+    const adjustedTotal = roundMoney(
+      total + Number((adjustmentRow as any)?.total || 0),
+    );
+    const allocated = roundMoney(Number((paidRow as any)?.total || 0));
     const storedBalance = roundMoney(Number(invoice.balance || 0));
-    if (allocated > total) {
+    if (allocated > adjustedTotal) {
       issues.push({
         kind: 'invoice_overallocated',
         account_id: Number(invoice.account_id),
         record_id: Number(invoice.id),
-        expected: total,
+        expected: adjustedTotal,
         actual: allocated,
-        difference: difference(allocated, total),
-        message: `Invoice ${invoice.id} has KES ${allocated.toFixed(2)} allocated against a KES ${total.toFixed(2)} total.`,
+        difference: difference(allocated, adjustedTotal),
+        message: `Invoice ${invoice.id} has KES ${allocated.toFixed(2)} allocated against a KES ${adjustedTotal.toFixed(2)} adjusted total.`,
       });
     }
-    const expectedBalance = Math.max(0, roundMoney(total - allocated));
+    const expectedBalance = Math.max(0, roundMoney(adjustedTotal - allocated));
     if (Math.abs(storedBalance - expectedBalance) >= 0.01) {
       issues.push({
         kind: 'invoice_balance_mismatch',
@@ -105,6 +116,21 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
         .sum('balance as total')
         .first();
       expectedBalance = roundMoney(Number((row as any)?.total || 0));
+      const eventRow = await db('invoice_accounting_events')
+        .where({ account_id: account.id })
+        .sum('receivable_delta as total')
+        .first();
+      const eventBalance = roundMoney(Number((eventRow as any)?.total || 0));
+      if (Math.abs(eventBalance - expectedBalance) >= 0.01) {
+        issues.push({
+          kind: 'accounting_balance_mismatch',
+          account_id: Number(account.id),
+          expected: expectedBalance,
+          actual: eventBalance,
+          difference: difference(eventBalance, expectedBalance),
+          message: `Invoice accounting events for account ${account.id} net to KES ${eventBalance.toFixed(2)}; open documents total KES ${expectedBalance.toFixed(2)}.`,
+        });
+      }
     } else {
       const creditRow = await db('credits')
         .where({ account_id: account.id })
@@ -157,12 +183,82 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
     }
   }
 
+  const requiredEventKeys: Array<{ account_id: number; record_id: number; source_key: string }> = [];
+  const issuedInvoices = await db('customer_invoices')
+    .whereNull('deleted_at')
+    .whereIn('status', ['issued', 'partial', 'paid', 'void'])
+    .select('id', 'account_id', 'status');
+  for (const invoice of issuedInvoices as any[]) {
+    requiredEventKeys.push({
+      account_id: Number(invoice.account_id),
+      record_id: Number(invoice.id),
+      source_key: `invoice:${invoice.id}:issue`,
+    });
+    if (invoice.status === 'void') {
+      requiredEventKeys.push({
+        account_id: Number(invoice.account_id),
+        record_id: Number(invoice.id),
+        source_key: `invoice:${invoice.id}:void`,
+      });
+    }
+  }
+  const payments = await db('invoice_payments').select('id', 'account_id', 'status');
+  for (const payment of payments as any[]) {
+    requiredEventKeys.push({
+      account_id: Number(payment.account_id),
+      record_id: Number(payment.id),
+      source_key: `payment:${payment.id}:posted`,
+    });
+    if (payment.status === 'reversed') {
+      requiredEventKeys.push({
+        account_id: Number(payment.account_id),
+        record_id: Number(payment.id),
+        source_key: `payment:${payment.id}:reversal`,
+      });
+    }
+  }
+  const notes = await db('invoice_adjustment_notes').select('id', 'account_id', 'status');
+  for (const note of notes as any[]) {
+    requiredEventKeys.push({
+      account_id: Number(note.account_id),
+      record_id: Number(note.id),
+      source_key: `adjustment-note:${note.id}:posted`,
+    });
+    if (note.status === 'reversed') {
+      requiredEventKeys.push({
+        account_id: Number(note.account_id),
+        record_id: Number(note.id),
+        source_key: `adjustment-note:${note.id}:reversal`,
+      });
+    }
+  }
+  if (requiredEventKeys.length > 0) {
+    const existingKeys = new Set(
+      (await db('invoice_accounting_events')
+        .whereIn('source_key', requiredEventKeys.map((item) => item.source_key))
+        .pluck('source_key'))
+        .map(String),
+    );
+    for (const required of requiredEventKeys) {
+      if (!existingKeys.has(required.source_key)) {
+        issues.push({
+          kind: 'accounting_event_missing',
+          account_id: required.account_id,
+          record_id: required.record_id,
+          message: `Required accounting event ${required.source_key} is missing.`,
+        });
+      }
+    }
+  }
+
   const counts: ReceivableIntegrityReport['counts'] = {
     invoice_payment_unallocated: 0,
     invoice_overallocated: 0,
     invoice_balance_mismatch: 0,
     money_account_overpaid: 0,
     account_cache_mismatch: 0,
+    accounting_event_missing: 0,
+    accounting_balance_mismatch: 0,
   };
   for (const issue of issues) counts[issue.kind] += 1;
 
