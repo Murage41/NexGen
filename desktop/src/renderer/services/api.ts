@@ -195,6 +195,7 @@ export const createInvoicePayment = (data: {
   account_id: number;
   amount: number;
   payment_method?: string;
+  received_into?: string;
   payment_date?: string;
   reference?: string;
   notes?: string;

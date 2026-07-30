@@ -18,6 +18,7 @@ import {
   getInvoiceCustomerMonitor,
 } from '../services/api';
 import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet, Users, Droplets, AlertTriangle, Clock, RefreshCw } from 'lucide-react';
+import InvoiceCustomerWorkspace from '../components/InvoiceCustomerWorkspace';
 
 type Account = { id: number; name: string; billing_mode?: string; outstanding_balance?: number };
 type Invoice = {
@@ -97,6 +98,7 @@ export default function CustomerInvoices() {
   const [monitorSearch, setMonitorSearch] = useState('');
   const [error, setError] = useState('');
   const [monitor, setMonitor] = useState<MonitorData | null>(null);
+  const [workspaceCustomer, setWorkspaceCustomer] = useState<MonitorCustomer | null>(null);
 
   // Generate (draft) modal
   const [showGenerate, setShowGenerate] = useState(false);
@@ -131,12 +133,22 @@ export default function CustomerInvoices() {
     account_id: '',
     amount: '',
     payment_method: 'cash',
+    received_into: 'cash_on_hand',
     payment_date: today(),
     reference: '',
     notes: '',
   });
   const [payResult, setPayResult] = useState<any | null>(null);
   const [submittingPay, setSubmittingPay] = useState(false);
+  const [reasonAction, setReasonAction] = useState<{
+    kind: 'payment' | 'invoice' | 'adjustment';
+    id: number;
+    title: string;
+    description: string;
+  } | null>(null);
+  const [reasonText, setReasonText] = useState('');
+  const [reasonDate, setReasonDate] = useState(today());
+  const [reasonBusy, setReasonBusy] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -171,11 +183,12 @@ export default function CustomerInvoices() {
     }
   }
 
-  function openReceive() {
+  function openReceive(preselectedAccountId?: number) {
     setPayForm({
-      account_id: accountFilter || '',
+      account_id: preselectedAccountId ? String(preselectedAccountId) : accountFilter || '',
       amount: '',
       payment_method: 'cash',
+      received_into: 'cash_on_hand',
       payment_date: today(),
       reference: '',
       notes: '',
@@ -183,6 +196,7 @@ export default function CustomerInvoices() {
     setPayResult(null);
     setError('');
     setShowReceive(true);
+    setWorkspaceCustomer(null);
   }
 
   async function submitPayment() {
@@ -202,6 +216,7 @@ export default function CustomerInvoices() {
         account_id: Number(payForm.account_id),
         amount: amt,
         payment_method: payForm.payment_method || undefined,
+        received_into: payForm.received_into || undefined,
         payment_date: payForm.payment_date || undefined,
         reference: payForm.reference || undefined,
         notes: payForm.notes || undefined,
@@ -217,17 +232,16 @@ export default function CustomerInvoices() {
     }
   }
 
-  async function handleReversePayment(paymentId: number) {
-    const reason = prompt('Reason for reversing this payment (at least 10 characters):');
-    if (!reason) return;
-    try {
-      await reverseInvoicePayment(paymentId, { reason, reversal_date: today() });
-      await loadInvoices();
-      await loadPayments();
-      await loadMonitor();
-    } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
-    }
+  function handleReversePayment(paymentId: number) {
+    setError('');
+    setReasonAction({
+      kind: 'payment',
+      id: paymentId,
+      title: 'Reverse invoice payment',
+      description: 'This restores the allocated invoice balances and reverses the receiving-account cash entry.',
+    });
+    setReasonText('');
+    setReasonDate(today());
   }
 
   async function loadData() {
@@ -260,12 +274,13 @@ export default function CustomerInvoices() {
     }
   }
 
-  function openGenerate() {
-    setGenForm({ account_id: '', from_date: firstOfMonth(), to_date: today(), notes: '' });
+  function openGenerate(preselectedAccountId?: number) {
+    setGenForm({ account_id: preselectedAccountId ? String(preselectedAccountId) : '', from_date: firstOfMonth(), to_date: today(), notes: '' });
     setPreview(null);
     setAgreedPrices({});
     setError('');
     setShowGenerate(true);
+    setWorkspaceCustomer(null);
   }
 
   async function runPreview() {
@@ -321,7 +336,7 @@ export default function CustomerInvoices() {
     }
   }
 
-  async function openDetail(inv: Invoice) {
+  async function openDetail(inv: { id: number }) {
     try {
       const res = await getCustomerInvoice(inv.id);
       setDetail(res.data.data);
@@ -359,17 +374,16 @@ export default function CustomerInvoices() {
     }
   }
 
-  async function handleVoid(id: number) {
-    const reason = prompt('Reason for voiding this invoice (at least 10 characters):');
-    if (!reason) return;
-    try {
-      await voidCustomerInvoice(id, { reason });
-      setDetail(null);
-      await loadInvoices();
-      await loadMonitor();
-    } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
-    }
+  function handleVoid(id: number) {
+    setError('');
+    setReasonAction({
+      kind: 'invoice',
+      id,
+      title: 'Void customer invoice',
+      description: 'This reverses the invoice accounting entry and releases its consumption back to unbilled history.',
+    });
+    setReasonText('');
+    setReasonDate(today());
   }
 
   async function handleDeleteDraft(id: number) {
@@ -427,17 +441,47 @@ export default function CustomerInvoices() {
     }
   }
 
-  async function handleReverseAdjustment(noteId: number) {
-    const reason = prompt('Reason for reversing this note (at least 10 characters):');
-    if (!reason || !detail) return;
+  function handleReverseAdjustment(noteId: number) {
+    setError('');
+    setReasonAction({
+      kind: 'adjustment',
+      id: noteId,
+      title: 'Reverse adjustment note',
+      description: 'This posts an equal and opposite accounting entry. The original note remains in the audit trail.',
+    });
+    setReasonText('');
+    setReasonDate(today());
+  }
+
+  async function submitReasonAction() {
+    if (!reasonAction || reasonText.trim().length < 10) return;
     try {
-      await reverseCustomerInvoiceAdjustment(noteId, { reason, reversal_date: today() });
-      const refreshed = await getCustomerInvoice(detail.id);
-      setDetail(refreshed.data.data);
-      await loadInvoices();
-      await loadMonitor();
+      setReasonBusy(true);
+      setError('');
+      if (reasonAction.kind === 'payment') {
+        await reverseInvoicePayment(reasonAction.id, {
+          reason: reasonText.trim(),
+          reversal_date: reasonDate,
+        });
+      } else if (reasonAction.kind === 'invoice') {
+        await voidCustomerInvoice(reasonAction.id, { reason: reasonText.trim() });
+        setDetail(null);
+      } else {
+        await reverseCustomerInvoiceAdjustment(reasonAction.id, {
+          reason: reasonText.trim(),
+          reversal_date: reasonDate,
+        });
+        if (detail) {
+          const refreshed = await getCustomerInvoice(detail.id);
+          setDetail(refreshed.data.data);
+        }
+      }
+      setReasonAction(null);
+      await Promise.all([loadInvoices(), loadPayments(), loadMonitor()]);
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
+      setError(err?.response?.data?.error || err?.message || 'The reversal could not be posted.');
+    } finally {
+      setReasonBusy(false);
     }
   }
 
@@ -493,13 +537,13 @@ export default function CustomerInvoices() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={openReceive}
+            onClick={() => openReceive()}
             className="inline-flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700"
           >
             <DollarSign size={16} /> Receive Payment
           </button>
           <button
-            onClick={openGenerate}
+            onClick={() => openGenerate()}
             className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700"
           >
             <Plus size={16} /> Generate Invoice
@@ -632,6 +676,7 @@ export default function CustomerInvoices() {
                     <th className="text-left px-4 py-2.5">Fuel Split</th>
                     <th className="text-left px-4 py-2.5">Recent Unbilled Consumption</th>
                     <th className="text-left px-4 py-2.5">Open Invoices</th>
+                    <th className="px-4 py-2.5"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -641,7 +686,9 @@ export default function CustomerInvoices() {
                     return (
                       <tr key={customer.id} className="border-t border-gray-100 align-top hover:bg-gray-50">
                         <td className="px-4 py-3">
-                          <p className="font-semibold text-gray-800">{customer.name}</p>
+                          <button onClick={() => setWorkspaceCustomer(customer)} className="font-semibold text-gray-800 hover:text-blue-700 text-left">
+                            {customer.name}
+                          </button>
                           <p className="text-xs text-gray-400">{customer.phone || 'No phone'}</p>
                           <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
                             <Clock size={12} />
@@ -701,6 +748,11 @@ export default function CustomerInvoices() {
                               ))}
                             </div>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button onClick={() => setWorkspaceCustomer(customer)} className="text-blue-600 text-xs font-medium hover:underline">
+                            Open
+                          </button>
                         </td>
                       </tr>
                     );
@@ -846,6 +898,22 @@ export default function CustomerInvoices() {
         )
       )}
 
+      {workspaceCustomer && (
+        <InvoiceCustomerWorkspace
+          customer={workspaceCustomer}
+          onClose={() => setWorkspaceCustomer(null)}
+          onGenerateInvoice={openGenerate}
+          onReceivePayment={openReceive}
+          onOpenInvoice={(invoice) => {
+            setWorkspaceCustomer(null);
+            openDetail(invoice);
+          }}
+          onChanged={async () => {
+            await Promise.all([loadMonitor(), loadInvoices(), loadPayments()]);
+          }}
+        />
+      )}
+
       {/* Receive Payment Modal */}
       {showReceive && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -902,7 +970,17 @@ export default function CustomerInvoices() {
                       <label className="block text-xs font-medium text-gray-600 mb-1">Method</label>
                       <select
                         value={payForm.payment_method}
-                        onChange={(e) => setPayForm({ ...payForm, payment_method: e.target.value })}
+                        onChange={(e) => {
+                          const method = e.target.value;
+                          const receivedInto = method === 'cash'
+                            ? 'cash_on_hand'
+                            : method === 'bank'
+                              ? 'bank'
+                              : method === 'cheque'
+                                ? 'cheque_clearing'
+                                : 'mpesa';
+                          setPayForm({ ...payForm, payment_method: method, received_into: receivedInto });
+                        }}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                       >
                         <option value="cash">Cash</option>
@@ -912,14 +990,28 @@ export default function CustomerInvoices() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Reference (optional)</label>
-                      <input
-                        value={payForm.reference}
-                        onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
-                        placeholder="Txn ID, cheque #…"
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Received into</label>
+                      <select
+                        value={payForm.received_into}
+                        onChange={(e) => setPayForm({ ...payForm, received_into: e.target.value })}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                      />
+                      >
+                        <option value="cash_on_hand">Cash on hand</option>
+                        <option value="mpesa">M-Pesa account</option>
+                        <option value="bank">Bank account</option>
+                        <option value="cheque_clearing">Cheque clearing</option>
+                        <option value="other">Other receiving account</option>
+                      </select>
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Reference (optional)</label>
+                    <input
+                      value={payForm.reference}
+                      onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
+                      placeholder="Transaction ID, cheque number, or bank reference"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Notes (optional)</label>
@@ -1623,6 +1715,60 @@ export default function CustomerInvoices() {
                 className={`px-4 py-2 text-sm text-white rounded-lg font-medium disabled:opacity-50 ${adjustmentForm.note_type === 'credit_note' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-700 hover:bg-green-800'}`}
               >
                 {submittingAdjustment ? 'Posting...' : 'Post note'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reasonAction && (
+        <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white shadow-xl w-full max-w-md">
+            <div className="flex items-start justify-between p-4 border-b">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{reasonAction.title}</h2>
+                <p className="text-xs text-gray-500 mt-1">{reasonAction.description}</p>
+              </div>
+              <button onClick={() => setReasonAction(null)} className="p-1 text-gray-400 hover:text-gray-700" title="Close">
+                <X size={19} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              {reasonAction.kind !== 'invoice' && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Posting date</label>
+                  <input
+                    type="date"
+                    max={today()}
+                    value={reasonDate}
+                    onChange={(e) => setReasonDate(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+                <textarea
+                  rows={4}
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  placeholder="Provide the approved business reason"
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">At least 10 characters. This reason is retained in the audit trail.</p>
+              </div>
+              {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2">{error}</div>}
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t bg-gray-50">
+              <button onClick={() => setReasonAction(null)} className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-100">
+                Cancel
+              </button>
+              <button
+                onClick={submitReasonAction}
+                disabled={reasonBusy || reasonText.trim().length < 10}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded font-medium hover:bg-red-700 disabled:opacity-50"
+              >
+                {reasonBusy ? 'Posting...' : reasonAction.kind === 'invoice' ? 'Void invoice' : 'Post reversal'}
               </button>
             </div>
           </div>

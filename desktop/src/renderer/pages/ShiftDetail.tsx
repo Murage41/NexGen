@@ -36,7 +36,11 @@ export default function ShiftDetail() {
   // Phase 3B: invoice-mode customers don't get money credits — they accrue litres.
   // selectedBillingMode flips the credits form between money and litres.
   const [selectedBillingMode, setSelectedBillingMode] = useState<'money' | 'invoice' | null>(null);
-  const [newInvoice, setNewInvoice] = useState<{ fuel_type: 'petrol' | 'diesel'; litres: string }>({ fuel_type: 'petrol', litres: '' });
+  const [newInvoice, setNewInvoice] = useState<{
+    fuel_type: 'petrol' | 'diesel';
+    litres: string;
+    pump_id: string;
+  }>({ fuel_type: 'petrol', litres: '', pump_id: '' });
   const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(true);
@@ -276,13 +280,24 @@ export default function ShiftDetail() {
       alert('Litres must be a positive number');
       return;
     }
+    const matchingSources = readings.filter((reading: any) => reading.fuel_type === newInvoice.fuel_type);
+    const selectedPumpId = newInvoice.pump_id
+      ? Number(newInvoice.pump_id)
+      : matchingSources.length === 1
+        ? Number(matchingSources[0].pump_id)
+        : null;
+    if (matchingSources.length > 1 && !selectedPumpId) {
+      alert('Select the pump/nozzle that supplied these litres.');
+      return;
+    }
     try {
       await addInvoiceConsumption(parseInt(id!), {
         account_id: newCredit.account_id,
         fuel_type: newInvoice.fuel_type,
         litres: litresNum,
+        pump_id: selectedPumpId,
       });
-      setNewInvoice({ fuel_type: 'petrol', litres: '' });
+      setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
       setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
       setCreditSearchQuery('');
       setSelectedBillingMode(null);
@@ -389,6 +404,7 @@ export default function ShiftDetail() {
   if (!shift) return <div className="text-red-500">Shift not found</div>;
 
   const isOpen = shift.status === 'open';
+  const invoicePumpSources = readings.filter((reading: any) => reading.fuel_type === newInvoice.fuel_type);
   const numVal = (v: any) => { const n = parseFloat(v); return n === 0 ? '' : v; };
   const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
   const expectedSales = readings.reduce((s: number, r: any) => s + (parseFloat(r.amount_sold) || 0), 0);
@@ -929,11 +945,32 @@ export default function ShiftDetail() {
                     <label className="block text-xs text-gray-500 mb-1">Fuel</label>
                     <select
                       value={newInvoice.fuel_type}
-                      onChange={e => setNewInvoice({ ...newInvoice, fuel_type: e.target.value as 'petrol' | 'diesel' })}
+                      onChange={e => setNewInvoice({
+                        ...newInvoice,
+                        fuel_type: e.target.value as 'petrol' | 'diesel',
+                        pump_id: '',
+                      })}
                       className="w-full border border-gray-300 rounded p-2 text-sm"
                     >
                       <option value="petrol">Petrol</option>
                       <option value="diesel">Diesel</option>
+                    </select>
+                  </div>
+                  <div className="min-w-[230px] flex-1">
+                    <label className="block text-xs text-gray-500 mb-1">Pump / nozzle source</label>
+                    <select
+                      value={newInvoice.pump_id}
+                      onChange={e => setNewInvoice({ ...newInvoice, pump_id: e.target.value })}
+                      className="w-full border border-gray-300 rounded p-2 text-sm bg-white"
+                    >
+                      <option value="">
+                        {invoicePumpSources.length > 1 ? 'Select source' : 'Automatic source'}
+                      </option>
+                      {invoicePumpSources.map((source: any) => (
+                        <option key={source.pump_id} value={source.pump_id}>
+                          {source.pump_label} {source.nozzle_label} · {Number(source.litres_sold || 0).toFixed(2)} L sold
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div className="w-32">
