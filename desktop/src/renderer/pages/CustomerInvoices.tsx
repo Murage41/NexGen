@@ -6,6 +6,7 @@ import {
   createCustomerInvoiceDraft,
   updateCustomerInvoiceLine,
   issueCustomerInvoice,
+  refreshCustomerInvoiceDraft,
   voidCustomerInvoice,
   deleteCustomerInvoiceDraft,
   getCreditAccounts,
@@ -14,7 +15,7 @@ import {
   deleteInvoicePayment,
   getInvoiceCustomerMonitor,
 } from '../services/api';
-import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet, Users, Droplets, AlertTriangle, Clock } from 'lucide-react';
+import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet, Users, Droplets, AlertTriangle, Clock, RefreshCw } from 'lucide-react';
 
 type Account = { id: number; name: string; billing_mode?: string; outstanding_balance?: number };
 type Invoice = {
@@ -29,6 +30,7 @@ type Invoice = {
   total_amount: number;
   balance: number;
   notes?: string;
+  reservation_status?: 'legacy_unreserved' | 'reserved' | 'issued' | 'released';
 };
 type MonitorCustomer = {
   id: number;
@@ -105,6 +107,7 @@ export default function CustomerInvoices() {
   const [detail, setDetail] = useState<any | null>(null);
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [editPrice, setEditPrice] = useState('');
+  const [refreshingDraft, setRefreshingDraft] = useState(false);
 
   // Phase 3D — Payments
   const [tab, setTab] = useState<'customers' | 'invoices' | 'payments'>('customers');
@@ -324,6 +327,23 @@ export default function CustomerInvoices() {
     }
   }
 
+  async function handleRefreshDraft(id: number) {
+    try {
+      setRefreshingDraft(true);
+      const result = await refreshCustomerInvoiceDraft(id);
+      const refreshed = await getCustomerInvoice(id);
+      setDetail(refreshed.data.data);
+      await loadInvoices();
+      await loadMonitor();
+      const added = Number(result.data.data?.added_entries || 0);
+      alert(added > 0 ? `${added} new consumption entr${added === 1 ? 'y was' : 'ies were'} added.` : 'Draft is already up to date.');
+    } catch (err: any) {
+      alert(err?.response?.data?.error || err?.message);
+    } finally {
+      setRefreshingDraft(false);
+    }
+  }
+
   async function handleVoid(id: number) {
     if (!confirm('Void this invoice? Consumption rows will be unlinked and can be re-invoiced.')) return;
     try {
@@ -351,7 +371,7 @@ export default function CustomerInvoices() {
   async function saveLinePrice(invoiceId: number, lineId: number) {
     try {
       const priceNum = Number(editPrice);
-      if (!Number.isFinite(priceNum) || priceNum < 0) {
+      if (!Number.isFinite(priceNum) || priceNum <= 0) {
         alert('Enter a valid price');
         return;
       }
@@ -1076,6 +1096,18 @@ export default function CustomerInvoices() {
               </div>
             </div>
             <div className="p-4 space-y-4">
+              {detail.status === 'draft' && detail.reservation_status === 'legacy_unreserved' && (
+                <div className="flex items-start gap-2 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <span>This older draft must reserve its consumption before it can be issued. Use Refresh consumption below.</span>
+                </div>
+              )}
+              {detail.status === 'draft' && detail.reservation_status === 'reserved' && (
+                <div className="flex items-start gap-2 border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+                  <Check size={15} className="mt-0.5 shrink-0" />
+                  <span>The rows shown here are reserved for this draft. Later entries are added only when you refresh it.</span>
+                </div>
+              )}
               {/* Lines */}
               <div>
                 <p className="text-xs font-semibold text-gray-600 mb-1">Lines</p>
@@ -1247,12 +1279,23 @@ export default function CustomerInvoices() {
                   Close
                 </button>
                 {detail.status === 'draft' && (
-                  <button
-                    onClick={() => handleIssue(detail.id)}
-                    className="inline-flex items-center gap-1 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
-                  >
-                    <Send size={14} /> Issue Invoice
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleRefreshDraft(detail.id)}
+                      disabled={refreshingDraft}
+                      className="inline-flex items-center gap-1 px-3 py-2 text-sm border border-gray-300 bg-white text-gray-700 rounded-lg font-medium hover:bg-gray-100 disabled:opacity-50"
+                    >
+                      <RefreshCw size={14} className={refreshingDraft ? 'animate-spin' : ''} />
+                      Refresh consumption
+                    </button>
+                    <button
+                      onClick={() => handleIssue(detail.id)}
+                      disabled={detail.reservation_status === 'legacy_unreserved'}
+                      className="inline-flex items-center gap-1 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Send size={14} /> Issue Invoice
+                    </button>
+                  </>
                 )}
               </div>
             </div>

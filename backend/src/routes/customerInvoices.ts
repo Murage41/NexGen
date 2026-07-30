@@ -9,6 +9,13 @@ import {
   recomputeInvoiceTotals,
   recordInvoicePayment,
 } from '../services/receivablePayments';
+import {
+  createReservedInvoiceDraft,
+  getReservableConsumption,
+  refreshInvoiceDraftReservation,
+  releaseInvoiceReservation,
+  validateDraftReservationForIssue,
+} from '../services/invoiceDraftReservations';
 
 const router = Router();
 
@@ -159,7 +166,7 @@ router.delete('/payments/:paymentId', requireAdmin, async (req, res) => {
     });
     res.json({ success: true });
   } catch (err: any) {
-    const status = err.http || 500;
+    const status = err.http || (String(err.code || '').includes('SQLITE_BUSY') ? 409 : 500);
     res.status(status).json({ success: false, error: err.message });
   }
 });
@@ -211,20 +218,12 @@ router.get('/preview/scan', async (req, res) => {
       return res.status(400).json({ success: false, error: 'account_id, from, to required' });
     }
 
-    const rows = await db('invoice_consumption as ic')
-      .leftJoin('shifts as s', 'ic.shift_id', 's.id')
-      .where('ic.account_id', Number(account_id))
-      .whereNull('ic.deleted_at')
-      .whereNull('ic.invoice_line_id')
-      .where('s.shift_date', '>=', from)
-      .where('s.shift_date', '<=', to)
-      .select(
-        'ic.fuel_type',
-        'ic.litres',
-        'ic.retail_price_at_time',
-        'ic.retail_amount',
-        's.shift_date',
-      );
+    const rows = await getReservableConsumption(
+      db,
+      Number(account_id),
+      String(from),
+      String(to),
+    );
 
     // Group by fuel_type
     const byFuel: Record<string, { total_litres: number; total_retail: number; count: number }> = {};
@@ -255,8 +254,7 @@ router.get('/preview/scan', async (req, res) => {
 
 // POST / — create a DRAFT invoice from unbilled consumption.
 // Body: { account_id, from_date, to_date, agreed_prices?: { petrol?: number, diesel?: number }, notes? }
-// Creates a draft header + invoice_lines with default agreed_price = avg retail.
-// Does NOT yet link consumption rows. Use POST /:id/issue to finalize.
+// Creates invoice lines and atomically reserves the exact closed-shift rows.
 router.post('/', requireAdmin, async (req, res) => {
   try {
     const { account_id, from_date, to_date, agreed_prices, notes } = req.body;
@@ -264,78 +262,23 @@ router.post('/', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'account_id, from_date, to_date required' });
     }
 
-    const result = await db.transaction(async (trx) => {
-      const account = await trx('credit_accounts').where({ id: account_id }).whereNull('deleted_at').first();
-      if (!account) throw Object.assign(new Error('Account not found'), { http: 404 });
-      if (account.billing_mode !== 'invoice') {
-        throw Object.assign(new Error('Account is not in invoice mode'), { http: 400 });
-      }
-
-      const rows = await trx('invoice_consumption as ic')
-        .leftJoin('shifts as s', 'ic.shift_id', 's.id')
-        .where('ic.account_id', account_id)
-        .whereNull('ic.deleted_at')
-        .whereNull('ic.invoice_line_id')
-        .where('s.shift_date', '>=', from_date)
-        .where('s.shift_date', '<=', to_date)
-        .select('ic.fuel_type', 'ic.litres', 'ic.retail_price_at_time', 'ic.retail_amount');
-
-      if (rows.length === 0) {
-        throw Object.assign(new Error('No unbilled consumption in this date range'), { http: 400 });
-      }
-
-      const byFuel: Record<string, { total_litres: number; total_retail: number }> = {};
-      for (const r of rows) {
-        const ft = r.fuel_type;
-        if (!byFuel[ft]) byFuel[ft] = { total_litres: 0, total_retail: 0 };
-        byFuel[ft].total_litres += Number(r.litres || 0);
-        byFuel[ft].total_retail += Number(r.retail_amount || 0);
-      }
-
-      // Insert header (draft — no invoice_number yet; placeholder unique string)
-      const placeholderNum = `DRAFT-${account_id}-${Date.now()}`;
-      const [invoiceId] = await trx('customer_invoices').insert({
-        account_id,
-        invoice_number: placeholderNum,
-        from_date,
-        to_date,
-        issue_date: null,
-        status: 'draft',
-        total_amount: 0,
-        balance: 0,
-        notes: notes || null,
-      });
-
-      // Lines — one per fuel type
-      let total = 0;
-      for (const [fuel_type, v] of Object.entries(byFuel)) {
-        const litres = Math.round(v.total_litres * 100) / 100;
-        const avgRetail = v.total_litres > 0 ? v.total_retail / v.total_litres : 0;
-        const agreed =
-          agreed_prices && typeof agreed_prices[fuel_type] === 'number'
-            ? Number(agreed_prices[fuel_type])
-            : Math.round(avgRetail * 100) / 100;
-        const lineTotal = Math.round(litres * agreed * 100) / 100;
-        total += lineTotal;
-        await trx('invoice_lines').insert({
-          invoice_id: invoiceId,
-          fuel_type,
-          total_litres: litres,
-          agreed_price: agreed,
-          line_total: lineTotal,
-        });
-      }
-
-      total = Math.round(total * 100) / 100;
-      await trx('customer_invoices').where({ id: invoiceId }).update({ total_amount: total, balance: total });
-
-      return invoiceId;
+    const result = await createReservedInvoiceDraft(db, {
+      accountId: Number(account_id),
+      fromDate: String(from_date),
+      toDate: String(to_date),
+      agreedPrices: agreed_prices,
+      notes,
     });
-
-    const created = await db('customer_invoices').where({ id: result }).first();
-    res.status(201).json({ success: true, data: created });
+    res.status(201).json({
+      success: true,
+      data: {
+        ...result.invoice,
+        reservation_added_entries: result.added_entries,
+        reservation_entry_count: result.reserved_entries,
+      },
+    });
   } catch (err: any) {
-    const status = err.http || 500;
+    const status = err.http || (String(err.code || '').includes('SQLITE_BUSY') ? 409 : 500);
     res.status(status).json({ success: false, error: err.message });
   }
 });
@@ -354,8 +297,8 @@ router.put('/:id/lines/:lineId', requireAdmin, async (req, res) => {
     }
 
     const priceNum = Number(agreed_price);
-    if (!Number.isFinite(priceNum) || priceNum < 0) {
-      return res.status(400).json({ success: false, error: 'agreed_price must be a non-negative number' });
+    if (!Number.isFinite(priceNum) || priceNum <= 0) {
+      return res.status(400).json({ success: false, error: 'agreed_price must be greater than zero' });
     }
 
     await db.transaction(async (trx) => {
@@ -378,10 +321,19 @@ router.put('/:id/lines/:lineId', requireAdmin, async (req, res) => {
   }
 });
 
+router.post('/:id/refresh', requireAdmin, async (req, res) => {
+  try {
+    const result = await refreshInvoiceDraftReservation(db, Number(req.params.id));
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    const status = err.http || (String(err.code || '').includes('SQLITE_BUSY') ? 409 : 500);
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
 // POST /:id/issue — draft → issued
-// Links unbilled consumption in the date range to this invoice's lines,
-// refreshes line totals from actual litres, assigns invoice_number, and
-// recomputes account balance.
+// Uses only the rows already reserved by this draft. Later consumption is
+// included only when an administrator explicitly refreshes the draft.
 router.post('/:id/issue', requireAdmin, async (req, res) => {
   try {
     const invoiceId = Number(req.params.id);
@@ -392,68 +344,7 @@ router.post('/:id/issue', requireAdmin, async (req, res) => {
         throw Object.assign(new Error('Only draft invoices can be issued'), { http: 400 });
       }
 
-      const lines = await trx('invoice_lines').where({ invoice_id: invoiceId });
-      const lineByFuel: Record<string, any> = {};
-      for (const l of lines) lineByFuel[l.fuel_type] = l;
-
-      // Link each unbilled consumption row (account + date range) to the
-      // matching fuel_type line. If a new fuel_type shows up that wasn't in
-      // the draft, create a line on the fly at avg-retail price.
-      const rows = await trx('invoice_consumption as ic')
-        .leftJoin('shifts as s', 'ic.shift_id', 's.id')
-        .where('ic.account_id', invoice.account_id)
-        .whereNull('ic.deleted_at')
-        .whereNull('ic.invoice_line_id')
-        .where('s.shift_date', '>=', invoice.from_date)
-        .where('s.shift_date', '<=', invoice.to_date)
-        .select('ic.id', 'ic.fuel_type', 'ic.litres', 'ic.retail_price_at_time', 'ic.retail_amount');
-
-      if (rows.length === 0) {
-        throw Object.assign(new Error('No unbilled consumption to issue'), { http: 400 });
-      }
-
-      // Create missing fuel-type lines
-      const byFuelNew: Record<string, { litres: number; retail: number }> = {};
-      for (const r of rows) {
-        const ft = r.fuel_type;
-        if (!lineByFuel[ft]) {
-          if (!byFuelNew[ft]) byFuelNew[ft] = { litres: 0, retail: 0 };
-          byFuelNew[ft].litres += Number(r.litres);
-          byFuelNew[ft].retail += Number(r.retail_amount);
-        }
-      }
-      for (const [fuel_type, v] of Object.entries(byFuelNew)) {
-        const avgRetail = v.litres > 0 ? v.retail / v.litres : 0;
-        const agreed = Math.round(avgRetail * 100) / 100;
-        const [newLineId] = await trx('invoice_lines').insert({
-          invoice_id: invoiceId,
-          fuel_type,
-          total_litres: 0, // refreshed below
-          agreed_price: agreed,
-          line_total: 0,
-        });
-        lineByFuel[fuel_type] = { id: newLineId, fuel_type, agreed_price: agreed, total_litres: 0 };
-      }
-
-      // Link consumption rows
-      const rowsByFuel: Record<string, number[]> = {};
-      const litresByFuel: Record<string, number> = {};
-      for (const r of rows) {
-        if (!rowsByFuel[r.fuel_type]) { rowsByFuel[r.fuel_type] = []; litresByFuel[r.fuel_type] = 0; }
-        rowsByFuel[r.fuel_type].push(r.id);
-        litresByFuel[r.fuel_type] += Number(r.litres);
-      }
-      for (const [fuel_type, ids] of Object.entries(rowsByFuel)) {
-        const line = lineByFuel[fuel_type];
-        await trx('invoice_consumption').whereIn('id', ids).update({ invoice_line_id: line.id });
-        // Refresh line total_litres + line_total from actuals (agreed_price preserved)
-        const litres = Math.round(litresByFuel[fuel_type] * 100) / 100;
-        const lineTotal = Math.round(litres * Number(line.agreed_price) * 100) / 100;
-        await trx('invoice_lines').where({ id: line.id }).update({
-          total_litres: litres,
-          line_total: lineTotal,
-        });
-      }
+      await validateDraftReservationForIssue(trx, invoice);
 
       // Assign invoice_number + flip to issued
       const invoiceNumber = await nextInvoiceNumber(trx);
@@ -461,6 +352,8 @@ router.post('/:id/issue', requireAdmin, async (req, res) => {
         invoice_number: invoiceNumber,
         issue_date: getKenyaDate(),
         status: 'issued',
+        reservation_status: 'issued',
+        reservation_updated_at: trx.fn.now(),
       });
 
       await recomputeInvoiceTotals(invoiceId, trx);
@@ -494,15 +387,13 @@ router.post('/:id/void', requireAdmin, async (req, res) => {
         throw Object.assign(new Error('Cannot void an invoice with allocated payments'), { http: 400 });
       }
 
-      // Unlink consumption so it becomes billable again
-      const lineIds = await trx('invoice_lines').where({ invoice_id: invoiceId }).pluck('id');
-      if (lineIds.length) {
-        await trx('invoice_consumption').whereIn('invoice_line_id', lineIds).update({ invoice_line_id: null });
-      }
+      await releaseInvoiceReservation(trx, invoiceId);
 
       await trx('customer_invoices').where({ id: invoiceId }).update({
         status: 'void',
         balance: 0,
+        reservation_status: 'released',
+        reservation_updated_at: trx.fn.now(),
       });
 
       await recomputeAccountBalance(invoice.account_id, trx);
@@ -516,7 +407,7 @@ router.post('/:id/void', requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE /:id — delete a draft (hard delete lines + header; nothing linked yet)
+// DELETE /:id - release reserved consumption, then delete the draft.
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const invoiceId = Number(req.params.id);
@@ -526,6 +417,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       if (invoice.status !== 'draft') {
         throw Object.assign(new Error('Only draft invoices can be deleted. Use /void for issued.'), { http: 400 });
       }
+      await releaseInvoiceReservation(trx, invoiceId);
       await trx('invoice_lines').where({ invoice_id: invoiceId }).delete();
       await trx('customer_invoices').where({ id: invoiceId }).delete();
     });

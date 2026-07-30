@@ -23,6 +23,7 @@
     "test:receivable-payments": "tsx scripts/test_receivable_payment_integrity.ts",
     "test:invoice-consumption": "tsx scripts/test_invoice_consumption_controls.ts",
     "test:invoice-consumption-corrections": "tsx scripts/test_invoice_consumption_corrections.ts",
+    "test:invoice-draft-reservations": "tsx scripts/test_invoice_draft_reservations.ts",
     "test:delivery-policy": "tsx scripts/test_delivery_policy.ts",
     "test:delivery-replay": "tsx scripts/test_delivery_replay.ts",
     "audit:receivables": "tsx scripts/audit_receivable_integrity.ts",

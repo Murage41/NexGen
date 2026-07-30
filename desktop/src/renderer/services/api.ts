@@ -166,6 +166,7 @@ export const createCustomerInvoiceDraft = (data: {
 export const updateCustomerInvoiceLine = (invoiceId: number, lineId: number, data: { agreed_price: number }) =>
   api.put(`/customer-invoices/${invoiceId}/lines/${lineId}`, data);
 export const issueCustomerInvoice = (id: number) => api.post(`/customer-invoices/${id}/issue`);
+export const refreshCustomerInvoiceDraft = (id: number) => api.post(`/customer-invoices/${id}/refresh`);
 export const voidCustomerInvoice = (id: number) => api.post(`/customer-invoices/${id}/void`);
 export const deleteCustomerInvoiceDraft = (id: number) => api.delete(`/customer-invoices/${id}`);
 
