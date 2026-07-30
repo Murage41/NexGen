@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Petrol Station Management System",
   "private": true,
+  "engines": {
+    "node": ">=20.17.0",
+    "npm": ">=10.0.0"
+  },
   "workspaces": [
     "shared",
     "backend",
