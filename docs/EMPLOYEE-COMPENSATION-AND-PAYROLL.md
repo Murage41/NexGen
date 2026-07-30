@@ -24,7 +24,7 @@ A plan may contain up to eight components:
 
 | Method | Meaning | Typical schedule |
 |---|---|---|
-| Fixed per shift | A fixed amount for each closed shift | Daily or weekly |
+| Fixed per shift | A fixed amount for each closed shift | Daily, weekly, biweekly, or monthly |
 | Fixed salary | A fixed amount for a pay period | Weekly, biweekly, monthly |
 | Percentage of sales | A percentage of shift sales | Daily or weekly |
 | KES per litre | A fixed rate for litres sold in a shift | Daily or weekly |
@@ -39,8 +39,10 @@ KES 8,400 per week + KES 0.75 per litre
 KES 48,000 per month
 ```
 
-Use a fixed salary for monthly, weekly, or biweekly wages. Use fixed per shift
-only when the employee earns the amount by completing a shift.
+Use a fixed salary when the amount is guaranteed for the pay period. Use fixed
+per shift when the employee earns the amount by completing a shift. The payroll
+schedule controls when those shift earnings are grouped for payment, so an
+employee may earn KES 800 per shift and still be paid monthly.
 
 ## Effective Dates
 
@@ -87,8 +89,19 @@ accounting posting boundary.
 A payroll run only collects earnings whose compensation plan has the same pay
 schedule. A monthly run cannot collect weekly or daily earnings.
 
-Only one active payroll run can exist for the same schedule and date range.
-Void the incorrect run before calculating a corrected replacement.
+Payroll periods are schedule-specific:
+
+- Daily: exactly one work date.
+- Weekly: exactly seven calendar days.
+- Biweekly: exactly fourteen calendar days.
+- Monthly: one complete calendar month.
+
+The period cannot end in the future. Every shift for the selected schedule and
+period must be closed before payroll is calculated. Active periods for the same
+schedule cannot overlap. A payroll run is a final snapshot; later shifts cannot
+be opened inside a period that has already been calculated.
+
+Void an incorrect run before calculating a corrected replacement.
 
 ## Deductions and Staff Debt
 
@@ -108,18 +121,40 @@ was recorded. They create an auditable allocation against that existing debt.
 
 Payroll payments may use cash, M-Pesa, bank transfer, or cheque.
 
+- A daily employee may receive a direct wage from the shift drawer at close.
+- A direct shift wage is brought into payroll as a prior payment and is not paid
+  a second time.
+- Weekly, biweekly, and monthly plans default to no direct shift payment.
 - A direct admin payment is recorded without a shift link.
 - Cash or M-Pesa may optionally be paid from an open shift.
 - A shift-linked payroll payment is an outflow from that shift's drawer.
 - Direct bank, cheque, cash, or M-Pesa payments do not alter a shift unless an
   open shift is explicitly selected.
 - A payment cannot exceed the payroll line balance.
-- Posted payments can be reversed with a reason.
-- A payroll run cannot be voided until all posted payments are reversed.
+- Posted payroll payments can be reversed with a reason.
+- A direct shift-wage payment is corrected through its originating shift record,
+  not reversed as a separate payroll payment.
+- A payroll run cannot be voided until ordinary posted payments are reversed.
+  Shift-wage mirrors are released automatically when a run is voided.
 
 This is separate from customer debt collection. Customer debt receipts remain
 part of the cash or M-Pesa actually received during the linked shift; they are
 not added on top of received collections.
+
+## Expense and Cash Treatment
+
+NexGen uses accrual treatment for compensation:
+
+- Shift-based compensation becomes payroll expense on the shift work date.
+- Fixed salary becomes payroll expense when the payroll run is approved.
+- Paying an employee reduces cash or bank and does not create a second expense.
+- Direct shift wages and later payroll payments are counted once in cash flow.
+- The Expenses page shows Payroll separately from operating expenses.
+- New manual expenses named Wage, Wages, Salary, Salaries, or Payroll are
+  rejected. Employee compensation must use the payroll ledger.
+
+Historical manual wage expenses remain unchanged. Review them before comparing
+periods that also contain migrated employee earnings.
 
 ## Desktop Workflow
 
@@ -137,8 +172,8 @@ not added on top of received collections.
 
 1. Open **Payroll**.
 2. Select **Calculate Payroll**.
-3. Choose the schedule and exact period.
-4. Review each employee's earnings.
+3. Choose the schedule and period start. NexGen derives the valid period end.
+4. Review eligible employees, gross earnings, prior shift payments, and balance.
 5. Add authorized deductions while the run is calculated.
 6. Approve the run.
 7. Record one or more payments until the balance is zero.
@@ -166,6 +201,7 @@ npm run test:employee-wage-safety
 npm run test:compensation-plans
 npm run test:employee-earnings
 npm run test:payroll-ledger
+npm run test:payroll-schedules
 npm run test:shift-debt-receipts
 npm run stress:employee-payroll
 ```
@@ -183,31 +219,39 @@ cd /d D:\NexGen\desktop
 npm run build
 ```
 
-The payroll stress test covers 500 employees, 1,000 earnings, 500 payroll
-lines, approval, audit-detail loading, duplicate-period protection, memory,
-and execution time.
+The schedule test covers mixed daily and monthly employees, prior shift wages,
+wage deductions, incomplete periods, open shifts, overlap protection, accrual
+expense, and cash outflow. The payroll stress test covers 500 employees, 1,000
+earnings, 500 payroll lines, approval, audit-detail loading, overlap protection,
+memory, and execution time.
 
 ## Station Update
 
 Follow the full backup and update procedure in `docs/DEPLOYMENT.md`. The
 minimum sequence is:
 
-```powershell
-cd E:\NexGen
-npm.cmd run dev:stop
+Run these commands in Command Prompt:
 
-# Back up E:\NexGen\backend\data and verify nexgen.db exists in the backup.
+```cmd
+cd /d E:\NexGen
+npm run dev:stop
+
+REM Back up E:\NexGen\backend\data and verify nexgen.db exists in the backup.
 
 git pull --ff-only origin main
-npm.cmd install
-npm.cmd run build:mobile
+npm install
 
-cd E:\NexGen\backend
-npm.cmd run migrate
-cd ..
+cd /d E:\NexGen\backend
+npm run build
+npm run migrate
 
-npm.cmd run station:bg
-npm.cmd run dev:status
+cd /d E:\NexGen
+npm run build:mobile
+npm run startup:install
+npm run station:bg
+timeout /t 15 /nobreak
+npm run dev:status
+curl.exe http://127.0.0.1:3001/api/health
 ```
 
 The migration is additive, but the backup is still mandatory.
@@ -237,4 +281,3 @@ Before the production merge:
    staff-debt deduction, direct payment, shift-linked payment, reversal, and
    reports.
 5. Confirm POSitive remains unaffected on the station PC.
-

@@ -4,7 +4,7 @@ import { Plus, Pencil, Trash2, Receipt, X, Filter, TrendingUp, TrendingDown } fr
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 const PREDEFINED_CATEGORIES = [
-  'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
+  'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
   'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
   'Cleaning', 'Insurance', 'Accounting', 'Other',
 ];
@@ -68,7 +68,7 @@ export default function Expenses() {
   }
 
   function openEdit(exp: any) {
-    if (exp.source === 'shift') return; // Can't edit shift expenses from here
+    if (exp.source !== 'general') return;
     setEditing(exp);
     setForm({
       category: exp.category || '',
@@ -102,7 +102,7 @@ export default function Expenses() {
   }
 
   async function handleDelete(exp: any) {
-    if (exp.source === 'shift') return;
+    if (exp.source !== 'general') return;
     if (!confirm('Are you sure you want to delete this expense?')) return;
     try {
       await deleteExpense(exp.id);
@@ -132,7 +132,7 @@ export default function Expenses() {
       {summary && (
         <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Total Expenses (Period)</p>
+            <p className="text-xs text-gray-500 mb-1">Business Expenses</p>
             <p className="text-xl font-bold text-red-600">{formatKES(summary.total_expenses)}</p>
           </div>
           <div className="bg-white rounded-lg shadow p-4">
@@ -148,12 +148,12 @@ export default function Expenses() {
             <p className="text-xs text-gray-400 mt-0.5">Prev: {formatKES(summary.previous_period_total)}</p>
           </div>
           <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Top Category</p>
-            <p className="text-xl font-bold text-gray-800">{summary.top_category || '—'}</p>
+            <p className="text-xs text-gray-500 mb-1">Payroll Expense</p>
+            <p className="text-xl font-bold text-gray-800">{formatKES(summary.total_payroll_expense)}</p>
           </div>
           <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Categories</p>
-            <p className="text-xl font-bold text-gray-800">{summary.by_category?.length || 0}</p>
+            <p className="text-xs text-gray-500 mb-1">Operating Expenses</p>
+            <p className="text-xl font-bold text-gray-800">{formatKES(summary.total_operating_expenses)}</p>
           </div>
         </div>
       )}
@@ -199,6 +199,7 @@ export default function Expenses() {
             <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
               className="border border-gray-300 rounded-lg p-2 text-sm min-w-[150px]">
               <option value="">All Categories</option>
+              <option value="Payroll">Payroll</option>
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
@@ -305,9 +306,15 @@ export default function Expenses() {
                     <span className={`text-xs px-2 py-0.5 rounded-full ${
                       exp.source === 'shift'
                         ? 'bg-blue-100 text-blue-700'
-                        : 'bg-gray-100 text-gray-600'
+                        : exp.source === 'payroll'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-gray-100 text-gray-600'
                     }`}>
-                      {exp.source === 'shift' ? `Shift${exp.employee_name ? ` (${exp.employee_name})` : ''}` : 'General'}
+                      {exp.source === 'shift'
+                        ? `Shift${exp.employee_name ? ` (${exp.employee_name})` : ''}`
+                        : exp.source === 'payroll'
+                          ? `Payroll${exp.employee_name ? ` (${exp.employee_name})` : ''}`
+                          : 'General'}
                     </span>
                   </td>
                   <td className="p-3 text-right font-medium text-red-600">{formatKES(exp.amount)}</td>
@@ -322,7 +329,7 @@ export default function Expenses() {
                         </button>
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-400">shift expense</span>
+                      <span className="text-xs text-gray-400">{exp.source} expense</span>
                     )}
                   </td>
                 </tr>

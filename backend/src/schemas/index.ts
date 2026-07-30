@@ -84,11 +84,20 @@ export const createEmployeeSchema = employeeBaseSchema.extend({
 });
 
 // --- Payroll ---
-export const calculatePayrollRunSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+const payrollPeriodFields = {
   pay_schedule: z.enum(['daily', 'weekly', 'biweekly', 'monthly']),
   period_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   period_end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+};
+
+export const payrollPeriodSchema = z.object(payrollPeriodFields).refine((data) => data.period_start <= data.period_end, {
+  path: ['period_end'],
+  message: 'period_end must be on or after period_start',
+});
+
+export const calculatePayrollRunSchema = z.object({
+  ...payrollPeriodFields,
+  name: z.string().trim().min(1).max(120),
 }).refine((data) => data.period_start <= data.period_end, {
   path: ['period_end'],
   message: 'period_end must be on or after period_start',

@@ -9,10 +9,15 @@ const router = Router();
 
 // Predefined expense categories for consistency
 const EXPENSE_CATEGORIES = [
-  'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
+  'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
   'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
   'Cleaning', 'Insurance', 'Accounting', 'Other',
 ];
+
+function isPayrollCategory(category: string): boolean {
+  return ['wage', 'wages', 'salary', 'salaries', 'payroll']
+    .includes(String(category || '').trim().toLowerCase());
+}
 
 router.get('/', async (req, res) => {
   try {
@@ -34,6 +39,12 @@ router.get('/', async (req, res) => {
 router.post('/', requireAdmin, validate(createExpenseSchema), async (req, res) => {
   try {
     const { category, description, amount, date } = req.body;
+    if (isPayrollCategory(category)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Employee compensation must be recorded through Payroll.',
+      });
+    }
     const [id] = await db('expenses').insert({ category, description, amount, date });
     const expense = await db('expenses').where({ id }).first();
     res.status(201).json({ success: true, data: expense });
@@ -45,6 +56,12 @@ router.post('/', requireAdmin, validate(createExpenseSchema), async (req, res) =
 router.put('/:id', requireAdmin, validate(updateExpenseSchema), async (req, res) => {
   try {
     const { category, description, amount, date } = req.body;
+    if (isPayrollCategory(category)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Employee compensation must be recorded through Payroll.',
+      });
+    }
     await db('expenses').where({ id: req.params.id }).update({ category, description, amount, date });
     const expense = await db('expenses').where({ id: req.params.id }).first();
     res.json({ success: true, data: expense });
@@ -69,7 +86,9 @@ router.get('/categories', async (_req, res) => {
       db('expenses').whereNull('deleted_at').distinct('category'),
       db('shift_expenses').whereNull('deleted_at').distinct('category'),
     ]);
-    const used = [...generalRows, ...shiftRows].map((r: any) => r.category).filter(Boolean);
+    const used = [...generalRows, ...shiftRows]
+      .map((r: any) => r.category)
+      .filter((category: string) => category && !isPayrollCategory(category));
     // Merge predefined with any used categories from general and shift expenses.
     const all = [...new Set([...EXPENSE_CATEGORIES, ...used])].sort();
     res.json({ success: true, data: all });
@@ -113,6 +132,20 @@ router.get('/summary', async (req, res) => {
         'shift_expenses.shift_id',
       );
 
+    const payrollExpenses = await db('employee_earnings')
+      .join('employees', 'employee_earnings.employee_id', 'employees.id')
+      .whereNull('employee_earnings.reversed_at')
+      .whereIn('employee_earnings.status', ['approved', 'posted'])
+      .whereBetween('employee_earnings.earning_date', [startDate, endDate])
+      .select(
+        'employee_earnings.id',
+        'employee_earnings.description',
+        'employee_earnings.gross_amount as amount',
+        'employee_earnings.earning_date as date',
+        'employee_earnings.status',
+        'employees.name as employee_name',
+      );
+
     // Combine into unified list
     const combined = [
       ...generalExpenses.map((e: any) => ({
@@ -126,10 +159,19 @@ router.get('/summary', async (req, res) => {
         source: 'shift' as const,
         amount: Number(e.amount),
       })),
+      ...payrollExpenses.map((earning: any) => ({
+        ...earning,
+        category: 'Payroll',
+        source: 'payroll' as const,
+        amount: Number(earning.amount),
+      })),
     ].sort((a, b) => b.date.localeCompare(a.date));
 
-    // Total
-    const totalExpenses = combined.reduce((s, e) => s + e.amount, 0);
+    const totalOperatingExpenses = [...generalExpenses, ...shiftExpenses]
+      .reduce((sum, expense: any) => sum + Number(expense.amount || 0), 0);
+    const totalPayrollExpense = payrollExpenses
+      .reduce((sum, earning: any) => sum + Number(earning.amount || 0), 0);
+    const totalExpenses = totalOperatingExpenses + totalPayrollExpense;
 
     // By category
     const catMap: Record<string, number> = {};
@@ -167,7 +209,15 @@ router.get('/summary', async (req, res) => {
       .where('shifts.start_time', '<=', prevEndTs)
       .sum('shift_expenses.amount as total')
       .first();
-    const prevTotal = (Number((prevGenResult as any)?.total) || 0) + (Number((prevShiftResult as any)?.total) || 0);
+    const prevPayrollResult = await db('employee_earnings')
+      .whereNull('reversed_at')
+      .whereIn('status', ['approved', 'posted'])
+      .whereBetween('earning_date', [prevStartDate, prevEndDate])
+      .sum('gross_amount as total')
+      .first();
+    const prevTotal = (Number((prevGenResult as any)?.total) || 0)
+      + (Number((prevShiftResult as any)?.total) || 0)
+      + (Number((prevPayrollResult as any)?.total) || 0);
 
     const changePercent = prevTotal > 0
       ? ((totalExpenses - prevTotal) / prevTotal) * 100
@@ -178,6 +228,8 @@ router.get('/summary', async (req, res) => {
       data: {
         period: { from: startDate, to: endDate },
         total_expenses: totalExpenses,
+        total_operating_expenses: totalOperatingExpenses,
+        total_payroll_expense: totalPayrollExpense,
         by_category: byCategory,
         top_category: byCategory.length > 0 ? byCategory[0].category : null,
         previous_period_total: prevTotal,

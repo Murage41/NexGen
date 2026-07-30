@@ -91,6 +91,7 @@ export const createCompensationPlan = (id: number, data: any) =>
 // Payroll
 export const getPayrollRuns = (params?: any) => api.get('/payroll/runs', { params });
 export const getPayrollRun = (id: number) => api.get(`/payroll/runs/${id}`);
+export const previewPayrollRun = (params: any) => api.get('/payroll/runs/preview', { params });
 export const calculatePayrollRun = (data: any) => api.post('/payroll/runs/calculate', data);
 export const approvePayrollRun = (id: number) => api.post(`/payroll/runs/${id}/approve`);
 export const addPayrollPayment = (lineId: number, data: any) =>

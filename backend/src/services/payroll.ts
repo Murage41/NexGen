@@ -1,6 +1,26 @@
 import type { Knex } from 'knex';
 import Decimal, { Numeric } from 'decimal.js-light';
 import db from '../database';
+import {
+  PaySchedule,
+  PayrollPeriodError,
+  validatePayrollPeriod,
+} from './payrollPeriods';
+
+interface PayrollRunInput {
+  name: string;
+  pay_schedule: PaySchedule;
+  period_start: string;
+  period_end: string;
+  created_by_employee_id?: number | null;
+}
+
+interface PayrollPeriod {
+  id?: number;
+  pay_schedule: PaySchedule;
+  period_start: string;
+  period_end: string;
+}
 
 function money(value: Numeric): number {
   return new Decimal(value || 0).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
@@ -33,15 +53,10 @@ async function insertRowsInChunks(
   }
 }
 
-export async function generatePeriodicEarnings(
-  period: {
-    id: number;
-    pay_schedule: string;
-    period_start: string;
-    period_end: string;
-  },
-  trx: Knex.Transaction,
-): Promise<void> {
+async function buildPeriodicEarningRows(
+  period: PayrollPeriod,
+  trx: Knex.Transaction | Knex,
+): Promise<any[]> {
   const plans = await trx('employee_compensation_plans')
     .where({ pay_schedule: period.pay_schedule })
     .where('effective_from', '<=', period.period_end)
@@ -50,7 +65,7 @@ export async function generatePeriodicEarnings(
     })
     .orderBy('employee_id')
     .orderBy('effective_from');
-  if (plans.length === 0) return;
+  if (plans.length === 0) return [];
 
   const components = await trx('employee_compensation_components')
     .whereIn('plan_id', plans.map((plan) => plan.id))
@@ -97,6 +112,14 @@ export async function generatePeriodicEarnings(
     }
   }
 
+  return earningRows;
+}
+
+export async function generatePeriodicEarnings(
+  period: PayrollPeriod & { id: number },
+  trx: Knex.Transaction,
+): Promise<void> {
+  const earningRows = await buildPeriodicEarningRows(period, trx);
   if (earningRows.length === 0) return;
   const existingRows = await trx('employee_earnings')
     .whereIn('source_key', earningRows.map((row) => row.source_key))
@@ -105,6 +128,250 @@ export async function generatePeriodicEarnings(
   const pendingRows = earningRows.filter((row) => !existingKeys.has(row.source_key));
   if (pendingRows.length > 0) {
     await insertRowsInChunks(trx, 'employee_earnings', pendingRows);
+  }
+}
+
+async function assertPayrollPeriodAvailable(
+  input: PayrollPeriod,
+  database: Knex.Transaction | Knex,
+  asOfDate?: string,
+): Promise<void> {
+  validatePayrollPeriod(input, asOfDate);
+
+  const overlap = await database('payroll_periods')
+    .where({ pay_schedule: input.pay_schedule })
+    .whereNot({ status: 'void' })
+    .where('period_start', '<=', input.period_end)
+    .where('period_end', '>=', input.period_start)
+    .orderBy('period_start')
+    .first();
+  if (overlap) {
+    throw new PayrollPeriodError(
+      'PAYROLL_PERIOD_OVERLAP',
+      `${input.pay_schedule} payroll already covers ${overlap.period_start} to ${overlap.period_end}.`,
+    );
+  }
+
+  const openShifts = await database('shifts')
+    .join(
+      'employee_compensation_plans as plan',
+      'shifts.compensation_plan_id',
+      'plan.id',
+    )
+    .where({ 'shifts.status': 'open', 'plan.pay_schedule': input.pay_schedule })
+    .whereRaw(
+      'COALESCE(shifts.shift_date, DATE(shifts.start_time)) BETWEEN ? AND ?',
+      [input.period_start, input.period_end],
+    )
+    .select('shifts.id')
+    .orderBy('shifts.id');
+  if (openShifts.length > 0) {
+    const ids = openShifts.slice(0, 5).map((shift) => `#${shift.id}`).join(', ');
+    throw new PayrollPeriodError(
+      'PAYROLL_OPEN_SHIFTS',
+      `Close ${input.pay_schedule} shift${openShifts.length === 1 ? '' : 's'} ${ids} before calculating this payroll period.`,
+    );
+  }
+}
+
+async function getAvailableEarnings(
+  input: PayrollPeriod,
+  database: Knex.Transaction | Knex,
+): Promise<any[]> {
+  return database('employee_earnings as earning')
+    .join('employee_compensation_plans as plan', 'earning.plan_id', 'plan.id')
+    .leftJoin('payroll_line_earnings as link', function joinUnreleased() {
+      this.on('link.earning_id', '=', 'earning.id').andOnNull('link.released_at');
+    })
+    .whereNull('link.id')
+    .whereNull('earning.reversed_at')
+    .where({ 'plan.pay_schedule': input.pay_schedule })
+    .whereNot({ 'earning.source_type': 'legacy_shift' })
+    .whereIn('earning.status', ['approved', 'calculated'])
+    .whereBetween('earning.earning_date', [input.period_start, input.period_end])
+    .select('earning.*')
+    .orderBy('earning.employee_id')
+    .orderBy('earning.earning_date')
+    .orderBy('earning.id');
+}
+
+async function getShiftSettlements(
+  earnings: any[],
+  database: Knex.Transaction | Knex,
+): Promise<Array<{
+  employee_id: number;
+  shift_id: number;
+  payment_date: string;
+  direct_paid: number;
+  deduction: number;
+  deduction_id: number | null;
+}>> {
+  const shiftIds = [...new Set(
+    earnings
+      .filter((earning) => earning.source_type === 'shift' && earning.shift_id)
+      .map((earning) => Number(earning.shift_id)),
+  )];
+  if (shiftIds.length === 0) return [];
+
+  const [shifts, deductions] = await Promise.all([
+    database('shifts')
+      .whereIn('id', shiftIds)
+      .select('id', 'employee_id', 'shift_date', 'start_time', 'wage_paid'),
+    database('wage_deductions')
+      .whereIn('shift_id', shiftIds)
+      .whereNull('deleted_at')
+      .select('id', 'shift_id', 'deduction_amount', 'final_wage')
+      .orderBy('id'),
+  ]);
+  const deductionByShift = new Map(
+    deductions.map((deduction) => [Number(deduction.shift_id), deduction]),
+  );
+
+  return shifts.map((shift) => {
+    const deduction = deductionByShift.get(Number(shift.id));
+    return {
+      employee_id: Number(shift.employee_id),
+      shift_id: Number(shift.id),
+      payment_date: String(shift.shift_date || shift.start_time).slice(0, 10),
+      direct_paid: money(
+        deduction?.final_wage
+          ?? Math.max(0, Number(shift.wage_paid || 0) - Number(deduction?.deduction_amount || 0)),
+      ),
+      deduction: money(deduction?.deduction_amount || 0),
+      deduction_id: deduction ? Number(deduction.id) : null,
+    };
+  });
+}
+
+export async function previewPayrollRun(
+  input: Omit<PayrollRunInput, 'name' | 'created_by_employee_id'>,
+  database: Knex = db,
+  asOfDate?: string,
+): Promise<any> {
+  await assertPayrollPeriodAvailable(input, database, asOfDate);
+  const [approvedEarnings, periodicEarnings] = await Promise.all([
+    getAvailableEarnings(input, database),
+    buildPeriodicEarningRows(input, database),
+  ]);
+  const earnings = [...approvedEarnings, ...periodicEarnings];
+  const settlements = await getShiftSettlements(earnings, database);
+  const employeeIds = [...new Set(earnings.map((earning) => Number(earning.employee_id)))];
+  const employees = employeeIds.length > 0
+    ? await database('employees').whereIn('id', employeeIds).select('id', 'name')
+    : [];
+  const employeeName = new Map(employees.map((employee) => [Number(employee.id), employee.name]));
+  const settlementByEmployee = new Map<number, { paid: number; deductions: number }>();
+  for (const settlement of settlements) {
+    const totals = settlementByEmployee.get(settlement.employee_id) || { paid: 0, deductions: 0 };
+    totals.paid = money(totals.paid + settlement.direct_paid);
+    totals.deductions = money(totals.deductions + settlement.deduction);
+    settlementByEmployee.set(settlement.employee_id, totals);
+  }
+
+  const earningsByEmployee = new Map<number, any[]>();
+  for (const earning of earnings) {
+    const employeeId = Number(earning.employee_id);
+    const rows = earningsByEmployee.get(employeeId) || [];
+    rows.push(earning);
+    earningsByEmployee.set(employeeId, rows);
+  }
+  const lines = Array.from(earningsByEmployee.entries()).map(([employeeId, rows]) => {
+    const gross = money(rows.reduce((sum, earning) => sum + Number(earning.gross_amount || 0), 0));
+    const settlement = settlementByEmployee.get(employeeId) || { paid: 0, deductions: 0 };
+    const deductions = money(Math.min(gross, settlement.deductions));
+    const net = money(Math.max(0, gross - deductions));
+    const paid = money(Math.min(net, settlement.paid));
+    return {
+      employee_id: employeeId,
+      employee_name: employeeName.get(employeeId) || `Employee ${employeeId}`,
+      earning_count: rows.length,
+      gross_earnings: gross,
+      prior_shift_deductions: deductions,
+      prior_shift_payments: paid,
+      balance_due: money(net - paid),
+    };
+  });
+
+  return {
+    pay_schedule: input.pay_schedule,
+    period_start: input.period_start,
+    period_end: input.period_end,
+    employee_count: lines.length,
+    earning_count: earnings.length,
+    gross_total: money(lines.reduce((sum, line) => sum + line.gross_earnings, 0)),
+    deduction_total: money(lines.reduce((sum, line) => sum + line.prior_shift_deductions, 0)),
+    prior_paid_total: money(lines.reduce((sum, line) => sum + line.prior_shift_payments, 0)),
+    balance_due: money(lines.reduce((sum, line) => sum + line.balance_due, 0)),
+    lines,
+  };
+}
+
+async function importShiftSettlements(
+  earnings: any[],
+  lineIdByEmployee: Map<number, number>,
+  trx: Knex.Transaction,
+): Promise<void> {
+  const settlements = await getShiftSettlements(earnings, trx);
+  const lineRows = await trx('payroll_lines')
+    .whereIn('id', [...lineIdByEmployee.values()])
+    .select('id', 'employee_id', 'gross_earnings');
+  const grossByEmployee = new Map(
+    lineRows.map((line) => [Number(line.employee_id), money(line.gross_earnings || 0)]),
+  );
+  const deductedByEmployee = new Map<number, number>();
+  const paidByEmployee = new Map<number, number>();
+
+  for (const settlement of settlements.sort((a, b) => a.shift_id - b.shift_id)) {
+    const lineId = lineIdByEmployee.get(settlement.employee_id);
+    if (!lineId) continue;
+    const gross = grossByEmployee.get(settlement.employee_id) || 0;
+    const alreadyDeducted = deductedByEmployee.get(settlement.employee_id) || 0;
+    const deductionAmount = money(Math.min(
+      settlement.deduction,
+      Math.max(0, gross - alreadyDeducted),
+    ));
+    if (deductionAmount > 0) {
+      await trx('payroll_deductions').insert({
+        payroll_line_id: lineId,
+        employee_id: settlement.employee_id,
+        deduction_type: 'manual',
+        amount: deductionAmount,
+        authorization_reference: `SHIFT-WAGE-DEDUCTION:${settlement.deduction_id}`,
+        notes: `Wage deduction already applied when shift #${settlement.shift_id} closed.`,
+        status: 'approved',
+        approved_at: trx.fn.now(),
+      });
+      deductedByEmployee.set(
+        settlement.employee_id,
+        money(alreadyDeducted + deductionAmount),
+      );
+    }
+
+    const deductions = deductedByEmployee.get(settlement.employee_id) || 0;
+    const net = money(Math.max(0, gross - deductions));
+    const alreadyPaid = paidByEmployee.get(settlement.employee_id) || 0;
+    const paymentAmount = money(Math.min(
+      settlement.direct_paid,
+      Math.max(0, net - alreadyPaid),
+    ));
+    if (paymentAmount > 0) {
+      await trx('payroll_payments').insert({
+        payroll_line_id: lineId,
+        employee_id: settlement.employee_id,
+        shift_id: settlement.shift_id,
+        amount: paymentAmount,
+        payment_method: 'cash',
+        payment_date: settlement.payment_date,
+        reference: `SHIFT-WAGE:${settlement.shift_id}`,
+        notes: `Direct wage already paid from shift #${settlement.shift_id}.`,
+        status: 'posted',
+      });
+      paidByEmployee.set(settlement.employee_id, money(alreadyPaid + paymentAmount));
+    }
+  }
+
+  for (const lineId of lineIdByEmployee.values()) {
+    await refreshPayrollLine(lineId, trx);
   }
 }
 
@@ -179,29 +446,12 @@ export async function refreshPayrollRun(
 }
 
 export async function calculatePayrollRun(
-  input: {
-    name: string;
-    pay_schedule: string;
-    period_start: string;
-    period_end: string;
-    created_by_employee_id?: number | null;
-  },
+  input: PayrollRunInput,
   database: Knex = db,
+  asOfDate?: string,
 ): Promise<number> {
   return database.transaction(async (trx) => {
-    const existingPeriod = await trx('payroll_periods')
-      .where({
-        pay_schedule: input.pay_schedule,
-        period_start: input.period_start,
-        period_end: input.period_end,
-      })
-      .whereNot({ status: 'void' })
-      .first();
-    if (existingPeriod) {
-      const error: any = new Error('A payroll run already exists for this schedule and period.');
-      error.code = 'PAYROLL_PERIOD_EXISTS';
-      throw error;
-    }
+    await assertPayrollPeriodAvailable(input, trx, asOfDate);
 
     const [periodId] = await trx('payroll_periods').insert({
       name: input.name,
@@ -223,19 +473,13 @@ export async function calculatePayrollRun(
       period_end: input.period_end,
     }, trx);
 
-    const earnings = await trx('employee_earnings as earning')
-      .join('employee_compensation_plans as plan', 'earning.plan_id', 'plan.id')
-      .leftJoin('payroll_line_earnings as link', function joinUnreleased() {
-        this.on('link.earning_id', '=', 'earning.id').andOnNull('link.released_at');
-      })
-      .whereNull('link.id')
-      .whereNull('earning.reversed_at')
-      .where({ 'plan.pay_schedule': input.pay_schedule })
-      .whereIn('earning.status', ['approved', 'calculated'])
-      .whereBetween('earning.earning_date', [input.period_start, input.period_end])
-      .select('earning.*')
-      .orderBy('earning.employee_id')
-      .orderBy('earning.earning_date');
+    const earnings = await getAvailableEarnings(input, trx);
+    if (earnings.length === 0) {
+      throw new PayrollPeriodError(
+        'PAYROLL_NO_EARNINGS',
+        `No unprocessed ${input.pay_schedule} earnings are available for this period.`,
+      );
+    }
 
     const byEmployee = new Map<number, any[]>();
     for (const earning of earnings) {
@@ -274,6 +518,7 @@ export async function calculatePayrollRun(
         }));
       });
       await insertRowsInChunks(trx, 'payroll_line_earnings', earningLinks);
+      await importShiftSettlements(earnings, lineIdByEmployee, trx);
     }
 
     await refreshPayrollRun(runId, trx);
@@ -446,6 +691,11 @@ export async function voidPayrollRun(
     const activePayment = await trx('payroll_payments')
       .join('payroll_lines', 'payroll_payments.payroll_line_id', 'payroll_lines.id')
       .where({ 'payroll_lines.run_id': runId, 'payroll_payments.status': 'posted' })
+      .where((query) => {
+        query
+          .whereNull('payroll_payments.reference')
+          .orWhere('payroll_payments.reference', 'not like', 'SHIFT-WAGE:%');
+      })
       .first();
     if (activePayment) throw new Error('Reverse all payroll payments before voiding this run');
 
@@ -503,6 +753,11 @@ export async function voidPayrollRun(
     await trx('payroll_deductions')
       .whereIn('payroll_line_id', trx('payroll_lines').where({ run_id: runId }).select('id'))
       .whereNot({ status: 'reversed' })
+      .update({ status: 'reversed', reversed_at: trx.fn.now() });
+    await trx('payroll_payments')
+      .whereIn('payroll_line_id', trx('payroll_lines').where({ run_id: runId }).select('id'))
+      .where({ status: 'posted' })
+      .where('reference', 'like', 'SHIFT-WAGE:%')
       .update({ status: 'reversed', reversed_at: trx.fn.now() });
     await trx('payroll_lines').where({ run_id: runId }).update({
       status: 'void',

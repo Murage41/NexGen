@@ -100,7 +100,7 @@ async function main() {
       pay_schedule: 'monthly',
       period_start: '2026-07-01',
       period_end: '2026-07-31',
-    }, db);
+    }, db, '2026-08-01');
     const calculateMs = performance.now() - calculateStarted;
 
     const runRow = await db('payroll_runs').where({ id: runId }).first();
@@ -132,8 +132,8 @@ async function main() {
         pay_schedule: 'monthly',
         period_start: '2026-07-01',
         period_end: '2026-07-31',
-      }, db),
-      (error: any) => error.code === 'PAYROLL_PERIOD_EXISTS',
+      }, db, '2026-08-01'),
+      (error: any) => error.code === 'PAYROLL_PERIOD_OVERLAP',
     );
 
     const heapMb = process.memoryUsage().heapUsed / 1024 / 1024;

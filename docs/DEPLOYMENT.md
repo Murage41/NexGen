@@ -192,12 +192,13 @@ cd /d E:\NexGen
 git pull --ff-only origin main
 
 npm install
-npm run build:mobile
 
 cd /d E:\NexGen\backend
+npm run build
 npm run migrate
 
 cd /d E:\NexGen
+npm run build:mobile
 npm run startup:install
 npm run station:bg
 timeout /t 15 /nobreak
@@ -232,12 +233,13 @@ Write-Host "BACKUP VERIFIED: $(Join-Path $backup 'data\nexgen.db')"
 git pull --ff-only origin main
 
 npm.cmd install
-npm.cmd run build:mobile
 
 Set-Location E:\NexGen\backend
+npm.cmd run build
 npm.cmd run migrate
 
 Set-Location E:\NexGen
+npm.cmd run build:mobile
 npm.cmd run startup:install
 npm.cmd run station:bg
 Start-Sleep -Seconds 15

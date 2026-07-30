@@ -6,7 +6,7 @@ import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 import { useAuth } from '../context/AuthContext';
 
 const PREDEFINED_CATEGORIES = [
-  'Rent', 'Utilities', 'Wages', 'Maintenance', 'Transport', 'Licenses',
+  'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
   'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
   'Cleaning', 'Insurance', 'Accounting', 'Other',
 ];
@@ -66,7 +66,7 @@ export default function Expenses() {
   }
 
   async function handleDelete(exp: any) {
-    if (exp.source === 'shift') return;
+    if (exp.source !== 'general') return;
     if (!confirm('Delete this expense?')) return;
     try {
       await deleteExpense(exp.id);
@@ -115,6 +115,16 @@ export default function Expenses() {
           {summary.top_category && (
             <p className="text-xs text-gray-400 mt-1">Top: {summary.top_category}</p>
           )}
+          <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100">
+            <div>
+              <p className="text-xs text-gray-400">Operating</p>
+              <p className="text-sm font-semibold text-gray-700">{fmt(summary.total_operating_expenses)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Payroll</p>
+              <p className="text-sm font-semibold text-gray-700">{fmt(summary.total_payroll_expense)}</p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -144,6 +154,10 @@ export default function Expenses() {
           className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${!filterCat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
           All
         </button>
+        <button onClick={() => applyFilter('Payroll')}
+          className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${filterCat === 'Payroll' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+          Payroll
+        </button>
         {categories.slice(0, 8).map(c => (
           <button key={c} onClick={() => applyFilter(c)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${filterCat === c ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
@@ -166,9 +180,13 @@ export default function Expenses() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{e.category}</span>
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    e.source === 'shift' ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-400'
+                    e.source === 'shift'
+                      ? 'bg-blue-50 text-blue-600'
+                      : e.source === 'payroll'
+                        ? 'bg-green-50 text-green-700'
+                        : 'bg-gray-50 text-gray-400'
                   }`}>
-                    {e.source === 'shift' ? 'Shift' : 'General'}
+                    {e.source === 'shift' ? 'Shift' : e.source === 'payroll' ? 'Payroll' : 'General'}
                   </span>
                 </div>
                 {e.description && <p className="text-sm text-gray-700 truncate">{e.description}</p>}

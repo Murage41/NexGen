@@ -3,6 +3,10 @@ import db from '../database';
 import { getFIFOCostByFuelType } from '../services/stockCalculator';
 import { detectDriftSummary } from '../services/driftDetector';
 import { getKenyaDate } from '../utils/timezone';
+import {
+  getTotalPayrollCashOutflow,
+  getUnmirroredShiftWagesPaid,
+} from '../services/payrollAccounting';
 
 const router = Router();
 
@@ -84,17 +88,15 @@ router.get('/', async (_req, res) => {
     if (todayLitresDiesel > 0) avgCosts['diesel'] = (todayFifoCosts['diesel'] || 0) / todayLitresDiesel;
 
     // Today's wages — use stored wage_paid for closed shifts, daily_wage preview for open
-    let todayLegacyWagesPaid = 0;
-    if (shiftIds.length > 0) {
-      const wageShifts = await db('shifts')
-        .join('employees', 'shifts.employee_id', 'employees.id')
-        .whereIn('shifts.id', shiftIds)
-        .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
-
-      for (const s of wageShifts) {
-        todayLegacyWagesPaid += s.status === 'closed' ? (Number(s.wage_paid) || 0) : 0;
-      }
-    }
+    const todayLegacyWagesPaid = await getUnmirroredShiftWagesPaid(today, today);
+    const todayWageDeductionsRow = shiftIds.length > 0
+      ? await db('wage_deductions')
+        .whereIn('shift_id', shiftIds)
+        .whereNull('deleted_at')
+        .sum('deduction_amount as total')
+        .first()
+      : null;
+    const todayWageDeductions = Number(todayWageDeductionsRow?.total || 0);
     const todayEarningsRow = await db('employee_earnings')
       .whereNull('reversed_at')
       .whereIn('status', ['approved', 'posted'])
@@ -102,11 +104,6 @@ router.get('/', async (_req, res) => {
       .sum('gross_amount as total')
       .first();
     const todayWages = Number(todayEarningsRow?.total || 0);
-    const todayPayrollPaidRow = await db('payroll_payments')
-      .where({ payment_date: today, status: 'posted' })
-      .sum('amount as total')
-      .first();
-    const todayPayrollPaid = Number(todayPayrollPaidRow?.total || 0);
     const todayPayrollPaidFromShiftsRow = shiftIds.length > 0
       ? await db('payroll_payments')
         .whereIn('shift_id', shiftIds)
@@ -115,7 +112,7 @@ router.get('/', async (_req, res) => {
         .first()
       : null;
     const todayPayrollPaidFromShifts = Number(todayPayrollPaidFromShiftsRow?.total || 0);
-    const todayWagesPaid = todayLegacyWagesPaid + todayPayrollPaid;
+    const todayWagesPaid = await getTotalPayrollCashOutflow(today, today);
 
     // Today's expenses (shift + general)
     let todayShiftExpenses = 0;
@@ -149,6 +146,7 @@ router.get('/', async (_req, res) => {
       todayInvoiceRetail +
       todayShiftExpenses +
       todayLegacyWagesPaid +
+      todayWageDeductions +
       todayPayrollPaidFromShifts;
     const todayVariance = todayTotalAccounted - todayExpectedTotal;
 
@@ -172,16 +170,6 @@ router.get('/', async (_req, res) => {
     }
 
     // MTD wages — use stored wage_paid for closed shifts, daily_wage preview for open
-    let mtdLegacyWagesPaid = 0;
-    if (mtdShiftIds.length > 0) {
-      const mtdWageShifts = await db('shifts')
-        .join('employees', 'shifts.employee_id', 'employees.id')
-        .whereIn('shifts.id', mtdShiftIds)
-        .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
-      for (const s of mtdWageShifts) {
-        mtdLegacyWagesPaid += s.status === 'closed' ? (Number(s.wage_paid) || 0) : 0;
-      }
-    }
     const mtdEarningsRow = await db('employee_earnings')
       .whereNull('reversed_at')
       .whereIn('status', ['approved', 'posted'])
@@ -189,12 +177,7 @@ router.get('/', async (_req, res) => {
       .sum('gross_amount as total')
       .first();
     const mtdWages = Number(mtdEarningsRow?.total || 0);
-    const mtdPayrollPaidRow = await db('payroll_payments')
-      .where({ status: 'posted' })
-      .whereBetween('payment_date', [monthStart, today])
-      .sum('amount as total')
-      .first();
-    const mtdWagesPaid = mtdLegacyWagesPaid + Number(mtdPayrollPaidRow?.total || 0);
+    const mtdWagesPaid = await getTotalPayrollCashOutflow(monthStart, today);
 
     // MTD expenses
     let mtdShiftExp = 0;

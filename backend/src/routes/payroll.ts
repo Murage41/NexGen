@@ -6,16 +6,19 @@ import {
   calculatePayrollRunSchema,
   createPayrollDeductionSchema,
   createPayrollPaymentSchema,
+  payrollPeriodSchema,
   payrollReasonSchema,
 } from '../schemas';
 import {
   approvePayrollRun,
   calculatePayrollRun,
   getPayrollRun,
+  previewPayrollRun,
   refreshPayrollLine,
   refreshPayrollRun,
   voidPayrollRun,
 } from '../services/payroll';
+import { isShiftWageMirror } from '../services/payrollAccounting';
 
 const router = Router();
 router.use(requireAdmin);
@@ -40,6 +43,25 @@ router.get('/runs', async (req, res) => {
   }
 });
 
+router.get('/runs/preview', async (req, res) => {
+  const parsed = payrollPeriodSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      error: parsed.error.issues[0]?.message || 'Invalid payroll period.',
+    });
+  }
+  try {
+    res.json({ success: true, data: await previewPayrollRun(parsed.data) });
+  } catch (err: any) {
+    res.status(err.httpStatus || 500).json({
+      success: false,
+      code: err.code,
+      error: err.message,
+    });
+  }
+});
+
 router.get('/runs/:id', async (req, res) => {
   try {
     const run = await getPayrollRun(Number(req.params.id));
@@ -58,10 +80,10 @@ router.post('/runs/calculate', validate(calculatePayrollRunSchema), async (req: 
     });
     res.status(201).json({ success: true, data: await getPayrollRun(runId) });
   } catch (err: any) {
-    const duplicate = err.code === 'PAYROLL_PERIOD_EXISTS'
-      || String(err.message).includes('UNIQUE constraint failed');
-    res.status(duplicate ? 409 : 500).json({
+    const duplicate = String(err.message).includes('UNIQUE constraint failed');
+    res.status(err.httpStatus || (duplicate ? 409 : 500)).json({
       success: false,
+      code: err.code,
       error: duplicate ? 'A payroll run already exists for this schedule and period.' : err.message,
     });
   }
@@ -239,6 +261,12 @@ router.post('/payments/:id/reverse', validate(payrollReasonSchema), async (req, 
     if (!payment) return res.status(404).json({ success: false, error: 'Payroll payment not found' });
     if (payment.status !== 'posted') {
       return res.status(409).json({ success: false, error: 'Payment is already reversed.' });
+    }
+    if (isShiftWageMirror(payment)) {
+      return res.status(409).json({
+        success: false,
+        error: 'This payment was recorded when its shift closed and cannot be reversed from Payroll.',
+      });
     }
     await db('payroll_payments').where({ id: payment.id }).update({
       status: 'reversed',

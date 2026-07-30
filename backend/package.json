@@ -18,6 +18,7 @@
     "test:employee-earnings": "tsx scripts/test_employee_earnings.ts",
     "test:employee-wage-safety": "tsx scripts/test_employee_wage_safety.ts",
     "test:payroll-ledger": "tsx scripts/test_payroll_ledger.ts",
+    "test:payroll-schedules": "tsx scripts/test_payroll_schedules.ts",
     "test:shift-debt-receipts": "tsx scripts/test_shift_debt_receipts.ts",
     "test:delivery-policy": "tsx scripts/test_delivery_policy.ts",
     "test:delivery-replay": "tsx scripts/test_delivery_replay.ts",

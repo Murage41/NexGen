@@ -49,7 +49,7 @@ export default function ShiftDetail() {
       const d = res.data.data;
       setShift(d);
       setCreditReceipts(d.credit_receipts || []);
-      setWagePaid(String(d.employee_wage || 0));
+      setWagePaid(String(d.default_direct_wage_payment || 0));
       // Use outstanding_debts from shift response, or fetch separately
       if (d.outstanding_debts) {
         setDebts(d.outstanding_debts);
@@ -72,7 +72,7 @@ export default function ShiftDetail() {
     setClosing(true);
     try {
       let deduct_amount: number | null = null;
-      if (closeVariance < 0) {
+      if (closeVariance < 0 && shift.compensation_plan?.pay_schedule === 'daily') {
         const deficit = Math.abs(closeVariance);
         const wage = enteredWagePaid;
         if (deductOption === 'full') {
@@ -549,13 +549,19 @@ export default function ShiftDetail() {
             </div>
 
             {/* Wages paid input */}
-            <div className="mb-4">
-              <label className="text-sm font-medium text-gray-700 mb-1 block">Wages Paid This Shift (KES)</label>
-              <input type="number" step="0.01" min="0" value={wagePaid}
-                onChange={e => setWagePaid(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg p-3 text-base" />
-              <p className="text-xs text-gray-400 mt-1">Set to 0 if already paid in a previous shift today.</p>
-            </div>
+            {shift.compensation_plan?.pay_schedule === 'daily' ? (
+              <div className="mb-4">
+                <label className="text-sm font-medium text-gray-700 mb-1 block">Direct Wage Paid From This Shift (KES)</label>
+                <input type="number" step="0.01" min="0" value={wagePaid}
+                  onChange={e => setWagePaid(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg p-3 text-base" />
+              </div>
+            ) : (
+              <div className="mb-4 border-y border-gray-200 py-3 flex items-center justify-between">
+                <span className="text-sm text-gray-600 capitalize">{shift.compensation_plan?.pay_schedule} payroll accrual</span>
+                <span className="font-semibold text-gray-800">{fmt(Number(shift.gross_earning_preview || 0))}</span>
+              </div>
+            )}
 
             {/* Summary in modal */}
             <div className="bg-gray-50 rounded-lg p-3 mb-4 text-sm space-y-1">
@@ -584,7 +590,7 @@ export default function ShiftDetail() {
             </div>
 
             {/* Deduction options — only when deficit */}
-            {closeVariance < 0 && (
+            {closeVariance < 0 && shift.compensation_plan?.pay_schedule === 'daily' && (
               <div className="mb-4">
                 <p className="text-sm font-semibold text-gray-700 mb-2">
                   Deficit: {fmt(Math.abs(closeVariance))} - Paid from shift: {fmt(enteredWagePaid)}
@@ -638,6 +644,14 @@ export default function ShiftDetail() {
                     </p>
                   </div>
                 </label>
+              </div>
+            )}
+            {closeVariance < 0 && shift.compensation_plan?.pay_schedule !== 'daily' && (
+              <div className="mb-4 border border-red-200 bg-red-50 rounded-lg p-3">
+                <p className="text-sm font-semibold text-red-800">Deficit: {fmt(Math.abs(closeVariance))}</p>
+                <p className="text-xs text-red-600 mt-1">
+                  Recorded as staff debt. Recovery is handled through payroll.
+                </p>
               </div>
             )}
 

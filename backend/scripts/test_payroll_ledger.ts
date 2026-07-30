@@ -152,7 +152,7 @@ async function main() {
       pay_schedule: 'monthly',
       period_start: '2026-07-01',
       period_end: '2026-07-31',
-    }, db);
+    }, db, '2026-08-01');
     const line = await db('payroll_lines').where({ run_id: runId, employee_id: employeeId }).first();
     assert.equal(Number(line.gross_earnings), 16483.87);
     assert.equal(await db('payroll_lines').where({ run_id: runId }).count('* as count').first()
@@ -226,7 +226,7 @@ async function main() {
       pay_schedule: 'monthly',
       period_start: '2026-07-01',
       period_end: '2026-07-31',
-    }, db);
+    }, db, '2026-08-01');
     const rerunLine = await db('payroll_lines').where({ run_id: rerunId, employee_id: employeeId }).first();
     assert.equal(Number(rerunLine.gross_earnings), 16483.87);
 

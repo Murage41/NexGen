@@ -258,6 +258,9 @@ router.get('/:id', async (req, res) => {
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
     const payrollPayments = await db('payroll_payments')
       .where({ shift_id: shift.id, status: 'posted' })
+      .where((query) => {
+        query.whereNull('reference').orWhere('reference', 'not like', 'SHIFT-WAGE:%');
+      })
       .orderBy('id');
 
     // Phase 3B: invoice-mode consumption (litre ledger, retail-priced for shift balance)
@@ -286,10 +289,18 @@ router.get('/:id', async (req, res) => {
       .orderBy('created_at', 'asc');
     const total_outstanding_debt = outstandingDebts.reduce((sum: number, d: any) => sum + d.balance, 0);
 
-    // For closed shifts, use the stored wage_paid; for open shifts, show daily_wage as preview
+    const grossEarningPreview = earningPreview.reduce(
+      (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
+      0,
+    );
+    // Earnings are an expense when earned. Only actual direct payments belong
+    // in drawer accountability; monthly/weekly earnings accrue without leaving
+    // the shift drawer.
     const employee_wage = shift.status === 'closed'
       ? (shift.wage_paid ?? shift.employee_wage ?? 0)
-      : (shift.employee_wage || 0);
+      : compensationPlan?.pay_schedule === 'daily'
+        ? grossEarningPreview
+        : 0;
     const accountability = computeShiftAccountability({
       readings,
       collections,
@@ -316,6 +327,8 @@ router.get('/:id', async (req, res) => {
         compensation_plan: compensationPlan,
         earnings,
         earning_preview: earningPreview,
+        gross_earning_preview: grossEarningPreview,
+        default_direct_wage_payment: shift.status === 'open' ? employee_wage : 0,
         total_gross_earnings: earnings.reduce(
           (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
           0,
@@ -366,6 +379,19 @@ router.post('/', requireAdmin, async (req, res) => {
       if (!compensationPlan) {
         const err: any = new Error('This employee has no compensation plan for the shift date.');
         err.httpStatus = 400;
+        throw err;
+      }
+      const lockedPayrollPeriod = await trx('payroll_periods')
+        .where({ pay_schedule: compensationPlan.pay_schedule })
+        .whereNot({ status: 'void' })
+        .where('period_start', '<=', resolvedDate)
+        .where('period_end', '>=', resolvedDate)
+        .first();
+      if (lockedPayrollPeriod) {
+        const err: any = new Error(
+          `${compensationPlan.pay_schedule} payroll for ${resolvedDate} has already been calculated.`,
+        );
+        err.httpStatus = 409;
         throw err;
       }
 
@@ -1301,7 +1327,7 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
     }
 
     const normalizedWage = submittedWage === undefined || submittedWage === null
-      ? Number(shift.daily_wage || 0)
+      ? 0
       : Number(submittedWage);
     if (!Number.isFinite(normalizedWage) || normalizedWage < 0) {
       return res.status(400).json({ success: false, error: 'wage_paid must be a non-negative number' });
@@ -1339,6 +1365,32 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
         .whereNull('deleted_at');
 
       const employee_wage = normalizedWage;
+      const compensationPlan = shift.compensation_plan_id
+        ? await getCompensationPlanById(Number(shift.compensation_plan_id), trx)
+        : await getCompensationPlan(
+          Number(shift.emp_id),
+          shift.shift_date || String(shift.start_time).slice(0, 10),
+          trx,
+        );
+      if (!compensationPlan) {
+        throw new Error(`No compensation plan is configured for employee ${shift.emp_id}`);
+      }
+      const grossEarnings = calculateShiftEarnings(compensationPlan, readings)
+        .reduce((sum, earning) => sum + Number(earning.gross_amount || 0), 0);
+      if (compensationPlan.pay_schedule !== 'daily' && employee_wage > 0) {
+        const err: any = new Error(
+          `${compensationPlan.pay_schedule} compensation must be paid through its payroll run.`,
+        );
+        err.httpStatus = 400;
+        throw err;
+      }
+      if (employee_wage > grossEarnings + 0.005) {
+        const err: any = new Error(
+          `Direct wage payment cannot exceed this shift's gross earnings of KES ${grossEarnings.toFixed(2)}.`,
+        );
+        err.httpStatus = 400;
+        throw err;
+      }
       const { variance } = computeShiftAccountability({
         readings,
         collections,
@@ -1534,7 +1586,7 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
     res.json({ success: true, ...(warnings.length > 0 ? { warnings } : {}) });
   } catch (err: any) {
     console.error('[shifts:close] ERROR', err.message, err.stack);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.httpStatus || 500).json({ success: false, error: err.message });
   }
 });
 

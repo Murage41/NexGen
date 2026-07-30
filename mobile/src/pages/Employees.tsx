@@ -301,14 +301,22 @@ export default function Employees() {
 }
 
 function CompactPlanEditor({ plan, setPlan, updateComponent }: any) {
+  const hasFixedSalary = plan.components.some(
+    (component: Component) => component.component_type === 'fixed_periodic',
+  );
   return (
     <div className="space-y-3">
       <Input label="Plan name" value={plan.name} onChange={(value) => setPlan({ ...plan, name: value })} />
       <div className="grid grid-cols-2 gap-3">
-        <Select label="Payment schedule" value={plan.pay_schedule} onChange={(value) => setPlan({ ...plan, pay_schedule: value })}
+        <Select label="Payroll schedule" value={plan.pay_schedule} onChange={(value) => setPlan({ ...plan, pay_schedule: value })}
           options={[['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Every 14 days'], ['monthly', 'Monthly']]} />
         <Input label="Effective from" value={plan.effective_from} onChange={(value) => setPlan({ ...plan, effective_from: value })} type="date" />
       </div>
+      {hasFixedSalary && (
+        <Select label="Salary proration" value={plan.proration_method}
+          onChange={(value) => setPlan({ ...plan, proration_method: value })}
+          options={[['calendar_days', 'Calendar days'], ['none', 'No proration']]} />
+      )}
       <div className="flex items-center justify-between border-t pt-3">
         <p className="text-sm font-semibold text-gray-700">Earning components</p>
         <button onClick={() => setPlan({ ...plan, components: [...plan.components, blankComponent()] })}

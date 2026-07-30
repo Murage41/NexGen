@@ -8,17 +8,39 @@ import {
   getCurrentShift,
   getPayrollRun,
   getPayrollRuns,
+  previewPayrollRun,
 } from '../services/api';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
-const month = () => today().slice(0, 7);
-const monthEnd = () => {
-  const [year, value] = month().split('-').map(Number);
-  return new Date(Date.UTC(year, value, 0)).toISOString().slice(0, 10);
+const monthBounds = (value: string) => {
+  const [year, monthValue] = value.slice(0, 7).split('-').map(Number);
+  return {
+    start: `${value.slice(0, 7)}-01`,
+    end: new Date(Date.UTC(year, monthValue, 0)).toISOString().slice(0, 10),
+  };
+};
+const addDays = (date: string, days: number) => {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+};
+const suggestedPeriod = (schedule: string, anchor = today()) => {
+  if (schedule === 'daily') return { start: anchor, end: anchor };
+  if (schedule === 'weekly') return { start: addDays(anchor, -6), end: anchor };
+  if (schedule === 'biweekly') return { start: addDays(anchor, -13), end: anchor };
+  const current = monthBounds(anchor);
+  return anchor === current.end ? current : monthBounds(addDays(current.start, -1));
+};
+const periodFromStart = (schedule: string, start: string) => {
+  if (schedule === 'daily') return { start, end: start };
+  if (schedule === 'weekly') return { start, end: addDays(start, 6) };
+  if (schedule === 'biweekly') return { start, end: addDays(start, 13) };
+  return monthBounds(start);
 };
 const kes = (value: number) => `KES ${Number(value || 0).toLocaleString('en-KE', { maximumFractionDigits: 2 })}`;
 
 export default function Payroll() {
+  const initialPeriod = suggestedPeriod('monthly');
   const [runs, setRuns] = useState<any[]>([]);
   const [run, setRun] = useState<any>(null);
   const [line, setLine] = useState<any>(null);
@@ -27,11 +49,14 @@ export default function Payroll() {
   const [busy, setBusy] = useState(false);
   const [calculateSheet, setCalculateSheet] = useState(false);
   const [paymentSheet, setPaymentSheet] = useState(false);
+  const [preview, setPreview] = useState<any>(null);
+  const [previewError, setPreviewError] = useState('');
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [runForm, setRunForm] = useState({
-    name: `${month()} payroll`,
+    name: `${initialPeriod.start} monthly payroll`,
     pay_schedule: 'monthly',
-    period_start: `${month()}-01`,
-    period_end: monthEnd(),
+    period_start: initialPeriod.start,
+    period_end: initialPeriod.end,
   });
   const [payment, setPayment] = useState({
     amount: '',
@@ -42,6 +67,66 @@ export default function Payroll() {
   });
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!calculateSheet) return;
+    let cancelled = false;
+    setPreview(null);
+    setPreviewError('');
+    setPreviewBusy(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await previewPayrollRun({
+          pay_schedule: runForm.pay_schedule,
+          period_start: runForm.period_start,
+          period_end: runForm.period_end,
+        });
+        if (cancelled) return;
+        setPreview(response.data.data);
+      } catch (error: any) {
+        if (cancelled) return;
+        setPreviewError(error.response?.data?.error || 'Payroll preview is unavailable.');
+      } finally {
+        if (!cancelled) setPreviewBusy(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [calculateSheet, runForm.pay_schedule, runForm.period_start, runForm.period_end]);
+
+  function openCalculate() {
+    const period = suggestedPeriod(runForm.pay_schedule);
+    setRunForm({
+      ...runForm,
+      name: `${period.start} ${runForm.pay_schedule} payroll`,
+      period_start: period.start,
+      period_end: period.end,
+    });
+    setCalculateSheet(true);
+  }
+
+  function changeSchedule(schedule: string) {
+    const period = suggestedPeriod(schedule);
+    setRunForm({
+      ...runForm,
+      name: `${period.start} ${schedule} payroll`,
+      pay_schedule: schedule,
+      period_start: period.start,
+      period_end: period.end,
+    });
+  }
+
+  function changePeriodStart(value: string) {
+    const start = runForm.pay_schedule === 'monthly' ? `${value}-01` : value;
+    const period = periodFromStart(runForm.pay_schedule, start);
+    setRunForm({
+      ...runForm,
+      name: `${period.start} ${runForm.pay_schedule} payroll`,
+      period_start: period.start,
+      period_end: period.end,
+    });
+  }
 
   async function load(selectedId?: number) {
     try {
@@ -132,7 +217,7 @@ export default function Payroll() {
   return (
     <div className="pb-6">
       <PageHeader title="Payroll" back right={
-        <button onClick={() => setCalculateSheet(true)} className="p-2 bg-blue-600 text-white rounded-xl" title="Calculate payroll">
+        <button onClick={openCalculate} className="p-2 bg-blue-600 text-white rounded-xl" title="Calculate payroll">
           <Calculator size={19} />
         </button>
       } />
@@ -212,13 +297,21 @@ export default function Payroll() {
         <Sheet title="Calculate Payroll" onClose={() => setCalculateSheet(false)}>
           <div className="space-y-3">
             <Input label="Run name" value={runForm.name} onChange={(value) => setRunForm({ ...runForm, name: value })} />
-            <Select label="Payment schedule" value={runForm.pay_schedule} onChange={(value) => setRunForm({ ...runForm, pay_schedule: value })}
+            <Select label="Payment schedule" value={runForm.pay_schedule} onChange={changeSchedule}
               options={[['daily', 'Daily'], ['weekly', 'Weekly'], ['biweekly', 'Every 14 days'], ['monthly', 'Monthly']]} />
             <div className="grid grid-cols-2 gap-3">
-              <Input label="Period start" type="date" value={runForm.period_start} onChange={(value) => setRunForm({ ...runForm, period_start: value })} />
-              <Input label="Period end" type="date" value={runForm.period_end} onChange={(value) => setRunForm({ ...runForm, period_end: value })} />
+              <Input
+                label={runForm.pay_schedule === 'monthly' ? 'Payroll month' : 'Period start'}
+                type={runForm.pay_schedule === 'monthly' ? 'month' : 'date'}
+                value={runForm.pay_schedule === 'monthly' ? runForm.period_start.slice(0, 7) : runForm.period_start}
+                onChange={changePeriodStart}
+              />
+              <Input label="Period end" type="date" value={runForm.period_end} onChange={() => {}} readOnly />
             </div>
-            <button onClick={calculate} disabled={busy} className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium disabled:opacity-50">
+            <MobilePayrollPreview preview={preview} error={previewError} busy={previewBusy} />
+            <button onClick={calculate}
+              disabled={busy || previewBusy || !preview || Boolean(previewError) || preview.employee_count === 0}
+              className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium disabled:opacity-50">
               {busy ? 'Calculating...' : 'Calculate'}
             </button>
           </div>
@@ -256,6 +349,23 @@ export default function Payroll() {
   );
 }
 
+function MobilePayrollPreview({ preview, error, busy }: any) {
+  if (busy) return <div className="border-y py-3 text-sm text-gray-500">Reviewing payroll period...</div>;
+  if (error) return <div className="border-y border-red-200 bg-red-50 px-2 py-3 text-sm text-red-700">{error}</div>;
+  if (!preview) return null;
+  return (
+    <div className="border-y border-gray-200 py-3">
+      <div className="grid grid-cols-2 gap-y-3">
+        <Metric label="Employees" value={String(preview.employee_count)} />
+        <Metric label="Gross" value={kes(preview.gross_total)} />
+        <Metric label="Previously paid" value={kes(preview.prior_paid_total)} />
+        <Metric label="Balance due" value={kes(preview.balance_due)} />
+      </div>
+      {preview.employee_count === 0 && <p className="text-xs text-amber-700 mt-3">No unprocessed earnings in this period.</p>}
+    </div>
+  );
+}
+
 function Status({ value }: { value: string }) {
   const style: Record<string, string> = {
     calculated: 'bg-amber-100 text-amber-700',
@@ -282,13 +392,14 @@ function Sheet({ title, onClose, children }: any) {
   );
 }
 
-function Input({ label, value, onChange, type = 'text' }: {
+function Input({ label, value, onChange, type = 'text', readOnly = false }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  readOnly?: boolean;
 }) {
-  return <label><span className="text-xs text-gray-600 mb-1 block">{label}</span><input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="w-full h-11 border rounded-xl px-3 text-sm" /></label>;
+  return <label><span className="text-xs text-gray-600 mb-1 block">{label}</span><input type={type} value={value} readOnly={readOnly} onChange={(event) => onChange(event.target.value)} className={`w-full h-11 border rounded-xl px-3 text-sm ${readOnly ? 'bg-gray-50' : ''}`} /></label>;
 }
 
 function Select({ label, value, onChange, options }: {

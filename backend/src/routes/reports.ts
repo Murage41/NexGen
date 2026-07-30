@@ -3,6 +3,12 @@ import db from '../database';
 import { computeBookStock, computeAllTankStocks, getFIFOCostByFuelType, reverseBatchConsumption, consumeBatchesFIFO, recomputeCache } from '../services/stockCalculator';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 import { requireAdmin } from '../middleware/requireAdmin';
+import {
+  getPayrollCashPaid,
+  getPayrollExpense,
+  getTotalPayrollCashOutflow,
+  isShiftWageMirror,
+} from '../services/payrollAccounting';
 
 const router = Router();
 
@@ -12,25 +18,6 @@ function roundMoney(value: number): number {
 
 function sumMoney(rows: any[], selector: (row: any) => any): number {
   return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
-}
-
-async function getPayrollExpense(from: string, to: string): Promise<number> {
-  const row = await db('employee_earnings')
-    .whereNull('reversed_at')
-    .whereIn('status', ['approved', 'posted'])
-    .whereBetween('earning_date', [from, to])
-    .sum('gross_amount as total')
-    .first();
-  return roundMoney(Number(row?.total || 0));
-}
-
-async function getPayrollCashPaid(from: string, to: string): Promise<number> {
-  const row = await db('payroll_payments')
-    .where({ status: 'posted' })
-    .whereBetween('payment_date', [from, to])
-    .sum('amount as total')
-    .first();
-  return roundMoney(Number(row?.total || 0));
 }
 
 // ─── Daily Report ─────────────────────────────────────────────────────────────
@@ -89,10 +76,14 @@ router.get('/daily', async (req, res) => {
 
       const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
       const actualWagePaid = shift.status === 'closed'
-        ? (Number(shift.wage_paid) || 0)
+        ? Number(wageDeduction?.final_wage ?? shift.wage_paid ?? 0)
         : 0;
-      const shiftPayrollPayments = await db('payroll_payments')
-        .where({ shift_id: shift.id, status: 'posted' });
+      const wageDeductionAmount = shift.status === 'closed'
+        ? Number(wageDeduction?.deduction_amount || 0)
+        : 0;
+      const shiftPayrollPayments = (await db('payroll_payments')
+        .where({ shift_id: shift.id, status: 'posted' }))
+        .filter((payment: any) => !isShiftWageMirror(payment));
       const shiftPayrollPaid = sumMoney(shiftPayrollPayments, (payment: any) => payment.amount);
 
       const shiftSales = readings.reduce((s: number, r: any) => s + (Number(r.amount_sold) || 0), 0);
@@ -130,7 +121,8 @@ router.get('/daily', async (req, res) => {
       const expectedMpesa = roundMoney(mpesa);
       const expectedTotalReceived = roundMoney(expectedCash + expectedMpesa);
       const shiftAccounted = roundMoney(
-        cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal + actualWagePaid + shiftPayrollPaid,
+        cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal
+          + actualWagePaid + wageDeductionAmount + shiftPayrollPaid,
       );
 
       const shiftInvoicePetrolLitres = shiftInvoiceConsumption
@@ -184,7 +176,7 @@ router.get('/daily', async (req, res) => {
         expected_mpesa: expectedMpesa,
         expected_total_received: expectedTotalReceived,
         standard_wage: Number(shift.daily_wage),
-        wage_deduction: wageDeduction ? Number(wageDeduction.deduction_amount) : 0,
+        wage_deduction: wageDeductionAmount,
         actual_wage_paid: actualWagePaid,
         payroll_payments: shiftPayrollPayments,
         payroll_paid_from_shift: shiftPayrollPaid,
@@ -328,7 +320,7 @@ router.get('/daily', async (req, res) => {
 
     const payrollCashPaid = await getPayrollCashPaid(date, date);
     const payrollExpense = await getPayrollExpense(date, date);
-    totalWagesPaid = roundMoney(totalWagesPaid + payrollCashPaid);
+    totalWagesPaid = await getTotalPayrollCashOutflow(date, date);
     const totalExpenses = totalShiftExpenses + totalDayExpenses;
     const grossProfit = totalSales - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
@@ -671,7 +663,7 @@ router.get('/monthly', async (req, res) => {
 
     const payrollExpense = await getPayrollExpense(startDate, endDate);
     const payrollCashPaid = await getPayrollCashPaid(startDate, endDate);
-    totalWagesPaid = roundMoney(totalWagesPaid + payrollCashPaid);
+    totalWagesPaid = await getTotalPayrollCashOutflow(startDate, endDate);
     const totalExpenses = (Number((generalExpenses as any)?.total) || 0) + (Number((shiftExpenses as any)?.total) || 0);
     const grossProfit = totalSales - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
@@ -907,17 +899,7 @@ router.get('/cash-flow', async (req, res) => {
     const totalFuelPurchases = Number((fuelPurchases as any)?.total) || 0;
 
     // Cash flow records only money actually paid, never open-shift wage previews.
-    const periodShifts = await db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .where('shifts.shift_date', '>=', from)
-      .where('shifts.shift_date', '<=', to)
-      .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
-
-    let totalWagesPaid = 0;
-    for (const shift of periodShifts) {
-      totalWagesPaid += shift.status === 'closed' ? (Number(shift.wage_paid) || 0) : 0;
-    }
-    totalWagesPaid = roundMoney(totalWagesPaid + await getPayrollCashPaid(from, to));
+    const totalWagesPaid = await getTotalPayrollCashOutflow(from, to);
 
     // Shift expenses
     const shiftExpResult = await db('shift_expenses')

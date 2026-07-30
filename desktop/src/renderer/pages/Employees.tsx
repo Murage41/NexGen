@@ -419,13 +419,16 @@ export default function Employees() {
 }
 
 function PlanEditor({ plan, setPlan, updateComponent, allowEffectiveDate }: any) {
+  const hasFixedSalary = plan.components.some(
+    (component: CompensationComponent) => component.component_type === 'fixed_periodic',
+  );
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Field label="Plan name">
           <input required value={plan.name} onChange={(event) => setPlan({ ...plan, name: event.target.value })} className="input" />
         </Field>
-        <Field label="Payment schedule">
+        <Field label="Payroll schedule">
           <select value={plan.pay_schedule} onChange={(event) => setPlan({ ...plan, pay_schedule: event.target.value })} className="input">
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
@@ -438,12 +441,14 @@ function PlanEditor({ plan, setPlan, updateComponent, allowEffectiveDate }: any)
             <input required type="date" value={plan.effective_from} onChange={(event) => setPlan({ ...plan, effective_from: event.target.value })} className="input" />
           </Field>
         )}
-        <Field label="Salary proration">
-          <select value={plan.proration_method} onChange={(event) => setPlan({ ...plan, proration_method: event.target.value })} className="input">
-            <option value="calendar_days">Calendar days</option>
-            <option value="none">No proration</option>
-          </select>
-        </Field>
+        {hasFixedSalary && (
+          <Field label="Salary proration">
+            <select value={plan.proration_method} onChange={(event) => setPlan({ ...plan, proration_method: event.target.value })} className="input">
+              <option value="calendar_days">Calendar days</option>
+              <option value="none">No proration</option>
+            </select>
+          </Field>
+        )}
       </div>
 
       <div className="flex items-center justify-between pt-2">

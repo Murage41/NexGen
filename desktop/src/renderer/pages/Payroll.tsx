@@ -19,6 +19,7 @@ import {
   getCurrentShift,
   getPayrollRun,
   getPayrollRuns,
+  previewPayrollRun,
   reversePayrollPayment,
   voidPayrollRun,
 } from '../services/api';
@@ -32,13 +33,31 @@ const monthBounds = (month: string) => {
     end: new Date(Date.UTC(year, value, 0)).toISOString().slice(0, 10),
   };
 };
+const addDays = (date: string, days: number) => {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+};
+const suggestedPeriod = (schedule: string, anchor = kenyaToday()) => {
+  if (schedule === 'daily') return { start: anchor, end: anchor };
+  if (schedule === 'weekly') return { start: addDays(anchor, -6), end: anchor };
+  if (schedule === 'biweekly') return { start: addDays(anchor, -13), end: anchor };
+  const current = monthBounds(anchor.slice(0, 7));
+  return anchor === current.end ? current : monthBounds(addDays(current.start, -1).slice(0, 7));
+};
+const periodFromStart = (schedule: string, start: string) => {
+  if (schedule === 'daily') return { start, end: start };
+  if (schedule === 'weekly') return { start, end: addDays(start, 6) };
+  if (schedule === 'biweekly') return { start, end: addDays(start, 13) };
+  return monthBounds(start.slice(0, 7));
+};
 const kes = (value: number) => `KES ${Number(value || 0).toLocaleString('en-KE', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })}`;
 
 export default function Payroll() {
-  const bounds = monthBounds(currentMonth());
+  const bounds = suggestedPeriod('monthly');
   const [runs, setRuns] = useState<any[]>([]);
   const [selectedRun, setSelectedRun] = useState<any>(null);
   const [selectedLine, setSelectedLine] = useState<any>(null);
@@ -48,6 +67,9 @@ export default function Payroll() {
   const [showCalculate, setShowCalculate] = useState(false);
   const [showDeduction, setShowDeduction] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [preview, setPreview] = useState<any>(null);
+  const [previewError, setPreviewError] = useState('');
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [runForm, setRunForm] = useState({
     name: `${currentMonth()} payroll`,
     pay_schedule: 'monthly',
@@ -70,6 +92,71 @@ export default function Payroll() {
   });
 
   useEffect(() => { loadRuns(); }, []);
+  useEffect(() => {
+    if (!showCalculate) return;
+    let cancelled = false;
+    setPreview(null);
+    setPreviewError('');
+    setPreviewBusy(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await previewPayrollRun({
+          pay_schedule: runForm.pay_schedule,
+          period_start: runForm.period_start,
+          period_end: runForm.period_end,
+        });
+        if (cancelled) return;
+        setPreview(response.data.data);
+      } catch (error: any) {
+        if (cancelled) return;
+        setPreviewError(error.response?.data?.error || 'Payroll preview is unavailable.');
+      } finally {
+        if (!cancelled) setPreviewBusy(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    showCalculate,
+    runForm.pay_schedule,
+    runForm.period_start,
+    runForm.period_end,
+  ]);
+
+  function openCalculate() {
+    const period = suggestedPeriod(runForm.pay_schedule);
+    setRunForm({
+      ...runForm,
+      name: `${period.start} ${runForm.pay_schedule} payroll`,
+      period_start: period.start,
+      period_end: period.end,
+    });
+    setShowCalculate(true);
+  }
+
+  function changeSchedule(schedule: string) {
+    const period = suggestedPeriod(schedule);
+    setRunForm({
+      ...runForm,
+      name: `${period.start} ${schedule} payroll`,
+      pay_schedule: schedule,
+      period_start: period.start,
+      period_end: period.end,
+    });
+  }
+
+  function changePeriodStart(value: string) {
+    const start = runForm.pay_schedule === 'monthly' ? `${value}-01` : value;
+    const period = periodFromStart(runForm.pay_schedule, start);
+    setRunForm({
+      ...runForm,
+      name: `${period.start} ${runForm.pay_schedule} payroll`,
+      period_start: period.start,
+      period_end: period.end,
+    });
+  }
 
   async function loadRuns(selectId?: number) {
     try {
@@ -236,7 +323,7 @@ export default function Payroll() {
           <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><WalletCards size={24} /> Payroll</h1>
           <p className="text-sm text-gray-500 mt-1">Calculate earnings, approve deductions, and record payments</p>
         </div>
-        <button onClick={() => setShowCalculate(true)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+        <button onClick={openCalculate} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
           <Calculator size={18} /> Calculate Payroll
         </button>
       </div>
@@ -365,14 +452,28 @@ export default function Payroll() {
             <Field label="Run name"><input required className="input" value={runForm.name} onChange={(event) => setRunForm({ ...runForm, name: event.target.value })} /></Field>
             <div className="grid grid-cols-3 gap-3">
               <Field label="Schedule">
-                <select className="input" value={runForm.pay_schedule} onChange={(event) => setRunForm({ ...runForm, pay_schedule: event.target.value })}>
+                <select className="input" value={runForm.pay_schedule} onChange={(event) => changeSchedule(event.target.value)}>
                   <option value="daily">Daily</option><option value="weekly">Weekly</option><option value="biweekly">Every 14 days</option><option value="monthly">Monthly</option>
                 </select>
               </Field>
-              <Field label="Period start"><input required type="date" className="input" value={runForm.period_start} onChange={(event) => setRunForm({ ...runForm, period_start: event.target.value })} /></Field>
-              <Field label="Period end"><input required type="date" className="input" value={runForm.period_end} onChange={(event) => setRunForm({ ...runForm, period_end: event.target.value })} /></Field>
+              <Field label={runForm.pay_schedule === 'monthly' ? 'Payroll month' : 'Period start'}>
+                <input
+                  required
+                  type={runForm.pay_schedule === 'monthly' ? 'month' : 'date'}
+                  className="input"
+                  value={runForm.pay_schedule === 'monthly' ? runForm.period_start.slice(0, 7) : runForm.period_start}
+                  onChange={(event) => changePeriodStart(event.target.value)}
+                />
+              </Field>
+              <Field label="Period end"><input readOnly type="date" className="input bg-gray-50" value={runForm.period_end} /></Field>
             </div>
-            <Actions busy={busy} onCancel={() => setShowCalculate(false)} label="Calculate" />
+            <PayrollPreview preview={preview} error={previewError} busy={previewBusy} />
+            <Actions
+              busy={busy}
+              disabled={previewBusy || !preview || Boolean(previewError) || preview.employee_count === 0}
+              onCancel={() => setShowCalculate(false)}
+              label="Calculate"
+            />
           </form>
         </Modal>
       )}
@@ -457,7 +558,7 @@ function LineDetails({ line, run, removeDeduction, reversePayment }: any) {
               <span className="text-gray-600">{row.payment_date} - {row.payment_method.replace('_', ' ')}</span>
               <div className="flex items-center gap-1">
                 <span>{kes(row.amount)}</span>
-                {row.status === 'posted' && (
+                {row.status === 'posted' && !String(row.reference || '').startsWith('SHIFT-WAGE:') && (
                   <button onClick={() => reversePayment(row)} className="p-1 text-gray-400 hover:text-red-600" title="Reverse payment"><RotateCcw size={14} /></button>
                 )}
               </div>
@@ -478,6 +579,39 @@ function DetailList({ title, rows }: any) {
         {rows.map((row: any) => <div key={row.id} className="flex justify-between text-sm"><span className="text-gray-600">{row.label}</span><span>{row.value}</span></div>)}
         {rows.length === 0 && <p className="text-sm text-gray-400">None</p>}
       </div>
+    </div>
+  );
+}
+
+function PayrollPreview({ preview, error, busy }: any) {
+  if (busy) {
+    return <div className="border-y border-gray-200 py-4 text-sm text-gray-500">Reviewing payroll period...</div>;
+  }
+  if (error) {
+    return <div className="border-y border-red-200 bg-red-50 py-3 px-1 text-sm text-red-700">{error}</div>;
+  }
+  if (!preview) return null;
+  return (
+    <div className="border-y border-gray-200 py-4">
+      <div className="grid grid-cols-4 gap-4 mb-3">
+        <Metric label="Employees" value={String(preview.employee_count)} />
+        <Metric label="Gross" value={kes(preview.gross_total)} />
+        <Metric label="Previously paid" value={kes(preview.prior_paid_total)} />
+        <Metric label="Balance due" value={kes(preview.balance_due)} />
+      </div>
+      {preview.lines.length > 0 && (
+        <div className="divide-y divide-gray-100 border-t border-gray-100">
+          {preview.lines.map((line: any) => (
+            <div key={line.employee_id} className="grid grid-cols-[1fr_repeat(3,110px)] gap-3 py-2 text-sm">
+              <span className="font-medium text-gray-800">{line.employee_name}</span>
+              <span className="text-right text-gray-500">{kes(line.gross_earnings)}</span>
+              <span className="text-right text-gray-500">{kes(line.prior_shift_payments)}</span>
+              <span className="text-right font-medium text-gray-800">{kes(line.balance_due)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {preview.employee_count === 0 && <p className="text-sm text-amber-700">No unprocessed earnings in this period.</p>}
     </div>
   );
 }
@@ -515,11 +649,11 @@ function Modal({ title, onClose, children }: any) {
   );
 }
 
-function Actions({ busy, onCancel, label }: any) {
+function Actions({ busy, disabled = false, onCancel, label }: any) {
   return (
     <div className="flex justify-end gap-2 border-t pt-4 mt-5">
       <button type="button" onClick={onCancel} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-      <button type="submit" disabled={busy} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+      <button type="submit" disabled={busy || disabled} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
         {busy ? 'Working...' : label}
       </button>
     </div>
