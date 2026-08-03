@@ -150,6 +150,18 @@ export const openShiftSchema = z.object({
   compensation_plan_id: z.number({ error: 'compensation_plan_id is required' }).int().positive(),
 });
 
+export const closeShiftSchema = z.object({
+  notes: optionalText(),
+  deduct_amount: z.number().min(0, 'deduct_amount cannot be negative').nullish().optional(),
+  wage_paid: z.number().min(0, 'wage_paid cannot be negative'),
+  variance_reason: optionalText(),
+  reconciliation: z.object({
+    readings_reviewed: z.literal(true),
+    collections_reviewed: z.literal(true),
+    entries_reviewed: z.literal(true),
+  }),
+});
+
 // --- Pump Readings ---
 // Accept either cumulative `closing_*` (legacy / direct) or display `raw_closing_*`
 // (preferred — what the user reads off the pump). The route compensates raw values

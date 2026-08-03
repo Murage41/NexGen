@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate';
 import {
   createShiftExpenseSchema,
   createShiftCreditSchema,
+  closeShiftSchema,
   openShiftSchema,
   shiftCancellationSchema,
   updateReadingsSchema,
@@ -259,6 +260,7 @@ router.get('/:id', async (req, res) => {
       : [];
 
     const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
+    const closeReconciliation = await db('shift_close_reconciliations').where({ shift_id: shift.id }).first();
     const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
     const shiftCredits = await db('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
@@ -330,6 +332,7 @@ router.get('/:id', async (req, res) => {
         ...shift,
         readings,
         collections: collections || null,
+        close_reconciliation: closeReconciliation || null,
         expenses,
         shift_credits: shiftCredits,
         invoice_consumption: invoiceConsumption,
@@ -1736,9 +1739,15 @@ router.delete('/:id/wage-deduction', requireAdmin, async (req, res) => {
 
 // PUT close shift — with deduction options and debt carry-forward
 // Finalizes financials, stock snapshots, and FIFO costing, so it is admin-only.
-router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
+router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: any, res: any) => {
   try {
-    const { notes, deduct_amount, wage_paid: submittedWage } = req.body;
+    const {
+      notes,
+      deduct_amount,
+      wage_paid: submittedWage,
+      variance_reason: varianceReason,
+      reconciliation,
+    } = req.body;
     // deduct_amount: number | null
     //   null/undefined = don't deduct (full deficit becomes debt)
     //   number = deduct this amount from wage (can be partial or full)
@@ -1832,7 +1841,7 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
         err.httpStatus = 400;
         throw err;
       }
-      const { variance } = computeShiftAccountability({
+      const accountability = computeShiftAccountability({
         readings,
         collections,
         shiftCredits,
@@ -1842,6 +1851,12 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
         employee_wage,
         payrollPayments,
       });
+      const { variance } = accountability;
+      if (Math.abs(variance) >= 0.01 && String(varianceReason || '').trim().length < 3) {
+        const err: any = new Error('A variance reason is required before closing an unbalanced shift.');
+        err.httpStatus = 400;
+        throw err;
+      }
 
       // Handle deficit and deductions
       if (variance < 0) {
@@ -1996,6 +2011,30 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
         closeTime,
         trx,
       );
+
+      await trx('shift_close_reconciliations').insert({
+        shift_id: shift.id,
+        readings_reviewed: reconciliation.readings_reviewed,
+        collections_reviewed: reconciliation.collections_reviewed,
+        entries_reviewed: reconciliation.entries_reviewed,
+        expected_sales: accountability.expected_sales,
+        expected_shift_total: accountability.expected_shift_total,
+        cash_received: accountability.total_cash,
+        mpesa_received: accountability.total_mpesa,
+        credit_receipts: accountability.total_credit_receipts,
+        credits_issued: accountability.total_credits,
+        invoice_consumption: accountability.total_invoice_consumption,
+        expenses: accountability.total_expenses,
+        direct_wage_payment: accountability.employee_wage,
+        payroll_payments: accountability.total_payroll_payments,
+        total_accounted: accountability.total_accounted,
+        variance,
+        variance_type: variance < 0 ? 'deficit' : variance > 0 ? 'surplus' : 'balanced',
+        variance_reason: Math.abs(variance) >= 0.01 ? String(varianceReason).trim() : null,
+        approved_by_employee_id: Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
+        approved_by_role: req.employee?.role || 'admin',
+        approved_at: closeTime,
+      });
 
       await trx('shifts').where({ id: req.params.id }).update({
         status: 'closed',

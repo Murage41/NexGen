@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus } from 'lucide-react';
+import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle } from 'lucide-react';
 import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
 
 function compensationComponentLabel(component: any, schedule: string) {
@@ -20,6 +20,8 @@ export default function ShiftDetail() {
   const [shift, setShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
+  const [varianceReason, setVarianceReason] = useState('');
   const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
   const [partialAmount, setPartialAmount] = useState('');
   const [closeNotes, setCloseNotes] = useState('');
@@ -77,6 +79,10 @@ export default function ShiftDetail() {
   }
 
   async function handleClose() {
+    if (!closeReviewComplete) {
+      alert('Complete the reconciliation review and record a variance reason when required.');
+      return;
+    }
     if (hasPendingShiftDraft(id!)) {
       alert('Readings or collections are still waiting to sync. Return to Record Shift and use Sync Now before closing.');
       return;
@@ -96,7 +102,17 @@ export default function ShiftDetail() {
           deduct_amount = 0;
         }
       }
-      const res = await closeShift(parseInt(id!), { notes: closeNotes || undefined, deduct_amount, wage_paid: parseFloat(wagePaid) || 0 });
+      const res = await closeShift(parseInt(id!), {
+        notes: closeNotes || undefined,
+        deduct_amount,
+        wage_paid: parseFloat(wagePaid) || 0,
+        variance_reason: varianceReason.trim() || undefined,
+        reconciliation: {
+          readings_reviewed: true,
+          collections_reviewed: true,
+          entries_reviewed: true,
+        },
+      });
       clearShiftDraft(id!);
       setShowCloseModal(false);
       if (res.data?.warnings?.length) {
@@ -106,6 +122,12 @@ export default function ShiftDetail() {
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to close shift');
     } finally { setClosing(false); }
+  }
+
+  function openCloseReview() {
+    setCloseReview({ readings: false, collections: false, entries: false });
+    setVarianceReason('');
+    setShowCloseModal(true);
   }
 
   async function handleRepayDebt() {
@@ -199,7 +221,12 @@ export default function ShiftDetail() {
     + totalExpenses
     + enteredWagePaid
     + totalPayrollPayments;
-  const closeVariance = closeTotalAccounted - expectedShiftTotal;
+  const closeVariance = Math.round((closeTotalAccounted - expectedShiftTotal) * 100) / 100;
+  const requiresVarianceReason = Math.abs(closeVariance) >= 0.01;
+  const closeReviewComplete = closeReview.readings
+    && closeReview.collections
+    && closeReview.entries
+    && (!requiresVarianceReason || varianceReason.trim().length >= 3);
 
   return (
     <div className="pb-6">
@@ -223,6 +250,28 @@ export default function ShiftDetail() {
         <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
           <p className="text-sm font-semibold text-red-800">Cancelled shift</p>
           <p className="text-sm text-red-700 mt-1">{shift.cancellation_reason || 'No cancellation reason recorded.'}</p>
+        </div>
+      )}
+
+      {!isOpen && shift.close_reconciliation && (
+        <div className="bg-white border border-gray-200 p-4 mb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold text-gray-800 flex items-center gap-1"><CheckCircle size={15} className="text-green-600" /> Close Reconciliation</p>
+              <p className="text-xs text-gray-400 mt-1">{new Date(shift.close_reconciliation.approved_at).toLocaleString('en-KE')}</p>
+            </div>
+            <span className={`capitalize text-xs font-semibold ${Number(shift.close_reconciliation.variance) < 0 ? 'text-red-600' : Number(shift.close_reconciliation.variance) > 0 ? 'text-amber-700' : 'text-green-700'}`}>
+              {shift.close_reconciliation.variance_type} · {fmt(Number(shift.close_reconciliation.variance))}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-3 text-[11px] text-gray-500">
+            <span>Readings reviewed</span>
+            <span>Collections reviewed</span>
+            <span>Entries reviewed</span>
+          </div>
+          {shift.close_reconciliation.variance_reason && (
+            <p className="mt-3 border-t pt-2 text-sm text-gray-700">{shift.close_reconciliation.variance_reason}</p>
+          )}
         </div>
       )}
 
@@ -585,7 +634,7 @@ export default function ShiftDetail() {
             <Edit3 size={18} /> Record Readings & Collections
           </button>
           {isAdmin && (
-            <button onClick={() => setShowCloseModal(true)}
+            <button onClick={openCloseReview}
               className="w-full bg-red-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-2">
               <Lock size={18} /> Close & Lock Shift
             </button>
@@ -596,7 +645,7 @@ export default function ShiftDetail() {
       {/* Close Shift Modal */}
       {showCloseModal && (
         <div className="mobile-modal-overlay flex items-end justify-center">
-          <div className="mobile-bottom-sheet max-w-lg rounded-t-2xl p-5">
+          <div className="mobile-bottom-sheet max-w-lg max-h-[90vh] overflow-y-auto rounded-t-2xl p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-gray-800">Close Shift #{shift.id}</h3>
               <button onClick={() => setShowCloseModal(false)} className="p-1 text-gray-400">
@@ -725,6 +774,35 @@ export default function ShiftDetail() {
               </div>
             )}
 
+            <div className="mb-4">
+              <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
+              <div className="space-y-2 text-sm">
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={closeReview.readings} onChange={(event) => setCloseReview({ ...closeReview, readings: event.target.checked })} className="mt-0.5" />
+                  <span>Pump closing readings match the physical displays.</span>
+                </label>
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={closeReview.collections} onChange={(event) => setCloseReview({ ...closeReview, collections: event.target.checked })} className="mt-0.5" />
+                  <span>Cash and M-Pesa totals match the counted cash and payment records.</span>
+                </label>
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={closeReview.entries} onChange={(event) => setCloseReview({ ...closeReview, entries: event.target.checked })} className="mt-0.5" />
+                  <span>Credits, invoice litres, debt receipts, expenses, and wage treatment have been reviewed.</span>
+                </label>
+              </div>
+            </div>
+
+            {requiresVarianceReason && (
+              <div className="mb-4">
+                <label className="text-sm font-medium text-gray-700 mb-1 block">
+                  {closeVariance < 0 ? 'Deficit' : 'Surplus'} reason
+                </label>
+                <textarea value={varianceReason} onChange={(event) => setVarianceReason(event.target.value)} rows={2}
+                  placeholder="Record the verified cause or follow-up action"
+                  className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
+              </div>
+            )}
+
             {/* Notes */}
             <div className="mb-4">
               <label className="text-sm text-gray-600 mb-1 block">Notes (optional)</label>
@@ -734,7 +812,7 @@ export default function ShiftDetail() {
             </div>
 
             {/* Confirm */}
-            <button onClick={handleClose} disabled={closing}
+            <button onClick={handleClose} disabled={closing || !closeReviewComplete}
               className="w-full bg-red-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50">
               {closing ? 'Closing...' : 'Confirm Close & Lock'}
             </button>

@@ -6,7 +6,7 @@ import {
   repayDebt, getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
   addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories,
 } from '../services/api';
-import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets } from 'lucide-react';
+import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle } from 'lucide-react';
 import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
@@ -73,6 +73,8 @@ export default function ShiftDetail() {
   const readingRevision = useRef(0);
   const collectionRevision = useRef(0);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
+  const [varianceReason, setVarianceReason] = useState('');
   const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
   const [partialAmount, setPartialAmount] = useState('');
   const [showDebtRepayModal, setShowDebtRepayModal] = useState(false);
@@ -424,6 +426,10 @@ export default function ShiftDetail() {
   }
 
   async function handleCloseShift() {
+    if (!closeReviewComplete) {
+      alert('Complete the reconciliation review and record a variance reason when required.');
+      return;
+    }
     if (readingsDirty || collectionsDirty || readingSync === 'saving' || collectionSync === 'saving' || readingSync === 'error' || collectionSync === 'error' || readingSync === 'review') {
       alert('Pump readings and collections must finish syncing before this shift can close. Use Sync Now on any section needing attention.');
       return;
@@ -438,7 +444,17 @@ export default function ShiftDetail() {
       // 'none' = null (no deduction, full deficit becomes debt)
     }
     try {
-      const res = await closeShift(parseInt(id!), { notes, deduct_amount: deductAmount, wage_paid: parseFloat(wagePaid) || 0 });
+      const res = await closeShift(parseInt(id!), {
+        notes,
+        deduct_amount: deductAmount,
+        wage_paid: parseFloat(wagePaid) || 0,
+        variance_reason: varianceReason.trim() || undefined,
+        reconciliation: {
+          readings_reviewed: true,
+          collections_reviewed: true,
+          entries_reviewed: true,
+        },
+      });
       clearShiftDraft(id!);
       setShowCloseModal(false);
       if (res.data?.warnings?.length) {
@@ -516,6 +532,12 @@ export default function ShiftDetail() {
     setReadingSync('dirty');
   }
 
+  function openCloseReview() {
+    setCloseReview({ readings: false, collections: false, entries: false });
+    setVarianceReason('');
+    setShowCloseModal(true);
+  }
+
   function updateCollection(field: 'cash_amount' | 'mpesa_amount', value: string) {
     const next = { ...collections, [field]: parseFloat(value) || 0 };
     setCollections(next);
@@ -576,7 +598,12 @@ export default function ShiftDetail() {
     + totalExpenses
     + enteredWagePaid
     + totalPayrollPayments;
-  const variance = totalAccounted - expectedShiftTotal;
+  const variance = Math.round((totalAccounted - expectedShiftTotal) * 100) / 100;
+  const requiresVarianceReason = Math.abs(variance) >= 0.01;
+  const closeReviewComplete = closeReview.readings
+    && closeReview.collections
+    && closeReview.entries
+    && (!requiresVarianceReason || varianceReason.trim().length >= 3);
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
@@ -603,6 +630,28 @@ export default function ShiftDetail() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
           <p className="text-sm font-semibold text-red-800">Cancelled shift</p>
           <p className="text-sm text-red-700 mt-1">{shift.cancellation_reason || 'No cancellation reason recorded.'}</p>
+        </div>
+      )}
+
+      {!isOpen && shift.close_reconciliation && (
+        <div className="bg-white border border-gray-200 p-4 mb-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-gray-800 flex items-center gap-2"><CheckCircle size={16} className="text-green-600" /> Close Reconciliation</h2>
+              <p className="text-xs text-gray-500 mt-1">Approved {new Date(shift.close_reconciliation.approved_at).toLocaleString('en-KE')}</p>
+            </div>
+            <span className={`capitalize text-sm font-semibold ${Number(shift.close_reconciliation.variance) < 0 ? 'text-red-600' : Number(shift.close_reconciliation.variance) > 0 ? 'text-amber-700' : 'text-green-700'}`}>
+              {shift.close_reconciliation.variance_type} · {formatKES(Number(shift.close_reconciliation.variance))}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-3 mt-3 text-xs text-gray-600">
+            <span>Readings reviewed</span>
+            <span>Collections reviewed</span>
+            <span>Entries reviewed</span>
+          </div>
+          {shift.close_reconciliation.variance_reason && (
+            <p className="mt-3 border-t pt-2 text-sm text-gray-700">{shift.close_reconciliation.variance_reason}</p>
+          )}
         </div>
       )}
 
@@ -1364,7 +1413,7 @@ export default function ShiftDetail() {
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
             className="w-full border border-gray-300 rounded-lg p-2 mb-3"
             placeholder="Any notes about this shift..." />
-          <button onClick={() => setShowCloseModal(true)}
+          <button onClick={openCloseReview}
             className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">
             <Lock size={16} /> Close & Lock Shift
           </button>
@@ -1373,8 +1422,8 @@ export default function ShiftDetail() {
 
       {/* Close Shift Modal */}
       {showCloseModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold mb-4">Close Shift #{shift.id}</h2>
 
             <div className="mb-4 border border-blue-200 bg-blue-50 p-3 text-sm">
@@ -1470,11 +1519,40 @@ export default function ShiftDetail() {
               </div>
             )}
 
+            <div className="mb-4">
+              <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
+              <div className="space-y-2 text-sm">
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={closeReview.readings} onChange={(event) => setCloseReview({ ...closeReview, readings: event.target.checked })} className="mt-0.5" />
+                  <span>Pump closing readings match the physical displays.</span>
+                </label>
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={closeReview.collections} onChange={(event) => setCloseReview({ ...closeReview, collections: event.target.checked })} className="mt-0.5" />
+                  <span>Cash and M-Pesa totals match the counted cash and payment records.</span>
+                </label>
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={closeReview.entries} onChange={(event) => setCloseReview({ ...closeReview, entries: event.target.checked })} className="mt-0.5" />
+                  <span>Credits, invoice litres, debt receipts, expenses, and wage treatment have been reviewed.</span>
+                </label>
+              </div>
+            </div>
+
+            {requiresVarianceReason && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {variance < 0 ? 'Deficit' : 'Surplus'} reason
+                </label>
+                <textarea value={varianceReason} onChange={(event) => setVarianceReason(event.target.value)} rows={2}
+                  placeholder="Record the verified cause or follow-up action"
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+              </div>
+            )}
+
             <div className="flex gap-2 justify-end mt-4">
               <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                 Cancel
               </button>
-              <button onClick={handleCloseShift} disabled={hasUnsyncedDraft} title={hasUnsyncedDraft ? 'Sync readings and collections before closing' : undefined} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleCloseShift} disabled={hasUnsyncedDraft || !closeReviewComplete} title={hasUnsyncedDraft ? 'Sync readings and collections before closing' : !closeReviewComplete ? 'Complete the reconciliation review' : undefined} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 Close Shift
               </button>
             </div>
