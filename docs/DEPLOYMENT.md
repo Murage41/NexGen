@@ -217,6 +217,7 @@ cd /d E:\NexGen\backend
 npm run build
 npm run migrate
 npm run audit:receivables
+npm run audit:operations
 
 cd /d E:\NexGen
 npm run build:mobile
@@ -259,6 +260,7 @@ Set-Location E:\NexGen\backend
 npm.cmd run build
 npm.cmd run migrate
 npm.cmd run audit:receivables
+npm.cmd run audit:operations
 
 Set-Location E:\NexGen
 npm.cmd run build:mobile
@@ -288,7 +290,16 @@ for this mode. The mobile build is required because the backend serves the
 phone interface from `mobile/dist`. The backend build above is still required
 as an update gate because it catches TypeScript errors before the live stack is
 restarted. `audit:receivables` is read-only; stop and investigate if it reports
-any integrity problem.
+any integrity problem. `audit:operations` is also read-only. Stop if its core
+database, foreign-key, receivable, revision, idempotency, or accounting checks
+fail. Stale open shifts and older closed shifts without a reconciliation
+snapshot are warnings that require review, not migration failures.
+
+The shift safety update includes migrations `041` and `042`. Migration `041`
+adds shift write revisions and duplicate-request protection. Migration `042`
+adds the configurable stale-shift setting and the shift status/date index.
+`npm run migrate` is required, is repeat-safe, and must finish before NexGen is
+restarted.
 
 ### Verify the station update
 
@@ -306,11 +317,27 @@ Do not declare the update complete after the health endpoint alone:
    without posting unless this is a real transaction.
 6. Preview a closed-shift correction and cancel it. Do not use a live
    correction merely as a smoke test.
-7. Confirm shifts, tank balances, credits, reports, employee payroll, and the
-   latest backup still display.
-8. Restart Windows, sign in as the account that owns the scheduled task, wait
+7. On **Shifts**, apply a date/status filter, open a shift, use the back button,
+   and confirm the filter, sort order, page, and scroll position are preserved.
+8. Export the filtered shifts with **Export CSV**. Open the file and confirm it
+   contains only the intended period and includes close reconciliation and
+   review columns. Exports are capped at 50,000 rows; narrow the dates for a
+   larger history.
+9. In **Settings > Data Management**, confirm **Open Shift Warning** is correct
+   for this station (default 30 hours), run **System Check**, and require its
+   core checks to pass. Review every stale-shift or legacy-snapshot warning.
+10. Use **Create Backup** and record the displayed backup filename. Confirm the
+    file exists under the configured data directory's `backups` folder.
+11. During a controlled test shift only, open the same shift on desktop and
+    phone. Save a harmless collection or reading change on one device, then
+    try to save the older values on the other. Confirm NexGen warns about the
+    newer server version and that **Use Server**/**Use Server Values** and
+    **Keep Device** do not silently overwrite each other.
+12. Confirm shifts, tank balances, credits, reports, employee payroll, and the
+    latest backup still display.
+13. Restart Windows, sign in as the account that owns the scheduled task, wait
    15 seconds, and repeat `npm run dev:status` and the health check.
-9. Confirm POSitive can still sell, print, use eTIMS, and complete its normal
+14. Confirm POSitive can still sell, print, use eTIMS, and complete its normal
    backup.
 
 Follow `docs/INVOICE-CUSTOMER-WORKFLOW.md` for the full invoice-customer
@@ -424,6 +451,27 @@ Minimum backup policy:
 
 For a stronger setup, use SQLite's online backup tooling or `VACUUM INTO`
 from a controlled local script.
+
+## Shift Operations Monitoring
+
+- The desktop dashboard and shift list warn when an open shift exceeds the
+  configured threshold. Change the threshold under **Settings > Data
+  Management > Open Shift Warning**; the default is 30 hours.
+- Run `npm run audit:operations` from `E:\NexGen\backend` after every migration
+  and during scheduled maintenance. The command does not modify business data.
+- Treat database quick-check, foreign-key, receivable, accounting, revision,
+  or incomplete duplicate-request findings as failures. Investigate stale open
+  shifts immediately. Closed shifts created before reconciliation snapshots
+  existed may appear as legacy warnings and should be checked during audit.
+- Shift readings and collections use revision checks. When two devices edit an
+  older copy, the second save must show a conflict instead of silently replacing
+  the first save.
+- Completed duplicate-request keys are retained for 90 days by default and are
+  pruned when the backend starts. Set `IDEMPOTENCY_RETENTION_DAYS` to a value
+  from 7 to 3650 when policy requires a different period. This cleanup never
+  deletes credits, payments, expenses, readings, or other business records.
+- CSV exports are limited to 50,000 shifts. Use a narrower date range for
+  larger histories and protect exports as confidential business records.
 
 ## Operational Requirements
 

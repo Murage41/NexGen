@@ -453,7 +453,8 @@ environment, or formally risk-accepted before a production release.
 - Keep a release manifest containing commit, schema migration, Node/Electron
   versions, build time, checksums, and rollback compatibility.
 - Back up before update, run migrations once, perform a health check, and
-  verify restore/rollback compatibility before declaring success.
+  run both receivable and operational integrity audits, then verify
+  restore/rollback compatibility before declaring success.
 - Never downgrade across an irreversible database migration without a tested
   restore.
 
@@ -482,6 +483,10 @@ recorded as pass, fail, risk accepted by owner, or not applicable:
 - eTIMS/fiscal ownership confirmed; no duplicate or missing fiscal invoices.
 - Payment callback duplicate, delay, failure, and reconciliation tests.
 - Load/stress, disk-full, power-loss, network-loss, clock, and restart tests.
+- Concurrent desktop/mobile shift-write test proving stale values cannot
+  silently overwrite newer readings or collections.
+- Operational integrity audit with no core database, foreign-key, receivable,
+  accounting, revision, or incomplete duplicate-request failures.
 - Monitoring for service health, disk space, failed login, integration failure,
   and stale backup.
 - Tested rollback and named person authorised to perform it.
