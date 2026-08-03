@@ -16,6 +16,8 @@ export type IdempotentResult<T> = OperationResult<T> & {
   replayed: boolean;
 };
 
+export const DEFAULT_IDEMPOTENCY_RETENTION_DAYS = 90;
+
 function httpError(message: string, status: number, code: string) {
   return Object.assign(new Error(message), { httpStatus: status, http: status, code });
 }
@@ -122,4 +124,22 @@ export async function runIdempotent<T>(
     if (!winner) throw err;
     return replay<T>(winner, hash);
   }
+}
+
+export async function pruneCompletedIdempotencyRecords(
+  conn: Knex,
+  retentionDays = DEFAULT_IDEMPOTENCY_RETENTION_DAYS,
+) {
+  const safeDays = Number.isInteger(retentionDays) && retentionDays >= 7 && retentionDays <= 3650
+    ? retentionDays
+    : DEFAULT_IDEMPOTENCY_RETENTION_DAYS;
+  const cutoff = new Date(Date.now() - safeDays * 86_400_000)
+    .toISOString()
+    .slice(0, 19)
+    .replace('T', ' ');
+  return conn('idempotency_records')
+    .whereNotNull('response_status')
+    .whereNotNull('response_body')
+    .where('created_at', '<', cutoff)
+    .delete();
 }

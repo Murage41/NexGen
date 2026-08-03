@@ -8,6 +8,7 @@ import {
   getUnmirroredShiftWagesPaid,
 } from '../services/payrollAccounting';
 import { getCurrentReceivableTotals } from '../services/receivableReporting';
+import { decorateShiftStaleness, listStaleOpenShifts } from '../services/shiftOperations';
 
 const router = Router();
 
@@ -369,6 +370,10 @@ router.get('/', async (_req, res) => {
       .select('shifts.*', 'employees.name as employee_name')
       .where('shifts.status', 'open')
       .first();
+    const staleOpenShifts = await listStaleOpenShifts(db);
+    const currentShiftWithAge = currentShift
+      ? decorateShiftStaleness(currentShift, staleOpenShifts.stale_shift_hours)
+      : null;
 
     // ── Weekly sales (last 7 days) ──
     // Phase 2/8 fix: use Kenya date arithmetic (was UTC — wrong after 9 PM EAT)
@@ -462,7 +467,8 @@ router.get('/', async (_req, res) => {
         epra_alerts: epraAlerts,
         stock_health: stockHealth,
         // Existing
-        current_shift: currentShift || null,
+        current_shift: currentShiftWithAge,
+        stale_open_shifts: staleOpenShifts,
         weekly_sales: weeklySales,
         // Phase 11: reconciliation health
         drift_check: driftSummary,

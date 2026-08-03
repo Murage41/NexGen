@@ -1,8 +1,10 @@
 import knexFactory from 'knex';
 import {
   getShiftHistoryNeighbors,
+  exportShiftHistory,
   listShiftHistory,
   normalizeShiftHistoryQuery,
+  ShiftHistoryExportError,
   ShiftHistoryQueryError,
   SHIFT_HISTORY_MAX_LIMIT,
 } from '../src/services/shiftHistory';
@@ -48,11 +50,28 @@ async function main() {
       table.date('shift_date');
       table.text('notes');
       table.timestamp('created_at');
+      table.integer('compensation_plan_id');
+      table.decimal('wage_paid').defaultTo(0);
+      table.text('cancellation_reason');
     });
     await db.schema.createTable('shift_reviews', (table) => {
       table.increments('id').primary();
       table.integer('shift_id').notNullable().unique();
       table.string('review_status').notNullable();
+      table.text('notes');
+      table.timestamp('reviewed_at');
+    });
+    await db.schema.createTable('shift_close_reconciliations', (table) => {
+      table.increments('id').primary();
+      table.integer('shift_id').notNullable().unique();
+      for (const column of [
+        'expected_sales', 'expected_shift_total', 'cash_received', 'mpesa_received',
+        'credit_receipts', 'credits_issued', 'invoice_consumption', 'expenses',
+        'direct_wage_payment', 'payroll_payments', 'total_accounted', 'variance',
+      ]) table.decimal(column).nullable();
+      table.string('variance_type');
+      table.text('variance_reason');
+      table.timestamp('approved_at');
     });
     await db('employees').insert(
       Array.from({ length: 12 }, (_, index) => ({ name: `Employee ${index + 1}` })),
@@ -146,6 +165,28 @@ async function main() {
     assertQueryError({ sort: 'sideways' }, 'invalid sort');
     assertQueryError({ page: '0' }, 'invalid page');
 
+    let oversizedExportRejected = false;
+    const exportGuardStarted = performance.now();
+    try {
+      await exportShiftHistory(db, normalizeShiftHistoryQuery({ sort: 'oldest' }));
+    } catch (error) {
+      oversizedExportRejected = error instanceof ShiftHistoryExportError;
+    }
+    const exportGuardMs = performance.now() - exportGuardStarted;
+    assert(oversizedExportRejected, 'oversized shift export was not rejected');
+
+    const exportFrom = rows[20_000].shift_date;
+    const exportTo = rows[29_999].shift_date;
+    const exportStarted = performance.now();
+    const boundedExport = await exportShiftHistory(db, normalizeShiftHistoryQuery({
+      from: exportFrom,
+      to: exportTo,
+      sort: 'oldest',
+    }));
+    const exportMs = performance.now() - exportStarted;
+    assert(boundedExport.total >= 10_000 && boundedExport.total < 10_010, 'bounded export row count is incorrect');
+    assert(Number(boundedExport.rows[0].id) <= Number(boundedExport.rows.at(-1)?.id), 'bounded export ordering is incorrect');
+
     const queryTimes: number[] = [];
     for (let index = 0; index < 250; index += 1) {
       const page = 1 + ((index * 7919) % 4000);
@@ -180,6 +221,7 @@ async function main() {
 
     console.log(`PASS shift history correctness across ${SHIFT_COUNT.toLocaleString()} rows`);
     console.log('PASS validation, filters, sort order, page cap, final-page access, and cross-page neighbors');
+    console.log(`PASS export cap in ${exportGuardMs.toFixed(2)}ms and ${boundedExport.total.toLocaleString()}-row export in ${exportMs.toFixed(2)}ms`);
     console.log(
       `PASS 250 stress queries: p50 ${percentile(queryTimes, 0.5).toFixed(2)}ms, `
       + `p95 ${percentile(queryTimes, 0.95).toFixed(2)}ms, max ${Math.max(...queryTimes).toFixed(2)}ms`,

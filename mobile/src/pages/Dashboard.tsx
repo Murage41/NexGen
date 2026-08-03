@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboard } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { Fuel, DollarSign, TrendingUp, TrendingDown, Gauge, LogOut } from 'lucide-react';
+import { Fuel, DollarSign, TrendingUp, TrendingDown, Gauge, LogOut, AlertTriangle } from 'lucide-react';
 
 export default function Dashboard() {
   const { user, isAdmin, logout } = useAuth();
@@ -39,6 +39,16 @@ export default function Dashboard() {
           <LogOut size={20} />
         </button>
       </div>
+
+      {data?.stale_open_shifts?.count > 0 && (
+        <button type="button" onClick={() => navigate('/shifts?status=open&sort=oldest')} className="mb-4 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+          <span>
+            <strong>{data.stale_open_shifts.count} open shift{data.stale_open_shifts.count === 1 ? '' : 's'} need review.</strong>
+            {' '}Older than {data.stale_open_shifts.stale_shift_hours} hours.
+          </span>
+        </button>
+      )}
 
       {/* Current Shift */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-4">

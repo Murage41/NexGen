@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   cancelShift,
+  exportShifts,
   getShifts,
   getActiveEmployees,
   openShift,
@@ -20,6 +21,8 @@ import {
   Clock,
   Plus,
   RotateCcw,
+  Download,
+  AlertTriangle,
 } from 'lucide-react';
 
 type ShiftStatusFilter = '' | 'open' | 'closed' | 'cancelled';
@@ -67,6 +70,8 @@ export default function Shifts() {
   const [cancelPreview, setCancelPreview] = useState<any | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [staleShiftHours, setStaleShiftHours] = useState(30);
   const navigate = useNavigate();
   const listContext = searchParams.toString();
   const shiftPath = (shiftId: number) => `/shifts/${shiftId}${listContext ? `?${listContext}` : ''}`;
@@ -117,6 +122,7 @@ export default function Shifts() {
           ? (total === 0 ? 0 : Math.min(rangeStart + data.shifts.length - 1, total))
           : Number(data.range_end);
         setShifts(data.shifts);
+        setStaleShiftHours(Number(data.operational?.stale_shift_hours || 30));
         setPagination({
           total,
           page: responsePage,
@@ -189,6 +195,30 @@ export default function Shifts() {
     }
   }
 
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const response = await exportShifts({
+        ...(fromDate ? { from: fromDate } : {}),
+        ...(toDate ? { to: toDate } : {}),
+        ...(status ? { status } : {}),
+        sort,
+      });
+      const disposition = String(response.headers['content-disposition'] || '');
+      const filename = disposition.match(/filename="([^"]+)"/)?.[1] || 'nexgen-shifts.csv';
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      alert('Unable to export shifts. Narrow the date range and try again.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function openCancellation(shift: any) {
     setCancelTarget(shift);
     setCancelPreview(null);
@@ -244,12 +274,19 @@ export default function Shifts() {
   return (
     <div className="pb-6">
       <PageHeader title="Shifts" right={(
-        <button
-          onClick={() => setShowNew(true)}
-          className="bg-blue-600 text-white px-3 py-2 rounded-md text-sm flex items-center gap-1"
-        >
-          <Plus size={16} /> New
-        </button>
+        <div className="flex items-center gap-1">
+          {isAdmin && (
+            <button type="button" onClick={handleExport} disabled={exporting || invalidDateRange} title="Export filtered shifts" aria-label="Export filtered shifts" className="p-2 text-gray-600 disabled:opacity-40">
+              <Download size={18} />
+            </button>
+          )}
+          <button
+            onClick={() => setShowNew(true)}
+            className="bg-blue-600 text-white px-3 py-2 rounded-md text-sm flex items-center gap-1"
+          >
+            <Plus size={16} /> New
+          </button>
+        </div>
       )} />
 
       {showNew && (
@@ -418,6 +455,13 @@ export default function Shifts() {
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       </section>
 
+      {shifts.some((shift) => shift.is_stale) && (
+        <div className="mb-3 flex items-start gap-2 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 rounded-lg">
+          <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+          <span>An open shift has exceeded the {staleShiftHours}-hour warning threshold.</span>
+        </div>
+      )}
+
       <div className={`space-y-2 ${loading ? 'opacity-60' : ''}`}>
         {shifts.map((shift: any) => (
           <div key={shift.id} className="w-full bg-white border border-gray-200 rounded-lg p-3">
@@ -437,8 +481,9 @@ export default function Shifts() {
               </div>
               <div className="shrink-0 flex flex-col items-end gap-1">
                 {shift.status === 'open' ? (
-                  <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                    <Clock size={12} /> Open
+                  <span className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${shift.is_stale ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-700'}`}>
+                    {shift.is_stale ? <AlertTriangle size={12} /> : <Clock size={12} />}
+                    {shift.is_stale ? `Open ${Number(shift.open_duration_hours || 0).toFixed(1)}h` : 'Open'}
                   </span>
                 ) : shift.status === 'cancelled' ? (
                   <span className="flex items-center gap-1 text-xs bg-red-50 text-red-700 px-2 py-1 rounded">

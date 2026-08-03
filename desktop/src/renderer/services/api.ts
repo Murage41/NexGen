@@ -69,6 +69,7 @@ export const createTankAdjustment = (tankId: number, data: any) => api.post(`/ta
 
 // ============ Shifts ============
 export const getShifts = (params?: any) => api.get('/shifts', { params });
+export const exportShifts = (params?: any) => api.get('/shifts/export.csv', { params, responseType: 'blob' });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
 export const getShiftNeighbors = (id: number, params?: any) => api.get(`/shifts/${id}/neighbors`, { params });
@@ -250,6 +251,12 @@ export const updateInvoice = (id: number, data: any) => api.put(`/invoices/${id}
 
 // ============ Dashboard ============
 export const getDashboard = () => api.get('/dashboard');
+
+// ============ Operations ============
+export const getOperationalSettings = () => api.get('/operations/settings');
+export const updateOperationalSettings = (data: { stale_shift_hours: number }) => api.put('/operations/settings', data);
+export const runOperationalIntegrity = () => api.get('/operations/integrity');
+export const backupDatabase = () => api.post('/health/backup');
 
 // ============ Reports ============
 export const getDailyReport = (date?: string) => api.get('/reports/daily', { params: { date } });

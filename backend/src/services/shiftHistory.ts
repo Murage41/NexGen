@@ -39,6 +39,9 @@ export interface ShiftHistoryNeighbors {
 }
 
 export class ShiftHistoryQueryError extends Error {}
+export class ShiftHistoryExportError extends Error {}
+
+export const SHIFT_HISTORY_EXPORT_MAX_ROWS = 50_000;
 
 function singleQueryValue(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -235,4 +238,68 @@ export async function getShiftHistoryNeighbors(
   ]);
 
   return { previous: previous || null, next: next || null };
+}
+
+export async function exportShiftHistory(
+  connection: Knex,
+  options: ShiftHistoryOptions,
+) {
+  const countRow: any = await applyShiftHistoryFilters(
+    connection('shifts').count({ count: 'shifts.id' }),
+    options,
+  ).first();
+  const total = Number(countRow?.count || 0);
+  if (total > SHIFT_HISTORY_EXPORT_MAX_ROWS) {
+    throw new ShiftHistoryExportError(
+      `This export contains ${total.toLocaleString()} shifts. Narrow the date range to ${SHIFT_HISTORY_EXPORT_MAX_ROWS.toLocaleString()} or fewer rows.`,
+    );
+  }
+
+  const direction = options.sort === 'oldest' ? 'asc' : 'desc';
+  const rows = await applyShiftHistoryFilters(
+    connection('shifts')
+      .join('employees', 'shifts.employee_id', 'employees.id')
+      .leftJoin('shift_reviews', 'shifts.id', 'shift_reviews.shift_id')
+      .leftJoin('shift_close_reconciliations as reconciliation', 'shifts.id', 'reconciliation.shift_id')
+      .select(
+        'shifts.id',
+        'shifts.shift_date',
+        'employees.name as employee_name',
+        'shifts.status',
+        'shifts.start_time',
+        'shifts.end_time',
+        'shifts.compensation_plan_id',
+        'shifts.wage_paid',
+        'shifts.cancellation_reason',
+        connection.raw(`
+          CASE
+            WHEN shifts.status = 'closed' THEN COALESCE(shift_reviews.review_status, 'pending_review')
+            ELSE NULL
+          END AS review_status
+        `),
+        'shift_reviews.notes as review_notes',
+        'shift_reviews.reviewed_at',
+        'reconciliation.expected_sales',
+        'reconciliation.expected_shift_total',
+        'reconciliation.cash_received',
+        'reconciliation.mpesa_received',
+        'reconciliation.credit_receipts',
+        'reconciliation.credits_issued',
+        'reconciliation.invoice_consumption',
+        'reconciliation.expenses',
+        'reconciliation.direct_wage_payment',
+        'reconciliation.payroll_payments',
+        'reconciliation.total_accounted',
+        'reconciliation.variance',
+        'reconciliation.variance_type',
+        'reconciliation.variance_reason',
+        'reconciliation.approved_at',
+      ),
+    options,
+  )
+    .orderBy('shifts.shift_date', direction)
+    .orderBy('shifts.start_time', direction)
+    .orderBy('shifts.id', direction);
+
+  return { rows, total };
 }

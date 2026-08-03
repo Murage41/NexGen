@@ -27,6 +27,8 @@ import suppliersRouter from './routes/suppliers';
 import supplierInvoicesRouter from './routes/supplierInvoices';
 import supplierPaymentsRouter from './routes/supplierPayments';
 import payrollRouter from './routes/payroll';
+import operationsRouter from './routes/operations';
+import { pruneCompletedIdempotencyRecords } from './services/idempotency';
 
 const app = express();
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -120,8 +122,13 @@ app.use((req, res, next) => {
 
 app.use('/api/auth', authRouter);
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (_req, res) => {
+  try {
+    await db.raw('SELECT 1');
+    res.json({ status: 'ok', database: 'ok', timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    res.status(503).json({ status: 'error', database: 'unavailable', error: err.message });
+  }
 });
 
 app.get('/api/health/db-stats', requireAdmin, async (_req, res) => {
@@ -230,6 +237,7 @@ app.use('/api/suppliers', suppliersRouter);
 app.use('/api/supplier-invoices', supplierInvoicesRouter);
 app.use('/api/supplier-payments', supplierPaymentsRouter);
 app.use('/api/payroll', payrollRouter);
+app.use('/api/operations', operationsRouter);
 
 const mobileDist = path.join(__dirname, '../../mobile/dist');
 app.use('/mobile', express.static(mobileDist));
@@ -243,7 +251,12 @@ async function start() {
   await db.migrate.latest();
   await db.raw('PRAGMA journal_mode = WAL');
   await db.raw('PRAGMA busy_timeout = 5000');
+  const idempotencyRetentionDays = Number(process.env.IDEMPOTENCY_RETENTION_DAYS || 90);
+  const prunedIdempotencyRecords = await pruneCompletedIdempotencyRecords(db, idempotencyRetentionDays);
   console.log('Database migrations complete');
+  if (prunedIdempotencyRecords > 0) {
+    console.log(`Pruned ${prunedIdempotencyRecords} expired idempotency records`);
+  }
 
   app.listen(PORT, HOST, () => {
     console.log(`NexGen API running on http://${HOST}:${PORT}`);

@@ -31,6 +31,9 @@ export default function Dashboard() {
     | { ok: boolean; dip_drift_count: number; account_drift_count: number }
     | undefined;
   const hasDrift = drift && !drift.ok;
+  const staleOpenShifts = data.stale_open_shifts as
+    | { count: number; stale_shift_hours: number; shifts: any[] }
+    | undefined;
 
   return (
     <div>
@@ -57,6 +60,20 @@ export default function Dashboard() {
             </p>
           </div>
         </div>
+      )}
+
+      {staleOpenShifts && staleOpenShifts.count > 0 && (
+        <button
+          type="button"
+          onClick={() => navigate('/shifts?status=open&sort=oldest')}
+          className="mb-4 flex w-full items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-900 hover:bg-amber-100"
+        >
+          <AlertCircle className="mt-0.5 flex-shrink-0" size={20} />
+          <span>
+            <strong>{staleOpenShifts.count} open shift{staleOpenShifts.count === 1 ? '' : 's'} need review.</strong>
+            {' '}They have exceeded the {staleOpenShifts.stale_shift_hours}-hour warning threshold.
+          </span>
+        </button>
       )}
 
       {/* Row 1: Today's Summary */}

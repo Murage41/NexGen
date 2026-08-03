@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Settings2, Users, Fuel, Database, DollarSign, Save, HardDrive, ChevronRight, Gauge } from 'lucide-react';
-import { getCurrentShift, getActivePumps, setOpeningReadings } from '../services/api';
+import { Settings2, Users, Fuel, Database, DollarSign, Save, HardDrive, ChevronRight, Gauge, ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
+import { backupDatabase, getCurrentShift, getActivePumps, getOperationalSettings, runOperationalIntegrity, setOpeningReadings, updateOperationalSettings } from '../services/api';
 
 const numVal = (v: number | string | null | undefined) => {
   if (v === null || v === undefined || v === '' || Number(v) === 0) return '';
@@ -22,6 +22,12 @@ export default function Settings() {
   const [loadingReadings, setLoadingReadings] = useState(true);
   const [savingReadings, setSavingReadings] = useState(false);
   const [readingsSaved, setReadingsSaved] = useState(false);
+  const [staleShiftHours, setStaleShiftHours] = useState('30');
+  const [operationsSaved, setOperationsSaved] = useState(false);
+  const [integrityReport, setIntegrityReport] = useState<any>(null);
+  const [checkingIntegrity, setCheckingIntegrity] = useState(false);
+  const [backupMessage, setBackupMessage] = useState('');
+  const [backingUp, setBackingUp] = useState(false);
 
   useEffect(() => {
     const name = localStorage.getItem('station_name') || '';
@@ -29,6 +35,9 @@ export default function Settings() {
     setStationName(name);
     setStationAddress(address);
     loadOpenShift();
+    getOperationalSettings()
+      .then((response) => setStaleShiftHours(String(response.data.data.stale_shift_hours || 30)))
+      .catch(() => undefined);
   }, []);
 
   async function loadOpenShift() {
@@ -87,8 +96,42 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 2000);
   }
 
-  function handleBackup() {
-    alert('Data backup functionality coming soon. This will export all station data to a backup file.');
+  async function saveOperationalSettings() {
+    try {
+      const hours = Number(staleShiftHours);
+      const response = await updateOperationalSettings({ stale_shift_hours: hours });
+      setStaleShiftHours(String(response.data.data.stale_shift_hours));
+      setOperationsSaved(true);
+      window.setTimeout(() => setOperationsSaved(false), 2500);
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Unable to save the warning threshold.');
+    }
+  }
+
+  async function handleIntegrityCheck() {
+    setCheckingIntegrity(true);
+    try {
+      const response = await runOperationalIntegrity();
+      setIntegrityReport(response.data.data);
+    } catch (err: any) {
+      if (err.response?.data?.data) setIntegrityReport(err.response.data.data);
+      else alert(err.response?.data?.error || 'Unable to complete the system check.');
+    } finally {
+      setCheckingIntegrity(false);
+    }
+  }
+
+  async function handleBackup() {
+    setBackingUp(true);
+    setBackupMessage('');
+    try {
+      const response = await backupDatabase();
+      setBackupMessage(`Backup created: ${response.data.file}`);
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Unable to create the backup.');
+    } finally {
+      setBackingUp(false);
+    }
   }
 
   const navItems = [
@@ -245,14 +288,47 @@ export default function Settings() {
       {/* Data Management */}
       <div className="bg-white rounded-lg shadow p-6">
         <h2 className="text-lg font-semibold text-gray-700 mb-4">Data Management</h2>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={handleBackup}
-            className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition"
-          >
-            <HardDrive size={18} /> Backup Data
-          </button>
-          <p className="text-sm text-gray-400">Export all station data to a backup file</p>
+        <div className="grid grid-cols-3 gap-6">
+          <div>
+            <p className="text-sm font-medium text-gray-700 mb-2">Open Shift Warning</p>
+            <div className="flex items-center gap-2">
+              <input type="number" min="1" max="720" step="1" value={staleShiftHours} onChange={(event) => setStaleShiftHours(event.target.value)} className="w-24 border border-gray-300 rounded-md px-3 py-2" aria-label="Open shift warning hours" />
+              <span className="text-sm text-gray-500">hours</span>
+              <button type="button" onClick={saveOperationalSettings} className="p-2 rounded-md bg-blue-600 text-white" title="Save warning threshold" aria-label="Save warning threshold"><Save size={17} /></button>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">Open shifts older than this are highlighted for review.</p>
+            {operationsSaved && <p className="text-xs text-green-700 mt-1">Threshold saved.</p>}
+          </div>
+
+          <div>
+            <p className="text-sm font-medium text-gray-700 mb-2">System Check</p>
+            <button type="button" onClick={handleIntegrityCheck} disabled={checkingIntegrity} className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 disabled:opacity-50">
+              <ShieldCheck size={18} /> {checkingIntegrity ? 'Checking...' : 'Run Check'}
+            </button>
+            {integrityReport && (
+              <div className={`mt-2 flex items-start gap-2 text-xs ${integrityReport.ok ? 'text-green-700' : 'text-red-700'}`}>
+                {integrityReport.ok ? <CheckCircle size={15} /> : <AlertTriangle size={15} />}
+                <span>
+                  {integrityReport.ok
+                    ? `Checks passed${integrityReport.counts.stale_open_shifts ? `; ${integrityReport.counts.stale_open_shifts} stale open shift warning` : ''}.`
+                    : `${integrityReport.counts.foreign_key_issues + integrityReport.counts.receivable_issues + integrityReport.counts.negative_shift_revisions + integrityReport.counts.incomplete_operations} integrity issue(s) require review.`}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p className="text-sm font-medium text-gray-700 mb-2">Database Backup</p>
+            <button
+              onClick={handleBackup}
+              disabled={backingUp}
+              className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 transition disabled:opacity-50"
+            >
+              <HardDrive size={18} /> {backingUp ? 'Creating...' : 'Create Backup'}
+            </button>
+            <p className="text-xs text-gray-500 mt-2">Creates a consistent local copy in the server backup folder.</p>
+            {backupMessage && <p className="text-xs text-green-700 mt-1 break-all">{backupMessage}</p>}
+          </div>
         </div>
       </div>
     </div>

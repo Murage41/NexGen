@@ -1,5 +1,5 @@
 import knexFactory from 'knex';
-import { runIdempotent } from '../src/services/idempotency';
+import { pruneCompletedIdempotencyRecords, runIdempotent } from '../src/services/idempotency';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -85,9 +85,30 @@ async function main() {
     assert(Number(storedShift.readings_revision) === 1, 'Revision was incremented incorrectly');
     assert(['device-a', 'device-b'].includes(storedShift.value), 'Winning save was not persisted');
 
+    await db('idempotency_records').insert([
+      {
+        scope: 'old:complete',
+        idempotency_key: 'old-complete-key',
+        request_hash: 'old-complete',
+        response_status: 201,
+        response_body: '{}',
+        created_at: '2020-01-01 00:00:00',
+      },
+      {
+        scope: 'old:incomplete',
+        idempotency_key: 'old-incomplete-key',
+        request_hash: 'old-incomplete',
+        created_at: '2020-01-01 00:00:00',
+      },
+    ]);
+    const pruned = await pruneCompletedIdempotencyRecords(db, 90);
+    assert(pruned === 1, 'Retention did not prune exactly the expired completed record');
+    assert(await db('idempotency_records').where({ scope: 'old:incomplete' }).first(), 'Retention removed an incomplete operation');
+
     console.log('PASS idempotent replay creates one business row and returns the original response');
     console.log('PASS changed payload cannot reuse an operation key');
     console.log('PASS concurrent stale shift save is rejected without overwriting the winner');
+    console.log('PASS retention prunes only expired completed operation keys');
   } finally {
     await db.destroy();
   }

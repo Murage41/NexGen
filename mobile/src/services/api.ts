@@ -58,6 +58,7 @@ export const getDashboard = () => api.get('/dashboard');
 
 // Shifts
 export const getShifts = (params?: any) => api.get('/shifts', { params });
+export const exportShifts = (params?: any) => api.get('/shifts/export.csv', { params, responseType: 'blob' });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
 export const getShiftNeighbors = (id: number, params?: any) => api.get(`/shifts/${id}/neighbors`, { params });

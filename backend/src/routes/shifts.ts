@@ -19,7 +19,9 @@ import { computeMpesaFee } from '../services/mpesaFees';
 import {
   listShiftHistory,
   getShiftHistoryNeighbors,
+  exportShiftHistory,
   normalizeShiftHistoryQuery,
+  ShiftHistoryExportError,
   ShiftHistoryQueryError,
 } from '../services/shiftHistory';
 import { requireAdmin, requireAuth, requireOwnShiftOrAdmin } from '../middleware/requireAdmin';
@@ -42,6 +44,7 @@ import { cancelOpenShift, previewShiftCancellation } from '../services/shiftCanc
 import { buildShiftTimeline } from '../services/shiftTimeline';
 import { getShiftReview, updateShiftReview } from '../services/shiftReview';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
+import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
 
 const router = Router();
 
@@ -55,6 +58,16 @@ function staleShiftWrite(section: 'readings' | 'collections', currentRevision: n
       currentRevision,
     },
   );
+}
+
+function csvCell(value: unknown) {
+  if (value === null || value === undefined) return '';
+  let text = String(value);
+  if (
+    typeof value === 'string'
+    && (/^[=+@]/.test(text) || (/^-/.test(text) && !/^-\d+(\.\d+)?$/.test(text)))
+  ) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function toSqliteDateTime(value: string): string {
@@ -189,8 +202,22 @@ async function requireOpenShift(req: any, res: any): Promise<boolean> {
 router.get('/', async (req, res) => {
   try {
     const options = normalizeShiftHistoryQuery(req.query as Record<string, unknown>);
-    const result = await listShiftHistory(db, options);
-    res.json({ success: true, data: result });
+    const [result, staleShiftHours] = await Promise.all([
+      listShiftHistory(db, options),
+      getStaleShiftHours(db),
+    ]);
+    const shifts = result.shifts.map((shift) => decorateShiftStaleness(shift, staleShiftHours));
+    res.json({
+      success: true,
+      data: {
+        ...result,
+        shifts,
+        operational: {
+          stale_shift_hours: staleShiftHours,
+          stale_open_shifts_on_page: shifts.filter((shift) => shift.is_stale).length,
+        },
+      },
+    });
   } catch (err: any) {
     if (err instanceof ShiftHistoryQueryError) {
       return res.status(400).json({ success: false, error: err.message });
@@ -199,16 +226,63 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/export.csv', requireAdmin, async (req, res) => {
+  try {
+    const options = normalizeShiftHistoryQuery({
+      ...(req.query as Record<string, unknown>),
+      page: 1,
+      limit: 100,
+    });
+    const { rows } = await exportShiftHistory(db, options);
+    const headers = [
+      'Shift ID', 'Shift Date', 'Employee', 'Status', 'Started At', 'Ended At',
+      'Compensation Plan ID', 'Wage Paid', 'Review Status', 'Review Notes', 'Reviewed At',
+      'Expected Sales', 'Expected Shift Total', 'Cash Received', 'M-Pesa Received',
+      'Debt Receipts', 'Credits Issued', 'Invoice Consumption', 'Expenses',
+      'Direct Wage Payment', 'Payroll Payments', 'Total Accounted', 'Variance',
+      'Variance Type', 'Variance Reason', 'Approved At', 'Cancellation Reason',
+    ];
+    const body = rows.map((row: any) => [
+      row.id, row.shift_date, row.employee_name, row.status, row.start_time, row.end_time,
+      row.compensation_plan_id, row.wage_paid, row.review_status, row.review_notes, row.reviewed_at,
+      row.expected_sales, row.expected_shift_total, row.cash_received, row.mpesa_received,
+      row.credit_receipts, row.credits_issued, row.invoice_consumption, row.expenses,
+      row.direct_wage_payment, row.payroll_payments, row.total_accounted, row.variance,
+      row.variance_type, row.variance_reason, row.approved_at, row.cancellation_reason,
+    ].map(csvCell).join(','));
+    const range = options.from || options.to
+      ? `${options.from || 'first'}-to-${options.to || 'latest'}`
+      : 'all-dates';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="nexgen-shifts-${range}.csv"`);
+    res.send(`\uFEFF${[headers.map(csvCell).join(','), ...body].join('\r\n')}`);
+  } catch (err: any) {
+    if (err instanceof ShiftHistoryQueryError) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    if (err instanceof ShiftHistoryExportError) {
+      return res.status(413).json({ success: false, error: err.message });
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET current open shift
 router.get('/current', async (_req, res) => {
   try {
-    const shift = await db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .select('shifts.*', 'employees.name as employee_name')
-      .where('shifts.status', 'open')
-      .orderBy('shifts.start_time', 'desc')
-      .first();
-    res.json({ success: true, data: shift || null });
+    const [shift, staleShiftHours] = await Promise.all([
+      db('shifts')
+        .join('employees', 'shifts.employee_id', 'employees.id')
+        .select('shifts.*', 'employees.name as employee_name')
+        .where('shifts.status', 'open')
+        .orderBy('shifts.start_time', 'desc')
+        .first(),
+      getStaleShiftHours(db),
+    ]);
+    res.json({
+      success: true,
+      data: shift ? decorateShiftStaleness(shift, staleShiftHours) : null,
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
