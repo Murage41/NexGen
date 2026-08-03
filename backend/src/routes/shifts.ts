@@ -7,6 +7,7 @@ import {
   createShiftCreditSchema,
   closeShiftSchema,
   openShiftSchema,
+  shiftReviewSchema,
   shiftCancellationSchema,
   updateReadingsSchema,
 } from '../schemas';
@@ -33,6 +34,8 @@ import {
   validateInvoiceConsumptionAgainstReadings,
 } from '../services/invoiceConsumption';
 import { cancelOpenShift, previewShiftCancellation } from '../services/shiftCancellation';
+import { buildShiftTimeline } from '../services/shiftTimeline';
+import { getShiftReview, updateShiftReview } from '../services/shiftReview';
 
 const router = Router();
 
@@ -261,6 +264,15 @@ router.get('/:id', async (req, res) => {
 
     const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
     const closeReconciliation = await db('shift_close_reconciliations').where({ shift_id: shift.id }).first();
+    const shiftReview = shift.status === 'closed' ? await getShiftReview(db, Number(shift.id)) : null;
+    const reviewEvents = shift.status === 'closed'
+      ? await db('shift_review_events')
+        .leftJoin('employees as review_actor', 'shift_review_events.actor_employee_id', 'review_actor.id')
+        .where('shift_review_events.shift_id', shift.id)
+        .select('shift_review_events.*', 'review_actor.name as actor_name')
+        .orderBy('shift_review_events.created_at', 'asc')
+        .orderBy('shift_review_events.id', 'asc')
+      : [];
     const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
     const shiftCredits = await db('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
@@ -325,6 +337,16 @@ router.get('/:id', async (req, res) => {
       employee_wage,
       payrollPayments,
     });
+    const activityTimeline = buildShiftTimeline({
+      shift,
+      closeReconciliation,
+      shiftCredits,
+      invoiceConsumption,
+      creditReceipts,
+      expenses,
+      payrollPayments,
+      reviewEvents,
+    });
 
     res.json({
       success: true,
@@ -333,6 +355,8 @@ router.get('/:id', async (req, res) => {
         readings,
         collections: collections || null,
         close_reconciliation: closeReconciliation || null,
+        review: shiftReview || null,
+        activity_timeline: activityTimeline,
         expenses,
         shift_credits: shiftCredits,
         invoice_consumption: invoiceConsumption,
@@ -1513,6 +1537,26 @@ router.post('/:id/cancel', requireAdmin, validate(shiftCancellationSchema), asyn
   }
 });
 
+router.put('/:id/review', requireAdmin, validate(shiftReviewSchema), async (req: any, res) => {
+  try {
+    const review = await updateShiftReview(db, Number(req.params.id), {
+      status: req.body.review_status,
+      notes: req.body.notes,
+      actor: {
+        employeeId: req.employee?.id,
+        role: req.employee?.role,
+      },
+    });
+    res.json({ success: true, data: review });
+  } catch (err: any) {
+    res.status(err.httpStatus || 500).json({
+      success: false,
+      error: err.message,
+      code: err.code,
+    });
+  }
+});
+
 // DELETE /shifts/:id/invoice-consumption/:entryId (soft-delete; blocked once invoiced)
 router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   try {
@@ -2034,6 +2078,13 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         approved_by_employee_id: Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
         approved_by_role: req.employee?.role || 'admin',
         approved_at: closeTime,
+      });
+
+      await trx('shift_reviews').insert({
+        shift_id: shift.id,
+        review_status: 'pending_review',
+        created_at: closeTime,
+        updated_at: closeTime,
       });
 
       await trx('shifts').where({ id: req.params.id }).update({

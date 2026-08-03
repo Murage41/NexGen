@@ -125,7 +125,17 @@ export async function listShiftHistory(
   const shifts = await applyShiftHistoryFilters(
     connection('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
-      .select('shifts.*', 'employees.name as employee_name'),
+      .leftJoin('shift_reviews', 'shifts.id', 'shift_reviews.shift_id')
+      .select(
+        'shifts.*',
+        'employees.name as employee_name',
+        connection.raw(`
+          CASE
+            WHEN shifts.status = 'closed' THEN COALESCE(shift_reviews.review_status, 'pending_review')
+            ELSE NULL
+          END AS review_status
+        `),
+      ),
     options,
   )
     .orderBy('shifts.shift_date', direction)

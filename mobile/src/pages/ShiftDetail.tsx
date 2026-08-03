@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts } from '../services/api';
+import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle } from 'lucide-react';
+import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity } from 'lucide-react';
 import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
 
 function compensationComponentLabel(component: any, schedule: string) {
@@ -22,6 +22,9 @@ export default function ShiftDetail() {
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [varianceReason, setVarianceReason] = useState('');
+  const [reviewAction, setReviewAction] = useState<'reviewed' | 'flagged' | null>(null);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [reviewSaving, setReviewSaving] = useState(false);
   const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
   const [partialAmount, setPartialAmount] = useState('');
   const [closeNotes, setCloseNotes] = useState('');
@@ -128,6 +131,28 @@ export default function ShiftDetail() {
     setCloseReview({ readings: false, collections: false, entries: false });
     setVarianceReason('');
     setShowCloseModal(true);
+  }
+
+  async function saveShiftReview(status: 'reviewed' | 'flagged', reviewNote?: string) {
+    setReviewSaving(true);
+    try {
+      await updateShiftReview(parseInt(id!), {
+        review_status: status,
+        notes: reviewNote?.trim() || undefined,
+      });
+      setReviewAction(null);
+      setReviewNotes('');
+      await loadShift();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Unable to update the shift review.');
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
+  function openReviewAction(status: 'reviewed' | 'flagged') {
+    setReviewNotes('');
+    setReviewAction(status);
   }
 
   async function handleRepayDebt() {
@@ -253,6 +278,45 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      {!isOpen && !isCancelled && shift.review && (
+        <section className="bg-white border border-gray-200 p-4 mb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold text-gray-800 flex items-center gap-1.5"><ShieldCheck size={16} className="text-blue-600" /> Administrative Review</p>
+              <p className="text-xs text-gray-400 mt-1">Separate from the locked financial close.</p>
+            </div>
+            <span className={`shrink-0 px-2 py-1 text-[11px] font-semibold ${shift.review.review_status === 'flagged' ? 'bg-red-50 text-red-700' : shift.review.review_status === 'reviewed' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+              {shift.review.review_status === 'flagged' ? 'Flagged' : shift.review.review_status === 'reviewed' ? 'Reviewed' : 'Pending review'}
+            </span>
+          </div>
+          {shift.review.reviewed_at && (
+            <p className="text-xs text-gray-400 mt-3">
+              {new Date(shift.review.reviewed_at).toLocaleString('en-KE')} · {shift.review.reviewed_by_name || shift.review.reviewed_by_role || 'admin'}
+            </p>
+          )}
+          {shift.review.notes && <p className="mt-2 text-sm text-gray-700 border-l-2 border-gray-300 pl-3">{shift.review.notes}</p>}
+          {isAdmin && (
+            <div className="grid grid-cols-1 gap-2 mt-3">
+              {shift.review.review_status === 'pending_review' && (
+                <button type="button" onClick={() => saveShiftReview('reviewed')} disabled={reviewSaving} className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white text-sm font-medium rounded-lg disabled:opacity-50">
+                  <CheckCircle size={16} /> Mark Reviewed
+                </button>
+              )}
+              {shift.review.review_status === 'flagged' && (
+                <button type="button" onClick={() => openReviewAction('reviewed')} className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white text-sm font-medium rounded-lg">
+                  <CheckCircle size={16} /> Resolve & Mark Reviewed
+                </button>
+              )}
+              {shift.review.review_status !== 'flagged' && (
+                <button type="button" onClick={() => openReviewAction('flagged')} className="w-full flex items-center justify-center gap-1.5 py-2.5 border border-red-300 text-red-700 text-sm font-medium rounded-lg">
+                  <Flag size={16} /> Flag for Follow-up
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       {!isOpen && shift.close_reconciliation && (
         <div className="bg-white border border-gray-200 p-4 mb-3">
           <div className="flex items-start justify-between gap-3">
@@ -273,6 +337,37 @@ export default function ShiftDetail() {
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">{shift.close_reconciliation.variance_reason}</p>
           )}
         </div>
+      )}
+
+      {shift.activity_timeline?.length > 0 && (
+        <section className="bg-white border border-gray-200 p-4 mb-3">
+          <p className="font-semibold text-gray-800 flex items-center gap-1.5"><Activity size={16} className="text-blue-600" /> Activity Timeline</p>
+          <div className="mt-4 border-l border-gray-200 ml-2 space-y-4">
+            {shift.activity_timeline.map((event: any) => (
+              <div key={event.id} className="relative pl-4">
+                <span className={`absolute -left-1.5 top-1.5 h-3 w-3 rounded-full border-2 border-white ${event.type === 'shift_flagged' || event.type === 'shift_cancelled' ? 'bg-red-500' : event.type === 'shift_reviewed' || event.type === 'shift_closed' ? 'bg-green-500' : 'bg-blue-500'}`} />
+                <p className="text-sm font-medium text-gray-800">{event.title}</p>
+                {event.description && <p className="text-xs text-gray-500 mt-0.5">{event.description}</p>}
+                <div className="flex items-end justify-between gap-2 mt-1">
+                  <div>
+                    <p className="text-[11px] text-gray-400">
+                      {event.precision === 'date'
+                        ? new Date(event.occurred_at).toLocaleDateString('en-KE')
+                        : new Date(event.occurred_at).toLocaleString('en-KE')}
+                    </p>
+                    {event.precision === 'date' && <p className="text-[10px] text-gray-400">Exact time unavailable</p>}
+                  </div>
+                  {event.amount !== undefined && (
+                    <p className="text-xs font-semibold text-gray-700 text-right">
+                      {event.type === 'shift_closed' ? 'Variance ' : ''}{fmt(Number(event.amount))}
+                      {event.litres !== undefined ? ` · ${Number(event.litres).toLocaleString('en-KE')} L` : ''}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Outstanding Debt Banner (admin only) */}
@@ -639,6 +734,32 @@ export default function ShiftDetail() {
               <Lock size={18} /> Close & Lock Shift
             </button>
           )}
+        </div>
+      )}
+
+      {reviewAction && (
+        <div className="mobile-modal-overlay flex items-end justify-center">
+          <div className="mobile-bottom-sheet max-w-lg max-h-[90vh] overflow-y-auto rounded-t-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                {reviewAction === 'flagged' ? <Flag size={19} className="text-red-600" /> : <CheckCircle size={19} className="text-green-600" />}
+                {reviewAction === 'flagged' ? 'Flag Shift' : 'Resolve Flag'}
+              </h3>
+              <button type="button" onClick={() => setReviewAction(null)} className="p-1 text-gray-400"><X size={20} /></button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              {reviewAction === 'flagged'
+                ? 'Record the discrepancy or follow-up required. The financial close remains unchanged.'
+                : 'Record how the flagged issue was resolved.'}
+            </p>
+            <label className="text-sm font-medium text-gray-700 block mb-4">
+              {reviewAction === 'flagged' ? 'Flag reason' : 'Resolution note'}
+              <textarea value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} rows={4} className="mt-1 w-full border border-gray-300 rounded-lg p-3" />
+            </label>
+            <button type="button" onClick={() => saveShiftReview(reviewAction, reviewNotes)} disabled={reviewSaving || reviewNotes.trim().length < 3} className={`w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 ${reviewAction === 'flagged' ? 'bg-red-600' : 'bg-green-600'}`}>
+              {reviewSaving ? 'Saving...' : reviewAction === 'flagged' ? 'Flag Shift' : 'Mark Reviewed'}
+            </button>
+          </div>
         </div>
       )}
 

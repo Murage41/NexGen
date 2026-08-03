@@ -414,19 +414,26 @@ export default function Shifts() {
                   {shift.end_time ? formatTime(shift.end_time) : 'Still open'}
                 </p>
               </div>
-              {shift.status === 'open' ? (
-                <span className="shrink-0 flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                  <Clock size={12} /> Open
-                </span>
-              ) : shift.status === 'cancelled' ? (
-                <span className="shrink-0 flex items-center gap-1 text-xs bg-red-50 text-red-700 px-2 py-1 rounded">
-                  <Ban size={12} /> Cancelled
-                </span>
-              ) : (
-                <span className="shrink-0 flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
-                  <CheckCircle size={12} /> Closed
-                </span>
-              )}
+              <div className="shrink-0 flex flex-col items-end gap-1">
+                {shift.status === 'open' ? (
+                  <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                    <Clock size={12} /> Open
+                  </span>
+                ) : shift.status === 'cancelled' ? (
+                  <span className="flex items-center gap-1 text-xs bg-red-50 text-red-700 px-2 py-1 rounded">
+                    <Ban size={12} /> Cancelled
+                  </span>
+                ) : (
+                  <>
+                    <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                      <CheckCircle size={12} /> Closed
+                    </span>
+                    <span className={`px-2 py-1 rounded text-[11px] font-medium ${shift.review_status === 'flagged' ? 'bg-red-50 text-red-700' : shift.review_status === 'reviewed' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {shift.review_status === 'flagged' ? 'Flagged' : shift.review_status === 'reviewed' ? 'Reviewed' : 'Pending review'}
+                    </span>
+                  </>
+                )}
+              </div>
               </div>
             </button>
             {shift.status === 'open' && isAdmin && (

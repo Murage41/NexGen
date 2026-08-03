@@ -71,6 +71,8 @@ export const previewShiftCancellation = (shiftId: number) =>
   api.get(`/shifts/${shiftId}/cancellation-preview`);
 export const cancelShift = (shiftId: number, reason: string) =>
   api.post(`/shifts/${shiftId}/cancel`, { reason });
+export const updateShiftReview = (shiftId: number, data: { review_status: 'reviewed' | 'flagged'; notes?: string }) =>
+  api.put(`/shifts/${shiftId}/review`, data);
 export const addShiftCredit = (shiftId: number, data: any) => api.post(`/shifts/${shiftId}/credits`, data);
 export const deleteShiftCredit = (shiftId: number, creditId: number) => api.delete(`/shifts/${shiftId}/credits/${creditId}`);
 export const updateWageDeduction = (shiftId: number, data: any) => api.put(`/shifts/${shiftId}/wage-deduction`, data);

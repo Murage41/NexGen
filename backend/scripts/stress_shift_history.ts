@@ -48,6 +48,11 @@ async function main() {
       table.text('notes');
       table.timestamp('created_at');
     });
+    await db.schema.createTable('shift_reviews', (table) => {
+      table.increments('id').primary();
+      table.integer('shift_id').notNullable().unique();
+      table.string('review_status').notNullable();
+    });
     await db('employees').insert(
       Array.from({ length: 12 }, (_, index) => ({ name: `Employee ${index + 1}` })),
     );
@@ -67,6 +72,7 @@ async function main() {
 
     const insertStarted = performance.now();
     await db.batchInsert('shifts', rows, 100);
+    await db('shift_reviews').insert({ shift_id: 1, review_status: 'reviewed' });
     await db.raw(
       'CREATE INDEX idx_shifts_history_date ON shifts (shift_date, start_time, id)',
     );
@@ -79,9 +85,12 @@ async function main() {
     assert(newest.total === SHIFT_COUNT, 'all-shift count is incorrect');
     assert(newest.shifts.length === 25, 'default page size is incorrect');
     assert(Number(newest.shifts[0].id) === SHIFT_COUNT, 'newest ordering is incorrect');
+    assert(newest.shifts[0].review_status === null, 'open shift received a review status');
 
     const oldest = await listShiftHistory(db, normalizeShiftHistoryQuery({ sort: 'oldest' }));
     assert(Number(oldest.shifts[0].id) === 1, 'oldest ordering is incorrect');
+    assert(oldest.shifts[0].review_status === 'reviewed', 'stored review status was not returned');
+    assert(oldest.shifts[1].review_status === 'pending_review', 'legacy closed shift did not default to pending review');
 
     const finalPage = await listShiftHistory(
       db,

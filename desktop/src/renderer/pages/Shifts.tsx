@@ -439,19 +439,26 @@ export default function Shifts() {
                   <td className="p-3 whitespace-nowrap">{formatTime(shift.start_time)}</td>
                   <td className="p-3 whitespace-nowrap">{shift.end_time ? formatTime(shift.end_time) : '-'}</td>
                   <td className="p-3">
-                    {shift.status === 'open' ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                        <Clock size={12} /> Open
-                      </span>
-                    ) : shift.status === 'cancelled' ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded text-xs font-medium">
-                        <Ban size={12} /> Cancelled
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium">
-                        <CheckCircle size={12} /> Closed
-                      </span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {shift.status === 'open' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
+                          <Clock size={12} /> Open
+                        </span>
+                      ) : shift.status === 'cancelled' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-700 rounded text-xs font-medium">
+                          <Ban size={12} /> Cancelled
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+                          <CheckCircle size={12} /> Closed
+                        </span>
+                      )}
+                      {shift.status === 'closed' && (
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${shift.review_status === 'flagged' ? 'bg-red-50 text-red-700' : shift.review_status === 'reviewed' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                          {shift.review_status === 'flagged' ? 'Flagged' : shift.review_status === 'reviewed' ? 'Reviewed' : 'Pending review'}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="p-3 text-right">
                     {shift.status === 'open' && (

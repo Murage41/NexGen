@@ -162,6 +162,11 @@ export const closeShiftSchema = z.object({
   }),
 });
 
+export const shiftReviewSchema = z.object({
+  review_status: z.enum(['reviewed', 'flagged']),
+  notes: z.string().trim().max(2000, 'notes are too long').nullish().optional(),
+});
+
 // --- Pump Readings ---
 // Accept either cumulative `closing_*` (legacy / direct) or display `raw_closing_*`
 // (preferred — what the user reads off the pump). The route compensates raw values
