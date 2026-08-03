@@ -65,7 +65,7 @@ router.get('/:id', async (req, res) => {
         .whereNull('deleted_at')
         .orderBy('created_at', 'desc');
       payments = await db('credit_payments')
-        .where({ account_id: account.id })
+        .where({ account_id: account.id, status: 'posted' })
         .whereNull('deleted_at')
         .orderBy('date', 'desc');
     } else if (account.type === 'employee') {
@@ -328,7 +328,7 @@ router.get('/:id/statement', async (req, res) => {
 
       // Credits: payments made (money owed decreases)
       const payments = await db('credit_payments')
-        .where({ account_id: account.id })
+        .where({ account_id: account.id, status: 'posted' })
         .whereNull('deleted_at')
         .select('date', 'notes', 'amount', 'payment_method', 'payment_type')
         .orderBy('date', 'asc');

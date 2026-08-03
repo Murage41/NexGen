@@ -78,6 +78,10 @@ export const deleteShiftExpense = (shiftId: number, expenseId: number) =>
   api.delete(`/shifts/${shiftId}/expenses/${expenseId}`);
 export const closeShift = (shiftId: number, data?: { notes?: string; deduct_amount?: number | null; wage_paid?: number }) =>
   api.put(`/shifts/${shiftId}/close`, data || {});
+export const previewShiftCancellation = (shiftId: number) =>
+  api.get(`/shifts/${shiftId}/cancellation-preview`);
+export const cancelShift = (shiftId: number, reason: string) =>
+  api.post(`/shifts/${shiftId}/cancel`, { reason });
 export const addShiftCredit = (shiftId: number, data: any) =>
   api.post(`/shifts/${shiftId}/credits`, data);
 export const deleteShiftCredit = (shiftId: number, creditId: number) =>

@@ -140,6 +140,7 @@ export default function ShiftDetail() {
 
   const fmt = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const isOpen = shift.status === 'open';
+  const isCancelled = shift.status === 'cancelled';
   const expected = shift.expected_sales || 0;
   const totalCash = shift.total_cash || 0;
   const totalMpesa = shift.total_mpesa || 0;
@@ -197,9 +198,16 @@ export default function ShiftDetail() {
           </p>
         </div>
         <span className={`px-2 py-1 rounded-full text-xs font-medium ${isOpen ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-          {isOpen ? 'Open' : 'Closed'}
+          {isOpen ? 'Open' : isCancelled ? 'Cancelled' : 'Closed'}
         </span>
       </div>
+
+      {isCancelled && (
+        <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
+          <p className="text-sm font-semibold text-red-800">Cancelled shift</p>
+          <p className="text-sm text-red-700 mt-1">{shift.cancellation_reason || 'No cancellation reason recorded.'}</p>
+        </div>
+      )}
 
       {/* Outstanding Debt Banner (admin only) */}
       {isAdmin && isOpen && totalDebt > 0 && (

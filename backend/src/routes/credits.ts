@@ -24,7 +24,10 @@ router.get('/:id', async (req, res) => {
   try {
     const credit = await db('credits').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!credit) return res.status(404).json({ success: false, error: 'Credit not found' });
-    const payments = await db('credit_payments').where({ credit_id: credit.id }).whereNull('deleted_at').orderBy('date', 'desc');
+    const payments = await db('credit_payments')
+      .where({ credit_id: credit.id, status: 'posted' })
+      .whereNull('deleted_at')
+      .orderBy('date', 'desc');
     res.json({ success: true, data: { ...credit, payments } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -109,14 +112,20 @@ router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => 
         );
       }
 
-      await trx('credit_payments').insert({
+      const [paymentId] = await trx('credit_payments').insert({
         credit_id: credit.id,
         amount: normalizedAmount,
         payment_method: resolvedMethod,
         payment_type: 'credit',
         date: resolvedDate,
         notes,
+        status: 'posted',
         ...(credit.account_id ? { account_id: credit.account_id } : {}),
+      });
+      await trx('credit_payment_allocations').insert({
+        payment_id: paymentId,
+        credit_id: credit.id,
+        amount_applied: normalizedAmount,
       });
 
       const newBalance = roundMoney(currentBalance - normalizedAmount);

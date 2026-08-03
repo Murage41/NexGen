@@ -2,7 +2,12 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import db from '../database';
 import { validate } from '../middleware/validate';
-import { createShiftExpenseSchema, createShiftCreditSchema, updateReadingsSchema } from '../schemas';
+import {
+  createShiftExpenseSchema,
+  createShiftCreditSchema,
+  shiftCancellationSchema,
+  updateReadingsSchema,
+} from '../schemas';
 import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
 import { compensate } from '../services/meterRollover';
 import { recomputeAccountBalance } from '../services/accountBalance';
@@ -25,6 +30,7 @@ import {
   resolveConsumptionSource,
   validateInvoiceConsumptionAgainstReadings,
 } from '../services/invoiceConsumption';
+import { cancelOpenShift, previewShiftCancellation } from '../services/shiftCancellation';
 
 const router = Router();
 
@@ -142,15 +148,15 @@ export function computeShiftAccountability({
   };
 }
 
-/** Guard: reject modifications to closed shifts */
+/** Guard: only open shifts are editable. */
 async function requireOpenShift(req: any, res: any): Promise<boolean> {
   const shift = await db('shifts').where({ id: req.params.id }).select('status').first();
   if (!shift) {
     res.status(404).json({ success: false, error: 'Shift not found' });
     return false;
   }
-  if (shift.status === 'closed') {
-    res.status(400).json({ success: false, error: 'Cannot modify a closed shift.' });
+  if (shift.status !== 'open') {
+    res.status(400).json({ success: false, error: `Cannot modify a ${shift.status} shift.` });
     return false;
   }
   return true;
@@ -283,6 +289,7 @@ router.get('/:id', async (req, res) => {
     const creditReceipts = await db('credit_payments')
       .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
       .where('credit_payments.shift_id', shift.id)
+      .where('credit_payments.status', 'posted')
       .whereNull('credit_payments.deleted_at')
       .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone')
       .orderBy('credit_payments.date', 'asc');
@@ -921,6 +928,7 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
           const credit = await trx('credits').where({ id: shiftCredit.credit_id }).first();
           const payments = await trx('credit_payments')
             .where({ credit_id: shiftCredit.credit_id })
+            .where({ status: 'posted' })
             .whereNull('deleted_at');
 
           if (credit && payments.length === 0) {
@@ -1040,6 +1048,7 @@ export async function buildConsumptionCorrectionPreview(
   const shiftCredits = await trx('shift_credits').where({ shift_id: shiftId }).whereNull('deleted_at');
   const creditReceipts = await trx('credit_payments')
     .where({ shift_id: shiftId })
+    .where({ status: 'posted' })
     .whereNull('deleted_at');
   const payrollPayments = await trx('payroll_payments')
     .where({ shift_id: shiftId, status: 'posted' })
@@ -1479,6 +1488,27 @@ router.put('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAd
   }
 });
 
+router.get('/:id/cancellation-preview', requireAdmin, async (req, res) => {
+  try {
+    const data = await previewShiftCancellation(Number(req.params.id));
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(err.http || 500).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
+router.post('/:id/cancel', requireAdmin, validate(shiftCancellationSchema), async (req: any, res) => {
+  try {
+    const data = await cancelOpenShift(Number(req.params.id), {
+      reason: req.body.reason,
+      actorId: req.employee?.id,
+    });
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(err.http || 500).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
 // DELETE /shifts/:id/invoice-consumption/:entryId (soft-delete; blocked once invoiced)
 router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   try {
@@ -1722,8 +1752,8 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
 
     // Phase 4: guard against double-close (already-closed shift)
-    if (shift.status === 'closed') {
-      return res.status(400).json({ success: false, error: 'Shift is already closed.' });
+    if (shift.status !== 'open') {
+      return res.status(400).json({ success: false, error: `Shift is already ${shift.status}.` });
     }
 
     const normalizedWage = submittedWage === undefined || submittedWage === null
@@ -1755,6 +1785,7 @@ router.put('/:id/close', requireAdmin, async (req: any, res: any) => {
       const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
       const creditReceipts = await trx('credit_payments')
         .where({ shift_id: shift.id })
+        .where({ status: 'posted' })
         .whereNull('deleted_at');
       const payrollPayments = await trx('payroll_payments')
         .where({ shift_id: shift.id, status: 'posted' });
@@ -2054,6 +2085,7 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
         .orderBy('created_at', 'asc');
 
       let remaining = amount;
+      const debtAllocations: Array<{ staff_debt_id: number; amount: number }> = [];
       for (const debt of debts) {
         if (remaining <= 0) break;
         const payment = Math.min(remaining, debt.balance);
@@ -2062,6 +2094,7 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
           balance: newBalance,
           status: newBalance <= 0 ? 'cleared' : 'outstanding',
         });
+        debtAllocations.push({ staff_debt_id: Number(debt.id), amount: payment });
         remaining -= payment;
       }
 
@@ -2083,6 +2116,7 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
       if (deductionAmount > 0) {
         const existing = existingDeduction;
         const totalDeduction = (existing?.deduction_amount || 0) + deductionAmount;
+        let deductionId = existing?.id ? Number(existing.id) : null;
         if (existing) {
           await trx('wage_deductions').where({ shift_id: shift.id }).update({
             deduction_amount: totalDeduction,
@@ -2092,7 +2126,7 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
               : `Debt repayment KES ${deductionAmount.toFixed(2)}`,
           });
         } else {
-          await trx('wage_deductions').insert({
+          const [createdDeductionId] = await trx('wage_deductions').insert({
             shift_id: shift.id,
             employee_id: shift.emp_id,
             original_wage: shift.daily_wage,
@@ -2100,6 +2134,17 @@ router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
             final_wage: shift.daily_wage - totalDeduction,
             reason: `Debt repayment KES ${deductionAmount.toFixed(2)}`,
           });
+          deductionId = Number(createdDeductionId);
+        }
+        if (debtAllocations.length > 0) {
+          await trx('shift_staff_debt_allocations').insert(
+            debtAllocations.map((allocation) => ({
+              shift_id: shift.id,
+              wage_deduction_id: deductionId,
+              staff_debt_id: allocation.staff_debt_id,
+              amount: allocation.amount,
+            })),
+          );
         }
       }
     });

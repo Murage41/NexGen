@@ -3,7 +3,7 @@ import type { Knex } from 'knex';
 export const SHIFT_HISTORY_DEFAULT_LIMIT = 25;
 export const SHIFT_HISTORY_MAX_LIMIT = 100;
 
-export type ShiftHistoryStatus = 'open' | 'closed';
+export type ShiftHistoryStatus = 'open' | 'closed' | 'cancelled';
 export type ShiftHistorySort = 'newest' | 'oldest';
 
 export interface ShiftHistoryOptions {
@@ -80,8 +80,8 @@ export function normalizeShiftHistoryQuery(query: Record<string, unknown>): Shif
   const rawStatus = singleQueryValue(query.status, 'status');
   const rawSort = singleQueryValue(query.sort, 'sort') || 'newest';
 
-  if (rawStatus && rawStatus !== 'open' && rawStatus !== 'closed') {
-    throw new ShiftHistoryQueryError('status must be open or closed.');
+  if (rawStatus && rawStatus !== 'open' && rawStatus !== 'closed' && rawStatus !== 'cancelled') {
+    throw new ShiftHistoryQueryError('status must be open, closed, or cancelled.');
   }
   if (rawSort !== 'newest' && rawSort !== 'oldest') {
     throw new ShiftHistoryQueryError('sort must be newest or oldest.');

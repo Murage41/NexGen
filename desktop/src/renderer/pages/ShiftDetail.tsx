@@ -404,6 +404,7 @@ export default function ShiftDetail() {
   if (!shift) return <div className="text-red-500">Shift not found</div>;
 
   const isOpen = shift.status === 'open';
+  const isCancelled = shift.status === 'cancelled';
   const invoicePumpSources = readings.filter((reading: any) => reading.fuel_type === newInvoice.fuel_type);
   const numVal = (v: any) => { const n = parseFloat(v); return n === 0 ? '' : v; };
   const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
@@ -457,13 +458,20 @@ export default function ShiftDetail() {
           <p className="text-sm text-gray-500">
             Shift Date: {shift.shift_date || new Date(shift.start_time).toLocaleDateString('en-KE')}
             {' · '}Started: {new Date(shift.start_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
-            {shift.end_time && ` — Closed: ${new Date(shift.end_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}`}
+            {shift.end_time && ` — ${isCancelled ? 'Cancelled' : 'Closed'}: ${new Date(shift.end_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}`}
           </p>
         </div>
-        <span className={`px-3 py-1 rounded-full text-sm font-medium ${isOpen ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-          {isOpen ? 'Open' : 'Closed'}
+        <span className={`px-3 py-1 rounded-full text-sm font-medium ${isOpen ? 'bg-green-100 text-green-700' : isCancelled ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
+          {isOpen ? 'Open' : isCancelled ? 'Cancelled' : 'Closed'}
         </span>
       </div>
+
+      {isCancelled && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+          <p className="text-sm font-semibold text-red-800">Cancelled shift</p>
+          <p className="text-sm text-red-700 mt-1">{shift.cancellation_reason || 'No cancellation reason recorded.'}</p>
+        </div>
+      )}
 
       {/* Outstanding Debt Banner */}
       {totalOutstandingDebt > 0 && isOpen && (

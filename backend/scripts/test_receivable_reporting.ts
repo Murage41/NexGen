@@ -43,6 +43,7 @@ async function run() {
       table.integer('shift_id').nullable();
       table.decimal('amount', 14, 2).notNullable();
       table.string('payment_method').notNullable();
+      table.string('status').notNullable().defaultTo('posted');
       table.date('date').notNullable();
       table.timestamp('deleted_at').nullable();
     });

@@ -110,7 +110,7 @@ router.get('/daily', async (req, res) => {
       const mpesaNet = Number(collections?.mpesa_net) || 0;
       const totalCollections = cash + mpesa + credits;
       const shiftCreditReceipts = hasShiftCreditReceipts
-        ? await db('credit_payments').where({ shift_id: shift.id }).whereNull('deleted_at')
+        ? await db('credit_payments').where({ shift_id: shift.id, status: 'posted' }).whereNull('deleted_at')
         : [];
       const creditReceiptsCash = sumMoney(
         shiftCreditReceipts.filter((receipt: any) => (receipt.payment_method || 'cash') !== 'mpesa'),

@@ -379,8 +379,9 @@ async function allocateMoneyCredits(
   trx: Knex.Transaction,
   credits: any[],
   amount: number,
-): Promise<void> {
+): Promise<Array<{ credit_id: number; amount_applied: number }>> {
   let remainingCents = toCents(amount);
+  const allocations: Array<{ credit_id: number; amount_applied: number }> = [];
 
   for (const credit of credits) {
     if (remainingCents === 0) break;
@@ -393,6 +394,7 @@ async function allocateMoneyCredits(
       balance: fromCents(newBalanceCents),
       status: newBalanceCents === 0 ? 'paid' : 'partial',
     });
+    allocations.push({ credit_id: Number(credit.id), amount_applied: fromCents(appliedCents) });
     remainingCents -= appliedCents;
   }
 
@@ -403,6 +405,8 @@ async function allocateMoneyCredits(
       'PAYMENT_ALLOCATION_INCOMPLETE',
     );
   }
+
+  return allocations;
 }
 
 export async function recordMoneyAccountPayment(conn: Knex, input: MoneyPaymentInput) {
@@ -462,16 +466,106 @@ export async function recordMoneyAccountPayment(conn: Knex, input: MoneyPaymentI
       payment_type: 'account',
       date: input.paymentDate,
       notes: input.notes || null,
+      status: 'posted',
       ...(input.shiftId ? { shift_id: input.shiftId } : {}),
     });
 
-    await allocateMoneyCredits(trx, credits, amount);
+    const allocations = await allocateMoneyCredits(trx, credits, amount);
+    if (allocations.length > 0) {
+      await trx('credit_payment_allocations').insert(
+        allocations.map((allocation) => ({
+          payment_id: paymentId,
+          credit_id: allocation.credit_id,
+          amount_applied: allocation.amount_applied,
+        })),
+      );
+    }
     await recomputeAccountBalance(input.accountId, trx);
 
     const payment = await trx('credit_payments').where({ id: paymentId }).first();
     const updatedAccount = await trx('credit_accounts').where({ id: input.accountId }).first();
-    return { payment, account: updatedAccount };
+    return { payment, allocations, account: updatedAccount };
   });
+}
+
+export async function reverseMoneyAccountPaymentInTransaction(
+  trx: Knex.Transaction,
+  input: {
+    paymentId: number;
+    reason: string;
+    actorId?: number | null;
+  },
+) {
+  const reason = String(input.reason || '').trim();
+  if (reason.length < 3) {
+    throw httpError('A reversal reason is required.', 400, 'REVERSAL_REASON_REQUIRED');
+  }
+
+  const payment = await trx('credit_payments')
+    .where({ id: input.paymentId })
+    .whereNull('deleted_at')
+    .first();
+  if (!payment) throw httpError('Payment not found', 404, 'PAYMENT_NOT_FOUND');
+  if ((payment.status || 'posted') !== 'posted') {
+    throw httpError('Payment has already been reversed.', 409, 'PAYMENT_ALREADY_REVERSED');
+  }
+
+  const allocations = await trx('credit_payment_allocations')
+    .where({ payment_id: payment.id })
+    .whereNull('reversed_at')
+    .orderBy('id');
+  const allocatedCents = allocations.reduce(
+    (sum, allocation) => sum + toCents(allocation.amount_applied),
+    0,
+  );
+  if (allocatedCents !== toCents(payment.amount)) {
+    throw httpError(
+      'Payment allocation history is incomplete. Run the receivables integrity audit before reversing this payment.',
+      409,
+      'PAYMENT_ALLOCATION_INCOMPLETE',
+    );
+  }
+
+  for (const allocation of allocations) {
+    const credit = await trx('credits').where({ id: allocation.credit_id }).first();
+    if (!credit) {
+      throw httpError('An allocated credit record is missing.', 409, 'CREDIT_ALLOCATION_MISSING');
+    }
+    const restoredCents = Math.min(
+      toCents(credit.amount),
+      toCents(credit.balance) + toCents(allocation.amount_applied),
+    );
+    await trx('credits').where({ id: credit.id }).update({
+      balance: fromCents(restoredCents),
+      status: restoredCents >= toCents(credit.amount) ? 'outstanding' : 'partial',
+    });
+  }
+
+  const reversedAt = new Date().toISOString();
+  await trx('credit_payment_allocations')
+    .where({ payment_id: payment.id })
+    .whereNull('reversed_at')
+    .update({ reversed_at: reversedAt });
+  await trx('credit_payments').where({ id: payment.id }).update({
+    status: 'reversed',
+    reversed_at: reversedAt,
+    reversed_by_employee_id: Number(input.actorId || 0) > 0 ? input.actorId : null,
+    reversal_reason: reason,
+  });
+
+  if (payment.account_id) await recomputeAccountBalance(payment.account_id, trx);
+  return trx('credit_payments').where({ id: payment.id }).first();
+}
+
+export async function reverseMoneyAccountPayment(
+  conn: Knex,
+  input: {
+    paymentId: number;
+    reason: string;
+    actorId?: number | null;
+  },
+) {
+  return conn.transaction((trx) => reverseMoneyAccountPaymentInTransaction(trx, input));
 }
 
 export function paymentHttpStatus(err: any): number {

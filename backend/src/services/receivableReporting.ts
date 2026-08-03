@@ -35,6 +35,7 @@ export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
       db.raw('account.id = COALESCE(payment.account_id, source_credit.account_id)'),
     )
     .whereNull('payment.deleted_at')
+    .where('payment.status', 'posted')
     .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where(function (this: any) {
@@ -113,6 +114,7 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
       db.raw('account.id = COALESCE(payment.account_id, source_credit.account_id)'),
     )
     .whereNull('payment.deleted_at')
+    .where('payment.status', 'posted')
     .where('account.type', 'customer')
     .where(function (this: any) {
       this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
@@ -166,6 +168,7 @@ export async function getDirectReceivableCashInflows(db: Knex, from: string, to:
       db.raw('account.id = COALESCE(payment.account_id, source_credit.account_id)'),
     )
     .whereNull('payment.deleted_at')
+    .where('payment.status', 'posted')
     .whereNull('payment.shift_id')
     .whereNull('account.deleted_at')
     .where('account.type', 'customer')

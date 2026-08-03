@@ -69,6 +69,7 @@ router.get('/', async (_req, res) => {
       if (hasShiftId) {
         const receipts = await db('credit_payments')
           .whereIn('shift_id', shiftIds)
+          .where({ status: 'posted' })
           .whereNull('deleted_at')
           .select('payment_method', 'amount');
         for (const receipt of receipts) {

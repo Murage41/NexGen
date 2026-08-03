@@ -6,6 +6,7 @@ import {
   paymentHttpStatus,
   recordInvoicePayment,
   recordMoneyAccountPayment,
+  reverseMoneyAccountPayment,
 } from '../src/services/receivablePayments';
 import { auditReceivableIntegrity } from '../src/services/receivableIntegrity';
 
@@ -48,9 +49,21 @@ async function createSchema(db: Knex) {
     t.decimal('amount', 14, 2).notNullable();
     t.string('payment_method').notNullable();
     t.string('payment_type').notNullable();
+    t.string('status').notNullable().defaultTo('posted');
     t.string('date').notNullable();
     t.text('notes').nullable();
     t.timestamp('deleted_at').nullable();
+    t.timestamp('reversed_at').nullable();
+    t.integer('reversed_by_employee_id').nullable();
+    t.text('reversal_reason').nullable();
+  });
+  await db.schema.createTable('credit_payment_allocations', (t) => {
+    t.increments('id').primary();
+    t.integer('payment_id').notNullable();
+    t.integer('credit_id').notNullable();
+    t.decimal('amount_applied', 14, 2).notNullable();
+    t.timestamp('reversed_at').nullable();
+    t.timestamp('created_at').defaultTo(db.fn.now());
   });
   await db.schema.createTable('customer_invoices', (t) => {
     t.increments('id').primary();
@@ -224,7 +237,7 @@ async function testMoneyPayments(db: Knex) {
     created_at: '2026-07-03 08:00:00',
   });
 
-  await recordMoneyAccountPayment(db, {
+  const firstPayment = await recordMoneyAccountPayment(db, {
     accountId,
     amount: 1200,
     paymentMethod: 'cash',
@@ -236,6 +249,24 @@ async function testMoneyPayments(db: Knex) {
   assert(afterA.status === 'paid' && money(afterA.balance) === 0, 'Oldest money credit was not settled first');
   assert(afterB.status === 'partial' && money(afterB.balance) === 300, 'Second money credit balance is wrong');
   assert(money(afterOpen.balance) === 800, 'Open-shift credit was incorrectly paid');
+
+  await reverseMoneyAccountPayment(db, {
+    paymentId: firstPayment.payment.id,
+    reason: 'Test payment reversal',
+  });
+  const restoredA = await db('credits').where({ id: creditA }).first();
+  const restoredB = await db('credits').where({ id: creditB }).first();
+  assert(restoredA.status === 'outstanding' && money(restoredA.balance) === 1000,
+    'Payment reversal did not restore the oldest credit');
+  assert(restoredB.status === 'outstanding' && money(restoredB.balance) === 500,
+    'Payment reversal did not restore the partially settled credit');
+
+  await recordMoneyAccountPayment(db, {
+    accountId,
+    amount: 1200,
+    paymentMethod: 'cash',
+    paymentDate: '2026-07-04',
+  });
 
   await expectRejected(() => recordMoneyAccountPayment(db, {
     accountId,

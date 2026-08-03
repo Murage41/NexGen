@@ -150,6 +150,7 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
         .pluck('id');
       const paymentRow = await db('credit_payments')
         .whereNull('deleted_at')
+        .where({ status: 'posted' })
         .where(function (this: any) {
           this.where('account_id', account.id);
           if (creditIds.length) this.orWhereIn('credit_id', creditIds);

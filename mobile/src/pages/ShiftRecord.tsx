@@ -382,8 +382,8 @@ export default function ShiftRecord() {
       <div className="pb-6">
         <PageHeader title="Record Shift" back />
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-          <p className="font-semibold mb-1">Shift is closed</p>
-          <p>This shift has already been closed and can no longer be edited.</p>
+          <p className="font-semibold mb-1">Shift is {shiftStatus === 'cancelled' ? 'cancelled' : 'closed'}</p>
+          <p>This shift can no longer be edited.</p>
           <button
             onClick={() => navigate(`/shifts/${id}`)}
             className="mt-3 w-full bg-white border border-amber-300 py-2 rounded-lg text-sm font-medium text-amber-800"

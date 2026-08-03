@@ -83,6 +83,7 @@ async function createSchema(db: Knex) {
     t.integer('shift_id').nullable();
     t.decimal('amount', 14, 2).notNullable();
     t.string('payment_method').notNullable();
+    t.string('status').notNullable().defaultTo('posted');
     t.timestamp('deleted_at').nullable();
   });
   await db.schema.createTable('payroll_payments', (t) => {

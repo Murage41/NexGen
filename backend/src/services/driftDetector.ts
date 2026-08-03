@@ -80,6 +80,7 @@ export async function detectDrift(): Promise<DriftReport> {
     const ids = await db('credits').where('account_id', a.id).whereNull('deleted_at').pluck('id');
     const paySum = await db('credit_payments')
       .whereNull('deleted_at')
+      .where({ status: 'posted' })
       .where((q: any) => {
         q.where('account_id', a.id);
         if (ids.length) q.orWhereIn('credit_id', ids);

@@ -15,7 +15,7 @@ import type { Knex } from 'knex';
  *   money mode   = SUM(active credits.balance)
  *   invoice mode = SUM(active issued/partial customer_invoices.balance)
  *
- * Payments are allocated into those source-row balances. Rebuilding from
+ * Posted payments are allocated into those source-row balances. Rebuilding from
  * remaining balances prevents an old unallocated payment from reducing the
  * account cache while leaving individual documents outstanding.
  *

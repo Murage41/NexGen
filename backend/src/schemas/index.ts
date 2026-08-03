@@ -176,6 +176,10 @@ export const updateReadingsSchema = z.object({
   confirm_large_sale: z.boolean().optional(),
 });
 
+export const shiftCancellationSchema = z.object({
+  reason: z.string().trim().min(3, 'cancellation reason is required').max(1000),
+});
+
 // --- Shift Expenses ---
 export const createShiftExpenseSchema = z.object({
   category: z.string().min(1, 'category is required'),

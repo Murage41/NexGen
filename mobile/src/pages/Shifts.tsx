@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getShifts, getActiveEmployees, openShift } from '../services/api';
-import PageHeader from '../components/PageHeader';
 import {
+  cancelShift,
+  getShifts,
+  getActiveEmployees,
+  openShift,
+  previewShiftCancellation,
+} from '../services/api';
+import PageHeader from '../components/PageHeader';
+import { useAuth } from '../context/AuthContext';
+import {
+  Ban,
   CheckCircle,
   ChevronLeft,
   ChevronRight,
@@ -13,7 +21,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 
-type ShiftStatusFilter = '' | 'open' | 'closed';
+type ShiftStatusFilter = '' | 'open' | 'closed' | 'cancelled';
 type ShiftSort = 'newest' | 'oldest';
 
 interface ShiftPagination {
@@ -49,7 +57,12 @@ export default function Shifts() {
   const [pagination, setPagination] = useState<ShiftPagination>(EMPTY_PAGINATION);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [cancelTarget, setCancelTarget] = useState<any | null>(null);
+  const [cancelPreview, setCancelPreview] = useState<any | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
 
   const invalidDateRange = Boolean(fromDate && toDate && fromDate > toDate);
   const hasFilters = Boolean(fromDate || toDate || status || sort !== 'newest');
@@ -153,6 +166,37 @@ export default function Shifts() {
     }
   }
 
+  async function openCancellation(shift: any) {
+    setCancelTarget(shift);
+    setCancelPreview(null);
+    setCancelReason('');
+    try {
+      const response = await previewShiftCancellation(Number(shift.id));
+      setCancelPreview(response.data.data);
+    } catch (cancelError: any) {
+      alert(cancelError.response?.data?.error || 'Unable to prepare shift cancellation');
+      setCancelTarget(null);
+    }
+  }
+
+  async function confirmCancellation() {
+    if (!cancelTarget || cancelReason.trim().length < 3) return;
+    setCancelling(true);
+    try {
+      await cancelShift(Number(cancelTarget.id), cancelReason.trim());
+      setCancelTarget(null);
+      setPage(1);
+      const response = await getShifts({ limit: 15, ...(status ? { status } : {}), sort });
+      const data = response.data.data;
+      setShifts(data.shifts || []);
+      setPagination((current) => ({ ...current, ...data }));
+    } catch (cancelError: any) {
+      alert(cancelError.response?.data?.error || 'Failed to cancel shift');
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   const formatDate = (shift: any) => {
     const value = shift.shift_date ? `${shift.shift_date}T12:00:00` : shift.start_time;
     return new Date(value).toLocaleDateString('en-KE', {
@@ -210,6 +254,43 @@ export default function Shifts() {
         </div>
       )}
 
+      {cancelTarget && (
+        <div className="mobile-modal-overlay flex items-end">
+          <div className="mobile-bottom-sheet rounded-t-2xl p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Ban size={20} className="text-red-600" />
+              <h2 className="text-lg font-semibold">Cancel Shift #{cancelTarget.id}</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-3">
+              Entries and shift-linked payments will be reversed.
+            </p>
+            {cancelPreview && (
+              <div className="grid grid-cols-2 gap-2 text-xs bg-gray-50 border border-gray-200 rounded-md p-3 mb-3">
+                <span>Credits</span><strong className="text-right">{cancelPreview.credit_entries_to_void}</strong>
+                <span>Debt payments</span><strong className="text-right">{cancelPreview.credit_payments_to_reverse}</strong>
+                <span>Expenses</span><strong className="text-right">{cancelPreview.expenses_to_void}</strong>
+                <span>Invoice entries</span><strong className="text-right">{cancelPreview.invoice_consumption_to_release}</strong>
+              </div>
+            )}
+            <textarea
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              rows={3}
+              className="w-full border border-gray-300 rounded-md p-3 text-base"
+              placeholder="Cancellation reason"
+            />
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <button onClick={() => setCancelTarget(null)} disabled={cancelling} className="py-3 rounded-md bg-gray-100 text-gray-600 font-medium">
+                Keep Shift
+              </button>
+              <button onClick={confirmCancellation} disabled={cancelling || cancelReason.trim().length < 3 || !cancelPreview} className="py-3 rounded-md bg-red-600 text-white font-medium disabled:opacity-50">
+                {cancelling ? 'Cancelling...' : 'Cancel Shift'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="bg-white border-y border-gray-200 -mx-4 px-4 py-3 mb-4">
         <div className="grid grid-cols-2 gap-2">
           <label className="min-w-0 text-xs font-medium text-gray-600">
@@ -235,11 +316,12 @@ export default function Shifts() {
         </div>
 
         <div className="flex items-center gap-2 mt-3">
-          <div className="grid grid-cols-3 flex-1 border border-gray-300 rounded-md overflow-hidden">
+          <div className="grid grid-cols-4 flex-1 border border-gray-300 rounded-md overflow-hidden">
             {([
               ['', 'All'],
               ['open', 'Open'],
               ['closed', 'Closed'],
+              ['cancelled', 'Cancelled'],
             ] as [ShiftStatusFilter, string][]).map(([value, label], index) => (
               <button
                 key={value || 'all'}
@@ -288,12 +370,9 @@ export default function Shifts() {
 
       <div className={`space-y-2 ${loading ? 'opacity-60' : ''}`}>
         {shifts.map((shift: any) => (
-          <button
-            key={shift.id}
-            onClick={() => navigate(`/shifts/${shift.id}`)}
-            className="w-full bg-white border border-gray-200 rounded-lg p-3 text-left"
-          >
-            <div className="flex items-start justify-between gap-3">
+          <div key={shift.id} className="w-full bg-white border border-gray-200 rounded-lg p-3">
+            <button onClick={() => navigate(`/shifts/${shift.id}`)} className="w-full text-left">
+              <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="font-medium text-gray-800 truncate">{shift.employee_name}</p>
@@ -310,13 +389,27 @@ export default function Shifts() {
                 <span className="shrink-0 flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
                   <Clock size={12} /> Open
                 </span>
+              ) : shift.status === 'cancelled' ? (
+                <span className="shrink-0 flex items-center gap-1 text-xs bg-red-50 text-red-700 px-2 py-1 rounded">
+                  <Ban size={12} /> Cancelled
+                </span>
               ) : (
                 <span className="shrink-0 flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
                   <CheckCircle size={12} /> Closed
                 </span>
               )}
-            </div>
-          </button>
+              </div>
+            </button>
+            {shift.status === 'open' && isAdmin && (
+              <button
+                type="button"
+                onClick={() => openCancellation(shift)}
+                className="mt-3 w-full border-t border-gray-100 pt-2 flex items-center justify-center gap-1 text-sm text-red-600"
+              >
+                <Ban size={15} /> Cancel Shift
+              </button>
+            )}
+          </div>
         ))}
         {!loading && shifts.length === 0 && (
           <p className="text-center text-gray-400 py-10">
