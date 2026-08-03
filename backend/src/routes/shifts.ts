@@ -9,6 +9,7 @@ import {
   openShiftSchema,
   shiftReviewSchema,
   shiftCancellationSchema,
+  updateCollectionsSchema,
   updateReadingsSchema,
 } from '../schemas';
 import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
@@ -29,7 +30,10 @@ import {
   getCompensationPlan,
   getCompensationPlanById,
 } from '../services/compensation';
-import { paymentHttpStatus, recordMoneyAccountPayment } from '../services/receivablePayments';
+import {
+  paymentHttpStatus,
+  recordMoneyAccountPaymentInTransaction,
+} from '../services/receivablePayments';
 import {
   resolveConsumptionSource,
   validateInvoiceConsumptionAgainstReadings,
@@ -37,8 +41,21 @@ import {
 import { cancelOpenShift, previewShiftCancellation } from '../services/shiftCancellation';
 import { buildShiftTimeline } from '../services/shiftTimeline';
 import { getShiftReview, updateShiftReview } from '../services/shiftReview';
+import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 
 const router = Router();
+
+function staleShiftWrite(section: 'readings' | 'collections', currentRevision: number) {
+  const label = section === 'readings' ? 'Pump readings' : 'Cash and M-Pesa collections';
+  return Object.assign(
+    new Error(`${label} were changed by another device. Refresh and review before saving.`),
+    {
+      httpStatus: 409,
+      code: section === 'readings' ? 'STALE_SHIFT_READINGS' : 'STALE_SHIFT_COLLECTIONS',
+      currentRevision,
+    },
+  );
+}
 
 function toSqliteDateTime(value: string): string {
   return String(value).slice(0, 19).replace('T', ' ');
@@ -550,11 +567,20 @@ router.put('/:id/opening-readings', requireAdmin, async (req, res) => {
           });
       }
     }
+    await db('shifts').where({ id: req.params.id, status: 'open' }).increment('readings_revision', 1);
+    const revisionRow = await db('shifts')
+      .where({ id: req.params.id })
+      .select('readings_revision')
+      .first();
     const updatedReadings = await db('pump_readings')
       .join('pumps', 'pump_readings.pump_id', 'pumps.id')
       .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
       .where('pump_readings.shift_id', req.params.id);
-    res.json({ success: true, data: updatedReadings });
+    res.json({
+      success: true,
+      data: updatedReadings,
+      revision: Number(revisionRow?.readings_revision || 0),
+    });
   } catch (err: any) {
     console.error('[shifts:opening-readings] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
@@ -566,7 +592,21 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
   try {
     console.log('[shifts:readings PUT]', { shiftId: req.params.id, body: req.body });
     if (!(await requireOpenShift(req, res))) return;
-    const { readings, confirm_anomaly, confirm_large_sale } = req.body;
+    const { readings, confirm_anomaly, confirm_large_sale, expected_revision } = req.body;
+    const shiftState = await db('shifts')
+      .where({ id: req.params.id })
+      .select('readings_revision')
+      .first();
+    const currentRevision = Number(shiftState?.readings_revision || 0);
+    if (expected_revision !== undefined && Number(expected_revision) !== currentRevision) {
+      const stale = staleShiftWrite('readings', currentRevision);
+      return res.status(stale.httpStatus).json({
+        success: false,
+        error: stale.message,
+        code: stale.code,
+        current_revision: stale.currentRevision,
+      });
+    }
 
     // Current fuel prices keyed by fuel_type, used by Layer 2 (price sanity).
     const today = getKenyaDate();
@@ -756,63 +796,135 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
       });
     }
 
-    for (const r of readings) {
-      const existing = await db('pump_readings')
-        .where({ shift_id: req.params.id, pump_id: r.pump_id })
-        .first();
-
-      if (existing) {
-        const cL = resolved[r.pump_id].closing_litres;
-        const cA = resolved[r.pump_id].closing_amount;
-        const litres_sold = cL - Number(existing.opening_litres);
-        const amount_sold = cA - Number(existing.opening_amount);
-        await db('pump_readings')
-          .where({ shift_id: req.params.id, pump_id: r.pump_id })
-          .update({
-            closing_litres: cL,
-            closing_amount: cA,
-            litres_sold,
-            amount_sold,
-          });
+    const result = await db.transaction(async (trx) => {
+      const changed = await trx('shifts')
+        .where({
+          id: req.params.id,
+          status: 'open',
+          readings_revision: currentRevision,
+        })
+        .update({ readings_revision: currentRevision + 1 });
+      if (changed !== 1) {
+        const latest = await trx('shifts')
+          .where({ id: req.params.id })
+          .select('readings_revision')
+          .first();
+        throw staleShiftWrite('readings', Number(latest?.readings_revision || currentRevision));
       }
-    }
 
-    const updatedReadings = await db('pump_readings')
-      .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
-      .where('pump_readings.shift_id', req.params.id);
+      for (const r of readings) {
+        const existing = await trx('pump_readings')
+          .where({ shift_id: req.params.id, pump_id: r.pump_id })
+          .first();
 
-    res.json({ success: true, data: updatedReadings });
+        if (existing) {
+          const cL = resolved[r.pump_id].closing_litres;
+          const cA = resolved[r.pump_id].closing_amount;
+          const litres_sold = cL - Number(existing.opening_litres);
+          const amount_sold = cA - Number(existing.opening_amount);
+          await trx('pump_readings')
+            .where({ shift_id: req.params.id, pump_id: r.pump_id })
+            .update({
+              closing_litres: cL,
+              closing_amount: cA,
+              litres_sold,
+              amount_sold,
+            });
+        }
+      }
+
+      const updatedReadings = await trx('pump_readings')
+        .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+        .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
+        .where('pump_readings.shift_id', req.params.id);
+      return { readings: updatedReadings, revision: currentRevision + 1 };
+    });
+
+    res.json({ success: true, data: result.readings, revision: result.revision });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.httpStatus || 500).json({
+      success: false,
+      error: err.message,
+      code: err.code,
+      current_revision: err.currentRevision,
+    });
   }
 });
 
 // PUT update collections for a shift
-router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
+router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, validate(updateCollectionsSchema), async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
-    const { cash_amount, mpesa_amount, credits_amount } = req.body;
-    const total_collected = (cash_amount || 0) + (mpesa_amount || 0) + (credits_amount || 0);
-
-    // Auto-compute Lipa na M-Pesa Buy Goods fee + net (Phase 1A)
-    const { fee: mpesa_fee, net: mpesa_net } = await computeMpesaFee(Number(mpesa_amount) || 0);
-
-    const existing = await db('shift_collections').where({ shift_id: req.params.id }).first();
-    if (existing) {
-      await db('shift_collections').where({ shift_id: req.params.id }).update({
-        cash_amount, mpesa_amount, credits_amount, total_collected, mpesa_fee, mpesa_net,
-      });
-    } else {
-      await db('shift_collections').insert({
-        shift_id: req.params.id, cash_amount, mpesa_amount, credits_amount, total_collected, mpesa_fee, mpesa_net,
+    const cashAmount = Number(req.body.cash_amount);
+    const mpesaAmount = Number(req.body.mpesa_amount);
+    const expectedRevision = req.body.expected_revision;
+    const shiftState = await db('shifts')
+      .where({ id: req.params.id })
+      .select('collections_revision')
+      .first();
+    const currentRevision = Number(shiftState?.collections_revision || 0);
+    if (expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+      const stale = staleShiftWrite('collections', currentRevision);
+      return res.status(stale.httpStatus).json({
+        success: false,
+        error: stale.message,
+        code: stale.code,
+        current_revision: stale.currentRevision,
       });
     }
 
-    const collections = await db('shift_collections').where({ shift_id: req.params.id }).first();
-    res.json({ success: true, data: collections });
+    // Auto-compute Lipa na M-Pesa Buy Goods fee + net (Phase 1A)
+    const { fee: mpesaFee, net: mpesaNet } = await computeMpesaFee(mpesaAmount);
+
+    const result = await db.transaction(async (trx) => {
+      const changed = await trx('shifts')
+        .where({
+          id: req.params.id,
+          status: 'open',
+          collections_revision: currentRevision,
+        })
+        .update({ collections_revision: currentRevision + 1 });
+      if (changed !== 1) {
+        const latest = await trx('shifts')
+          .where({ id: req.params.id })
+          .select('collections_revision')
+          .first();
+        throw staleShiftWrite('collections', Number(latest?.collections_revision || currentRevision));
+      }
+
+      const creditRow = await trx('shift_credits')
+        .where({ shift_id: req.params.id })
+        .whereNull('deleted_at')
+        .sum('amount as total')
+        .first();
+      const creditsAmount = Number((creditRow as any)?.total || 0);
+      const totalCollected = cashAmount + mpesaAmount + creditsAmount;
+      const existing = await trx('shift_collections').where({ shift_id: req.params.id }).first();
+      const values = {
+        cash_amount: cashAmount,
+        mpesa_amount: mpesaAmount,
+        credits_amount: creditsAmount,
+        total_collected: totalCollected,
+        mpesa_fee: mpesaFee,
+        mpesa_net: mpesaNet,
+      };
+      if (existing) {
+        await trx('shift_collections').where({ shift_id: req.params.id }).update(values);
+      } else {
+        await trx('shift_collections').insert({ shift_id: req.params.id, ...values });
+      }
+
+      const collections = await trx('shift_collections').where({ shift_id: req.params.id }).first();
+      return { collections, revision: currentRevision + 1 };
+    });
+    res.json({ success: true, data: result.collections, revision: result.revision });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.httpStatus || 500).json({
+      success: false,
+      error: err.message,
+      code: err.code,
+      current_revision: err.currentRevision,
+    });
   }
 });
 
@@ -827,13 +939,26 @@ router.post('/:id/expenses', requireAuth, requireOwnShiftOrAdmin, validate(creat
         error: 'Record employee pay through the shift wage or payroll workflow, not as a shift expense.',
       });
     }
-    const [expId] = await db('shift_expenses').insert({
-      shift_id: req.params.id, category, description, amount,
-    });
-    const expense = await db('shift_expenses').where({ id: expId }).first();
-    res.status(201).json({ success: true, data: expense });
+    const key = normalizeIdempotencyKey(req.get('Idempotency-Key'));
+    const result = await runIdempotent(
+      db,
+      { scope: `shift:${req.params.id}:expense`, key, payload: req.body },
+      async (trx) => {
+        const shift = await trx('shifts').where({ id: req.params.id }).select('status').first();
+        if (!shift || shift.status !== 'open') {
+          throw Object.assign(new Error('Cannot modify a closed shift.'), { httpStatus: 400 });
+        }
+        const [expId] = await trx('shift_expenses').insert({
+          shift_id: req.params.id, category, description, amount,
+        });
+        const expense = await trx('shift_expenses').where({ id: expId }).first();
+        return { status: 201, body: { success: true, data: expense } };
+      },
+    );
+    if (result.replayed) res.set('Idempotency-Replayed', 'true');
+    res.status(result.status).json(result.body);
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
   }
 });
 
@@ -855,7 +980,15 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
     const { customer_name, customer_phone, amount, description } = req.body;
     const shiftId = req.params.id;
 
-    const shiftCredit = await db.transaction(async (trx) => {
+    const key = normalizeIdempotencyKey(req.get('Idempotency-Key'));
+    const result = await runIdempotent(
+      db,
+      { scope: `shift:${shiftId}:credit`, key, payload: req.body },
+      async (trx) => {
+      const shift = await trx('shifts').where({ id: shiftId }).select('status').first();
+      if (!shift || shift.status !== 'open') {
+        throw Object.assign(new Error('Cannot modify a closed shift.'), { httpStatus: 400 });
+      }
       // Look up or auto-create credit_account for this customer
       // Phase 6: exclude soft-deleted accounts so we don't resurrect archived ones
       let account = await trx('credit_accounts')
@@ -883,7 +1016,7 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
           new Error(
             `"${customer_name}" is an invoice-mode customer. Record litres & fuel type via invoice consumption instead of a money credit.`,
           ),
-          { code: 'INVOICE_MODE_ACCOUNT' },
+          { code: 'INVOICE_MODE_ACCOUNT', httpStatus: 400 },
         );
       }
 
@@ -936,15 +1069,15 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
         });
       }
 
-      return trx('shift_credits').where({ id: shiftCreditId }).first();
-    });
+      const shiftCredit = await trx('shift_credits').where({ id: shiftCreditId }).first();
+      return { status: 201, body: { success: true, data: shiftCredit } };
+      },
+    );
 
-    res.status(201).json({ success: true, data: shiftCredit });
+    if (result.replayed) res.set('Idempotency-Replayed', 'true');
+    res.status(result.status).json(result.body);
   } catch (err: any) {
-    if (err.code === 'INVOICE_MODE_ACCOUNT') {
-      return res.status(400).json({ success: false, error: err.message, code: err.code });
-    }
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
   }
 });
 
@@ -1410,7 +1543,11 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
       return res.status(400).json({ success: false, error: 'litres must be a positive number' });
     }
 
-    const entry = await db.transaction(async (trx) => {
+    const key = normalizeIdempotencyKey(req.get('Idempotency-Key'));
+    const result = await runIdempotent(
+      db,
+      { scope: `shift:${shiftId}:invoice-consumption`, key, payload: req.body },
+      async (trx) => {
       const account = await trx('credit_accounts')
         .where({ id: account_id })
         .whereNull('deleted_at')
@@ -1461,13 +1598,16 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
           : null,
       });
       const created = await trx('invoice_consumption').where({ id }).first();
-      return { ...created, source_required: source.source_required };
-    });
+      const entry = { ...created, source_required: source.source_required };
+      return { status: 201, body: { success: true, data: entry } };
+      },
+    );
 
-    res.status(201).json({ success: true, data: entry });
+    if (result.replayed) res.set('Idempotency-Replayed', 'true');
+    res.status(result.status).json(result.body);
   } catch (err: any) {
-    const status = err.http || 500;
-    res.status(status).json({ success: false, error: err.message });
+    const status = err.http || err.httpStatus || 500;
+    res.status(status).json({ success: false, error: err.message, code: err.code });
   }
 });
 
@@ -1722,20 +1862,31 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
     }
 
     const today = getKenyaDate();
-    const result = await recordMoneyAccountPayment(db, {
-      accountId: Number(account_id),
-      amount: pay,
-      paymentMethod: method,
-      paymentDate: today,
-      notes,
-      shiftId,
-    });
+    const key = normalizeIdempotencyKey(req.get('Idempotency-Key'));
+    const result = await runIdempotent(
+      db,
+      { scope: `shift:${shiftId}:credit-receipt`, key, payload: req.body },
+      async (trx) => {
+        const paymentResult = await recordMoneyAccountPaymentInTransaction(trx, {
+          accountId: Number(account_id),
+          amount: pay,
+          paymentMethod: method,
+          paymentDate: today,
+          notes,
+          shiftId,
+        });
+        const account = await trx('credit_accounts')
+          .where({ id: Number(account_id) })
+          .first('name');
+        const receipt = { ...paymentResult.payment, account_name: account?.name || null };
+        return { status: 201, body: { success: true, data: receipt } };
+      },
+    );
 
-    const account = await db('credit_accounts').where({ id: Number(account_id) }).first('name');
-    const receipt = { ...result.payment, account_name: account?.name || null };
-    res.status(201).json({ success: true, data: receipt });
+    if (result.replayed) res.set('Idempotency-Replayed', 'true');
+    res.status(result.status).json(result.body);
   } catch (err: any) {
-    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
   }
 });
 

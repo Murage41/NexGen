@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors } from '../services/api';
+import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -45,6 +45,7 @@ export default function ShiftDetail() {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptForm, setReceiptForm] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
   const [collectingReceipt, setCollectingReceipt] = useState(false);
+  const receiptOperation = useRef<{ fingerprint: string; key: string } | null>(null);
 
   useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
 
@@ -183,12 +184,18 @@ export default function ShiftDetail() {
     if (!receiptForm.account_id || !amount || amount <= 0) return;
     setCollectingReceipt(true);
     try {
-      await addShiftCreditReceipt(parseInt(id!), {
+      const payload = {
         account_id: parseInt(receiptForm.account_id),
         amount,
         payment_method: receiptForm.payment_method,
         notes: receiptForm.notes || undefined,
-      });
+      };
+      const fingerprint = JSON.stringify(payload);
+      if (!receiptOperation.current || receiptOperation.current.fingerprint !== fingerprint) {
+        receiptOperation.current = { fingerprint, key: createOperationKey('credit-receipt') };
+      }
+      await addShiftCreditReceipt(parseInt(id!), payload, receiptOperation.current.key);
+      receiptOperation.current = null;
       setShowReceiptModal(false);
       setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
       await loadShift();

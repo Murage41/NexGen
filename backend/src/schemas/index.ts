@@ -197,6 +197,13 @@ export const updateReadingsSchema = z.object({
   // Separate from price sanity: catches mechanically plausible but operationally
   // impossible sales volumes/amounts caused by a wrong display reading.
   confirm_large_sale: z.boolean().optional(),
+  expected_revision: z.number().int().min(0).optional(),
+});
+
+export const updateCollectionsSchema = z.object({
+  cash_amount: z.number().finite().min(0),
+  mpesa_amount: z.number().finite().min(0),
+  expected_revision: z.number().int().min(0).optional(),
 });
 
 export const shiftCancellationSchema = z.object({

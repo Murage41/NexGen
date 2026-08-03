@@ -22,6 +22,7 @@
     "test:shift-debt-receipts": "tsx scripts/test_shift_debt_receipts.ts",
     "test:shift-cancellation": "tsx scripts/test_shift_cancellation.ts",
     "test:shift-review": "tsx scripts/test_shift_review.ts",
+    "test:shift-write-safety": "tsx scripts/test_shift_write_safety.ts",
     "test:receivable-payments": "tsx scripts/test_receivable_payment_integrity.ts",
     "test:invoice-consumption": "tsx scripts/test_invoice_consumption_controls.ts",
     "test:invoice-consumption-corrections": "tsx scripts/test_invoice_consumption_corrections.ts",

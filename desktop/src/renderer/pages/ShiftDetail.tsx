@@ -4,12 +4,25 @@ import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
   repayDebt, getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
-  addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview, getShiftNeighbors,
+  addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview, getShiftNeighbors, createOperationKey,
 } from '../services/api';
-import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
+type PendingOperation = { fingerprint: string; key: string };
+
+function pendingOperationKey(
+  ref: { current: PendingOperation | null },
+  prefix: string,
+  payload: unknown,
+) {
+  const fingerprint = JSON.stringify(payload);
+  if (!ref.current || ref.current.fingerprint !== fingerprint) {
+    ref.current = { fingerprint, key: createOperationKey(prefix) };
+  }
+  return ref.current.key;
+}
 
 function syncLabel(state: SyncState, savedAt: Date | null) {
   if (state === 'dirty') return 'Waiting to sync';
@@ -73,6 +86,14 @@ export default function ShiftDetail() {
   const [collectionError, setCollectionError] = useState('');
   const readingRevision = useRef(0);
   const collectionRevision = useRef(0);
+  const serverReadingRevision = useRef(0);
+  const serverCollectionRevision = useRef(0);
+  const [readingConflictRevision, setReadingConflictRevision] = useState<number | null>(null);
+  const [collectionConflictRevision, setCollectionConflictRevision] = useState<number | null>(null);
+  const expenseOperation = useRef<PendingOperation | null>(null);
+  const creditOperation = useRef<PendingOperation | null>(null);
+  const invoiceOperation = useRef<PendingOperation | null>(null);
+  const receiptOperation = useRef<PendingOperation | null>(null);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [varianceReason, setVarianceReason] = useState('');
@@ -173,11 +194,23 @@ export default function ShiftDetail() {
     }
   }
 
-  async function loadShift() {
+  async function loadShift(options: { resolveConflict?: 'readings' | 'collections' } = {}) {
     try {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
       setShift(d);
+      if (options.resolveConflict === 'readings' || readingConflictRevision === null) {
+        serverReadingRevision.current = Number(d.readings_revision || 0);
+      }
+      if (options.resolveConflict === 'collections' || collectionConflictRevision === null) {
+        serverCollectionRevision.current = Number(d.collections_revision || 0);
+      }
+      if (options.resolveConflict === 'readings') {
+        setReadingConflictRevision(null);
+      }
+      if (options.resolveConflict === 'collections') {
+        setCollectionConflictRevision(null);
+      }
       // Pre-populate raw display inputs from current cumulative values so the
       // form shows what the pump should currently read.
       const draft = d.status === 'open' ? readShiftDraft(id!) : null;
@@ -204,8 +237,13 @@ export default function ShiftDetail() {
         };
       });
       setReadings(rs);
-      setReadingsDirty(Boolean(draft?.readings));
-      setReadingSync(draft?.readings ? 'dirty' : 'idle');
+      if (readingConflictRevision !== null && options.resolveConflict !== 'readings') {
+        setReadingsDirty(true);
+        setReadingSync('review');
+      } else {
+        setReadingsDirty(Boolean(draft?.readings));
+        setReadingSync(draft?.readings ? 'dirty' : 'idle');
+      }
       const serverCollections = d.collections
         ? { cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount }
         : { cash_amount: 0, mpesa_amount: 0 };
@@ -214,8 +252,13 @@ export default function ShiftDetail() {
         setMpesaFee(Number(d.collections.mpesa_fee) || 0);
         setMpesaNet(Number(d.collections.mpesa_net) || 0);
       }
-      setCollectionsDirty(Boolean(draft?.collections));
-      setCollectionSync(draft?.collections ? 'dirty' : 'idle');
+      if (collectionConflictRevision !== null && options.resolveConflict !== 'collections') {
+        setCollectionsDirty(true);
+        setCollectionSync('review');
+      } else {
+        setCollectionsDirty(Boolean(draft?.collections));
+        setCollectionSync(draft?.collections ? 'dirty' : 'idle');
+      }
       setShiftCredits(d.shift_credits || []);
       setInvoiceConsumption(d.invoice_consumption || []);
       setExpenses(d.expenses);
@@ -253,7 +296,15 @@ export default function ShiftDetail() {
           ...(ro.amount ? { rollover_amount: true } : {}),
         };
       });
-      const res = await updateReadings(parseInt(id!), payload, opts.confirmAnomaly, opts.confirmLargeSale);
+      const res = await updateReadings(
+        parseInt(id!),
+        payload,
+        opts.confirmAnomaly,
+        opts.confirmLargeSale,
+        serverReadingRevision.current,
+      );
+      serverReadingRevision.current = Number(res.data.revision ?? serverReadingRevision.current + 1);
+      setReadingConflictRevision(null);
       // Reload to sync raw inputs with new cumulative values.
       const rs = (res.data.data || []).map((r: any) => {
         const capL = Number(r.meter_capacity_litres) || 1000000;
@@ -275,6 +326,12 @@ export default function ShiftDetail() {
       }
     } catch (err: any) {
       const data = err?.response?.data;
+      if (err?.response?.status === 409 && data?.code === 'STALE_SHIFT_READINGS') {
+        setReadingConflictRevision(Number(data.current_revision));
+        setReadingSync('review');
+        setReadingError(`${data.error} Choose which values to keep below.`);
+        return;
+      }
       if (!interactive && err?.response?.status === 409) {
         setReadingSync('review');
         setReadingError(`${data?.error || 'These readings need confirmation.'} Select Sync Now to review.`);
@@ -327,12 +384,13 @@ export default function ShiftDetail() {
     setCollectionSync('saving');
     setCollectionError('');
     try {
-      const creditsTotal = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
       const response = await updateCollections(parseInt(id!), {
         cash_amount: parseFloat(String(collections.cash_amount)) || 0,
         mpesa_amount: parseFloat(String(collections.mpesa_amount)) || 0,
-        credits_amount: creditsTotal,
+        expected_revision: serverCollectionRevision.current,
       });
+      serverCollectionRevision.current = Number(response.data.revision ?? serverCollectionRevision.current + 1);
+      setCollectionConflictRevision(null);
       setMpesaFee(Number(response.data.data?.mpesa_fee) || 0);
       setMpesaNet(Number(response.data.data?.mpesa_net) || 0);
       if (revision === collectionRevision.current) {
@@ -345,20 +403,65 @@ export default function ShiftDetail() {
       }
     } catch (err: any) {
       console.error('[ShiftDetail:saveCollections]', err);
-      setCollectionError(err?.response?.data?.error || err?.message || 'Failed to sync collections');
+      const data = err?.response?.data;
+      if (err?.response?.status === 409 && data?.code === 'STALE_SHIFT_COLLECTIONS') {
+        setCollectionConflictRevision(Number(data.current_revision));
+        setCollectionError(`${data.error} Choose which values to keep below.`);
+        setCollectionSync('review');
+        return;
+      }
+      setCollectionError(data?.error || err?.message || 'Failed to sync collections');
       setCollectionSync('error');
       if (interactive) alert(err?.response?.data?.error || err?.message || 'Failed to sync collections');
     }
   }
 
+  async function useServerValues(section: 'readings' | 'collections') {
+    if (!window.confirm('Replace the unsynced values on this device with the latest server values?')) return;
+    clearShiftDraftSection(id!, section);
+    if (section === 'readings') {
+      setReadingsDirty(false);
+      setReadingConflictRevision(null);
+    } else {
+      setCollectionsDirty(false);
+      setCollectionConflictRevision(null);
+    }
+    await loadShift({ resolveConflict: section });
+  }
+
+  function keepDeviceValues(section: 'readings' | 'collections') {
+    if (section === 'readings' && readingConflictRevision !== null) {
+      serverReadingRevision.current = readingConflictRevision;
+      setReadingConflictRevision(null);
+      setReadingSync('dirty');
+      void handleSaveReadings({});
+    }
+    if (section === 'collections' && collectionConflictRevision !== null) {
+      serverCollectionRevision.current = collectionConflictRevision;
+      setCollectionConflictRevision(null);
+      setCollectionSync('dirty');
+      void handleSaveCollections();
+    }
+  }
+
   async function handleAddExpense() {
     if (!newExpense.category || !newExpense.amount) return;
-    await addShiftExpense(parseInt(id!), {
+    const payload = {
       category: newExpense.category, description: newExpense.description,
       amount: parseFloat(newExpense.amount),
-    });
-    setNewExpense({ category: '', description: '', amount: '' });
-    await loadShift();
+    };
+    try {
+      await addShiftExpense(
+        parseInt(id!),
+        payload,
+        pendingOperationKey(expenseOperation, 'shift-expense', payload),
+      );
+      expenseOperation.current = null;
+      setNewExpense({ category: '', description: '', amount: '' });
+      await loadShift();
+    } catch (err: any) {
+      alert(err?.response?.data?.error || err?.message || 'Failed to add expense');
+    }
   }
 
   async function handleDeleteExpense(expenseId: number) {
@@ -377,7 +480,12 @@ export default function ShiftDetail() {
       payload.customer_phone = newCredit.customer_phone;
     }
     try {
-      await addShiftCredit(parseInt(id!), payload);
+      await addShiftCredit(
+        parseInt(id!),
+        payload,
+        pendingOperationKey(creditOperation, 'shift-credit', payload),
+      );
+      creditOperation.current = null;
       setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
       setCreditSearchQuery('');
       setCreditMode('existing');
@@ -407,12 +515,18 @@ export default function ShiftDetail() {
       return;
     }
     try {
-      await addInvoiceConsumption(parseInt(id!), {
+      const payload = {
         account_id: newCredit.account_id,
         fuel_type: newInvoice.fuel_type,
         litres: litresNum,
         pump_id: selectedPumpId,
-      });
+      };
+      await addInvoiceConsumption(
+        parseInt(id!),
+        payload,
+        pendingOperationKey(invoiceOperation, 'invoice-consumption', payload),
+      );
+      invoiceOperation.current = null;
       setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
       setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
       setCreditSearchQuery('');
@@ -442,7 +556,7 @@ export default function ShiftDetail() {
       alert('Complete the reconciliation review and record a variance reason when required.');
       return;
     }
-    if (readingsDirty || collectionsDirty || readingSync === 'saving' || collectionSync === 'saving' || readingSync === 'error' || collectionSync === 'error' || readingSync === 'review') {
+    if (readingsDirty || collectionsDirty || readingSync === 'saving' || collectionSync === 'saving' || readingSync === 'error' || collectionSync === 'error' || readingSync === 'review' || collectionSync === 'review') {
       alert('Pump readings and collections must finish syncing before this shift can close. Use Sync Now on any section needing attention.');
       return;
     }
@@ -492,12 +606,18 @@ export default function ShiftDetail() {
     if (!receiptForm.account_id || !amount || amount <= 0) return;
     setCollectingReceipt(true);
     try {
-      await addShiftCreditReceipt(parseInt(id!), {
+      const payload = {
         account_id: parseInt(receiptForm.account_id),
         amount,
         payment_method: receiptForm.payment_method,
         notes: receiptForm.notes || undefined,
-      });
+      };
+      await addShiftCreditReceipt(
+        parseInt(id!),
+        payload,
+        pendingOperationKey(receiptOperation, 'credit-receipt', payload),
+      );
+      receiptOperation.current = null;
       setShowReceiptModal(false);
       setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
       setReceiptAccountSearch('');
@@ -982,7 +1102,17 @@ export default function ShiftDetail() {
         </div>
         {readingError && (
           <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
-            {readingError}
+            <div>{readingError}</div>
+            {readingConflictRevision !== null && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button type="button" onClick={() => void useServerValues('readings')} className="flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium hover:bg-red-100">
+                  <RefreshCw size={13} /> Use Server Values
+                </button>
+                <button type="button" onClick={() => keepDeviceValues('readings')} className="flex items-center gap-1 rounded bg-red-700 px-2 py-1 text-xs font-medium text-white hover:bg-red-800">
+                  <Save size={13} /> Keep This Device
+                </button>
+              </div>
+            )}
           </div>
         )}
         {isOpen && (
@@ -1099,7 +1229,7 @@ export default function ShiftDetail() {
           <h2 className="text-lg font-semibold text-gray-700">Sales Collections</h2>
           {isOpen && (
             <div className="flex items-center gap-3">
-              <span className={`text-xs ${collectionSync === 'error' ? 'text-amber-700' : 'text-gray-500'}`}>
+              <span className={`text-xs ${collectionSync === 'error' || collectionSync === 'review' ? 'text-amber-700' : 'text-gray-500'}`}>
                 {syncLabel(collectionSync, collectionSavedAt)}
               </span>
               <button onClick={() => handleSaveCollections()} disabled={collectionSync === 'saving'} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
@@ -1110,7 +1240,17 @@ export default function ShiftDetail() {
         </div>
         {collectionError && (
           <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded">
-            {collectionError}
+            <div>{collectionError}</div>
+            {collectionConflictRevision !== null && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button type="button" onClick={() => void useServerValues('collections')} className="flex items-center gap-1 rounded border border-amber-300 bg-white px-2 py-1 text-xs font-medium hover:bg-amber-100">
+                  <RefreshCw size={13} /> Use Server Values
+                </button>
+                <button type="button" onClick={() => keepDeviceValues('collections')} className="flex items-center gap-1 rounded bg-amber-700 px-2 py-1 text-xs font-medium text-white hover:bg-amber-800">
+                  <Save size={13} /> Keep This Device
+                </button>
+              </div>
+            )}
           </div>
         )}
         <div className="grid grid-cols-3 gap-4">

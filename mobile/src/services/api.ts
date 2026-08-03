@@ -15,6 +15,16 @@ const api = axios.create({
   },
 });
 
+export function createOperationKey(prefix: string) {
+  const random = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}:${random}`;
+}
+
+function operationConfig(key?: string) {
+  return key ? { headers: { 'Idempotency-Key': key } } : undefined;
+}
+
 // Attach session token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('nexgen_token');
@@ -52,14 +62,15 @@ export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
 export const getShiftNeighbors = (id: number, params?: any) => api.get(`/shifts/${id}/neighbors`, { params });
 export const openShift = (data: { employee_id: number; compensation_plan_id: number }) => api.post('/shifts', data);
-export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean, confirm_large_sale?: boolean) =>
+export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean, confirm_large_sale?: boolean, expected_revision?: number) =>
   api.put(`/shifts/${shiftId}/readings`, {
     readings,
     ...(confirm_anomaly ? { confirm_anomaly: true } : {}),
     ...(confirm_large_sale ? { confirm_large_sale: true } : {}),
+    ...(expected_revision !== undefined ? { expected_revision } : {}),
   });
 export const updateCollections = (shiftId: number, data: any) => api.put(`/shifts/${shiftId}/collections`, data);
-export const addShiftExpense = (shiftId: number, data: any) => api.post(`/shifts/${shiftId}/expenses`, data);
+export const addShiftExpense = (shiftId: number, data: any, operationKey?: string) => api.post(`/shifts/${shiftId}/expenses`, data, operationConfig(operationKey));
 export const deleteShiftExpense = (shiftId: number, expenseId: number) => api.delete(`/shifts/${shiftId}/expenses/${expenseId}`);
 export const closeShift = (shiftId: number, data: {
   notes?: string;
@@ -74,17 +85,17 @@ export const cancelShift = (shiftId: number, reason: string) =>
   api.post(`/shifts/${shiftId}/cancel`, { reason });
 export const updateShiftReview = (shiftId: number, data: { review_status: 'reviewed' | 'flagged'; notes?: string }) =>
   api.put(`/shifts/${shiftId}/review`, data);
-export const addShiftCredit = (shiftId: number, data: any) => api.post(`/shifts/${shiftId}/credits`, data);
+export const addShiftCredit = (shiftId: number, data: any, operationKey?: string) => api.post(`/shifts/${shiftId}/credits`, data, operationConfig(operationKey));
 export const deleteShiftCredit = (shiftId: number, creditId: number) => api.delete(`/shifts/${shiftId}/credits/${creditId}`);
 export const updateWageDeduction = (shiftId: number, data: any) => api.put(`/shifts/${shiftId}/wage-deduction`, data);
 export const deleteWageDeduction = (shiftId: number) => api.delete(`/shifts/${shiftId}/wage-deduction`);
 export const setOpeningReadings = (shiftId: number, readings: any[]) => api.put(`/shifts/${shiftId}/opening-readings`, { readings });
 export const getStaffDebts = (employeeId: number) => api.get(`/shifts/staff-debts/${employeeId}`);
 export const repayDebt = (shiftId: number, amount: number) => api.put(`/shifts/${shiftId}/repay-debt`, { amount });
-export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }) =>
-  api.post(`/shifts/${shiftId}/credit-receipts`, data);
-export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; pump_id?: number | null; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }) =>
-  api.post(`/shifts/${shiftId}/invoice-consumption`, data);
+export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }, operationKey?: string) =>
+  api.post(`/shifts/${shiftId}/credit-receipts`, data, operationConfig(operationKey));
+export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; pump_id?: number | null; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }, operationKey?: string) =>
+  api.post(`/shifts/${shiftId}/invoice-consumption`, data, operationConfig(operationKey));
 export const updateInvoiceConsumption = (shiftId: number, entryId: number, data: { litres?: number; pump_id?: number | null; tank_id?: number | null }) =>
   api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
 export const deleteInvoiceConsumption = (shiftId: number, entryId: number) =>

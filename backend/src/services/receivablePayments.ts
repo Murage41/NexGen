@@ -409,82 +409,89 @@ async function allocateMoneyCredits(
   return allocations;
 }
 
-export async function recordMoneyAccountPayment(conn: Knex, input: MoneyPaymentInput) {
+export async function recordMoneyAccountPaymentInTransaction(
+  trx: Knex.Transaction,
+  input: MoneyPaymentInput,
+) {
   const amount = validatePositiveMoney(input.amount);
 
-  return conn.transaction(async (trx) => {
-    const account = await trx('credit_accounts')
-      .where({ id: input.accountId })
-      .whereNull('deleted_at')
-      .first();
-    if (!account) throw httpError('Credit account not found', 404, 'ACCOUNT_NOT_FOUND');
-    if (account.type !== 'customer') {
-      throw httpError('Payments can only be recorded against customer accounts', 400, 'WRONG_ACCOUNT_TYPE');
-    }
-    if ((account.billing_mode || 'money') !== 'money') {
-      throw httpError(
-        `Account "${account.name}" is invoice-mode. Use customer invoice payments instead.`,
-        400,
-        'WRONG_BILLING_MODE',
-      );
-    }
-
-    if (input.shiftId) {
-      const receivingShift = await trx('shifts').where({ id: input.shiftId }).select('status').first();
-      if (!receivingShift) throw httpError('Shift not found', 404, 'SHIFT_NOT_FOUND');
-      if (receivingShift.status !== 'open') {
-        throw httpError('Debt receipts can only be recorded in an open shift.', 400, 'SHIFT_CLOSED');
-      }
-    }
-
-    const credits = await getEligibleMoneyCredits(input.accountId, trx);
-    const eligibleCents = credits.reduce(
-      (sum, credit) => sum + toCents(Number(credit.balance || 0)),
-      0,
+  const account = await trx('credit_accounts')
+    .where({ id: input.accountId })
+    .whereNull('deleted_at')
+    .first();
+  if (!account) throw httpError('Credit account not found', 404, 'ACCOUNT_NOT_FOUND');
+  if (account.type !== 'customer') {
+    throw httpError('Payments can only be recorded against customer accounts', 400, 'WRONG_ACCOUNT_TYPE');
+  }
+  if ((account.billing_mode || 'money') !== 'money') {
+    throw httpError(
+      `Account "${account.name}" is invoice-mode. Use customer invoice payments instead.`,
+      400,
+      'WRONG_BILLING_MODE',
     );
-    const amountCents = toCents(amount);
-    if (eligibleCents <= 0) {
-      throw httpError(
-        'No closed-shift debt is available for payment.',
-        400,
-        'NOTHING_TO_PAY',
-      );
-    }
-    if (amountCents > eligibleCents) {
-      throw httpError(
-        `Payment KES ${amount.toFixed(2)} exceeds the payable balance of KES ${fromCents(eligibleCents).toFixed(2)}. Credits from open shifts become payable after those shifts close.`,
-        400,
-        'PAYMENT_EXCEEDS_BALANCE',
-      );
-    }
+  }
 
-    const [paymentId] = await trx('credit_payments').insert({
-      credit_id: null,
-      account_id: input.accountId,
-      amount,
-      payment_method: input.paymentMethod,
-      payment_type: 'account',
-      date: input.paymentDate,
-      notes: input.notes || null,
-      status: 'posted',
-      ...(input.shiftId ? { shift_id: input.shiftId } : {}),
-    });
-
-    const allocations = await allocateMoneyCredits(trx, credits, amount);
-    if (allocations.length > 0) {
-      await trx('credit_payment_allocations').insert(
-        allocations.map((allocation) => ({
-          payment_id: paymentId,
-          credit_id: allocation.credit_id,
-          amount_applied: allocation.amount_applied,
-        })),
-      );
+  if (input.shiftId) {
+    const receivingShift = await trx('shifts').where({ id: input.shiftId }).select('status').first();
+    if (!receivingShift) throw httpError('Shift not found', 404, 'SHIFT_NOT_FOUND');
+    if (receivingShift.status !== 'open') {
+      throw httpError('Debt receipts can only be recorded in an open shift.', 400, 'SHIFT_CLOSED');
     }
-    await recomputeAccountBalance(input.accountId, trx);
+  }
 
-    const payment = await trx('credit_payments').where({ id: paymentId }).first();
-    const updatedAccount = await trx('credit_accounts').where({ id: input.accountId }).first();
-    return { payment, allocations, account: updatedAccount };
+  const credits = await getEligibleMoneyCredits(input.accountId, trx);
+  const eligibleCents = credits.reduce(
+    (sum, credit) => sum + toCents(Number(credit.balance || 0)),
+    0,
+  );
+  const amountCents = toCents(amount);
+  if (eligibleCents <= 0) {
+    throw httpError(
+      'No closed-shift debt is available for payment.',
+      400,
+      'NOTHING_TO_PAY',
+    );
+  }
+  if (amountCents > eligibleCents) {
+    throw httpError(
+      `Payment KES ${amount.toFixed(2)} exceeds the payable balance of KES ${fromCents(eligibleCents).toFixed(2)}. Credits from open shifts become payable after those shifts close.`,
+      400,
+      'PAYMENT_EXCEEDS_BALANCE',
+    );
+  }
+
+  const [paymentId] = await trx('credit_payments').insert({
+    credit_id: null,
+    account_id: input.accountId,
+    amount,
+    payment_method: input.paymentMethod,
+    payment_type: 'account',
+    date: input.paymentDate,
+    notes: input.notes || null,
+    status: 'posted',
+    ...(input.shiftId ? { shift_id: input.shiftId } : {}),
+  });
+
+  const allocations = await allocateMoneyCredits(trx, credits, amount);
+  if (allocations.length > 0) {
+    await trx('credit_payment_allocations').insert(
+      allocations.map((allocation) => ({
+        payment_id: paymentId,
+        credit_id: allocation.credit_id,
+        amount_applied: allocation.amount_applied,
+      })),
+    );
+  }
+  await recomputeAccountBalance(input.accountId, trx);
+
+  const payment = await trx('credit_payments').where({ id: paymentId }).first();
+  const updatedAccount = await trx('credit_accounts').where({ id: input.accountId }).first();
+  return { payment, allocations, account: updatedAccount };
+}
+
+export async function recordMoneyAccountPayment(conn: Knex, input: MoneyPaymentInput) {
+  return conn.transaction(async (trx) => {
+    return recordMoneyAccountPaymentInTransaction(trx, input);
   });
 }
 
