@@ -4,6 +4,7 @@ import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, ad
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus } from 'lucide-react';
+import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
 
 export default function ShiftDetail() {
   const { id } = useParams();
@@ -69,6 +70,10 @@ export default function ShiftDetail() {
   }
 
   async function handleClose() {
+    if (hasPendingShiftDraft(id!)) {
+      alert('Readings or collections are still waiting to sync. Return to Record Shift and use Sync Now before closing.');
+      return;
+    }
     setClosing(true);
     try {
       let deduct_amount: number | null = null;
@@ -85,6 +90,7 @@ export default function ShiftDetail() {
         }
       }
       const res = await closeShift(parseInt(id!), { notes: closeNotes || undefined, deduct_amount, wage_paid: parseFloat(wagePaid) || 0 });
+      clearShiftDraft(id!);
       setShowCloseModal(false);
       if (res.data?.warnings?.length) {
         alert('Shift closed with warnings:\n\n' + res.data.warnings.join('\n'));

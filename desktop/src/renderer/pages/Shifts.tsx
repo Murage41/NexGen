@@ -7,6 +7,7 @@ import {
   openShift,
   previewShiftCancellation,
 } from '../services/api';
+import { clearShiftDraft } from '../utils/shiftDraft';
 import {
   ArrowDown,
   ArrowUp,
@@ -192,6 +193,7 @@ export default function Shifts() {
     setCancelling(true);
     try {
       await cancelShift(Number(cancelTarget.id), cancelReason.trim());
+      clearShiftDraft(Number(cancelTarget.id));
       setCancelTarget(null);
       await getShifts({ page, limit: 25, ...(fromDate ? { from: fromDate } : {}), ...(toDate ? { to: toDate } : {}), ...(status ? { status } : {}), sort })
         .then((response) => {

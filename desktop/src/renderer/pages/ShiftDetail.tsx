@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   getShift, updateReadings, updateCollections, addShiftExpense,
@@ -7,6 +7,18 @@ import {
   addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories,
 } from '../services/api';
 import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets } from 'lucide-react';
+import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
+
+type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
+
+function syncLabel(state: SyncState, savedAt: Date | null) {
+  if (state === 'dirty') return 'Waiting to sync';
+  if (state === 'saving') return 'Syncing...';
+  if (state === 'error') return 'Saved on this device';
+  if (state === 'review') return 'Review required';
+  if (state === 'saved' && savedAt) return `Synced ${savedAt.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}`;
+  return 'Synced';
+}
 
 const PREDEFINED_EXPENSE_CATEGORIES = [
   'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
@@ -44,7 +56,15 @@ export default function ShiftDetail() {
   const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [readingSync, setReadingSync] = useState<SyncState>('idle');
+  const [collectionSync, setCollectionSync] = useState<SyncState>('idle');
+  const [readingsDirty, setReadingsDirty] = useState(false);
+  const [collectionsDirty, setCollectionsDirty] = useState(false);
+  const [readingSavedAt, setReadingSavedAt] = useState<Date | null>(null);
+  const [collectionSavedAt, setCollectionSavedAt] = useState<Date | null>(null);
+  const [collectionError, setCollectionError] = useState('');
+  const readingRevision = useRef(0);
+  const collectionRevision = useRef(0);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
   const [partialAmount, setPartialAmount] = useState('');
@@ -79,6 +99,27 @@ export default function ShiftDetail() {
   }
 
   useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
+
+  useEffect(() => {
+    if (!readingsDirty || shift?.status !== 'open' || readingSync !== 'dirty') return;
+    const complete = readings.every((reading) =>
+      String(reading.raw_l_input ?? '').trim() !== ''
+      && String(reading.raw_a_input ?? '').trim() !== ''
+      && Number.isFinite(Number(reading.raw_l_input))
+      && Number.isFinite(Number(reading.raw_a_input))
+      && Number(reading.raw_l_input) >= 0
+      && Number(reading.raw_a_input) >= 0
+    );
+    if (!complete) return;
+    const timer = window.setTimeout(() => { void handleSaveReadings({}, false); }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [readings, readingsDirty, readingSync, shift?.status]);
+
+  useEffect(() => {
+    if (!collectionsDirty || shift?.status !== 'open' || collectionSync !== 'dirty') return;
+    const timer = window.setTimeout(() => { void handleSaveCollections(false); }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [collections, collectionsDirty, collectionSync, shift?.status]);
 
   async function loadExpenseCategories() {
     try {
@@ -118,21 +159,42 @@ export default function ShiftDetail() {
       setShift(d);
       // Pre-populate raw display inputs from current cumulative values so the
       // form shows what the pump should currently read.
+      const draft = d.status === 'open' ? readShiftDraft(id!) : null;
+      if (d.status !== 'open') clearShiftDraft(id!);
       const rs = (d.readings || []).map((r: any) => {
         const capL = Number(r.meter_capacity_litres) || 1000000;
         const capA = Number(r.meter_capacity_amount) || 1000000;
-        return {
+        const savedInput = draft?.readings?.[String(r.pump_id)];
+        const row = {
           ...r,
-          raw_l_input: displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
-          raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+          raw_l_input: savedInput?.raw_l_input ?? displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
+          raw_a_input: savedInput?.raw_a_input ?? displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+        };
+        const closingL = compensateClient(Number(r.opening_litres) || 0, Number(row.raw_l_input) || 0, capL);
+        const closingA = compensateClient(Number(r.opening_amount) || 0, Number(row.raw_a_input) || 0, capA);
+        return {
+          ...row,
+          closing_litres: closingL.cumulative,
+          closing_amount: closingA.cumulative,
+          litres_sold: Math.max(0, closingL.cumulative - (Number(r.opening_litres) || 0)),
+          amount_sold: Math.max(0, closingA.cumulative - (Number(r.opening_amount) || 0)),
+          _rolledOverL: closingL.rolledOver,
+          _rolledOverA: closingA.rolledOver,
         };
       });
       setReadings(rs);
+      setReadingsDirty(Boolean(draft?.readings));
+      setReadingSync(draft?.readings ? 'dirty' : 'idle');
+      const serverCollections = d.collections
+        ? { cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount }
+        : { cash_amount: 0, mpesa_amount: 0 };
+      setCollections(draft?.collections || serverCollections);
       if (d.collections) {
-        setCollections({ cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount });
         setMpesaFee(Number(d.collections.mpesa_fee) || 0);
         setMpesaNet(Number(d.collections.mpesa_net) || 0);
       }
+      setCollectionsDirty(Boolean(draft?.collections));
+      setCollectionSync(draft?.collections ? 'dirty' : 'idle');
       setShiftCredits(d.shift_credits || []);
       setInvoiceConsumption(d.invoice_consumption || []);
       setExpenses(d.expenses);
@@ -155,8 +217,9 @@ export default function ShiftDetail() {
     confirmAnomaly?: boolean;
     confirmLargeSale?: boolean;
     rolloverByPump?: Record<number, { litres?: boolean; amount?: boolean }>;
-  } = {}) {
-    setSaving(true);
+  } = {}, interactive = true) {
+    const revision = readingRevision.current;
+    setReadingSync('saving');
     setReadingError('');
     try {
       const payload = readings.map(r => {
@@ -180,10 +243,24 @@ export default function ShiftDetail() {
           raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
         };
       });
-      setReadings(rs);
+      if (revision === readingRevision.current) {
+        setReadings(rs);
+        clearShiftDraftSection(id!, 'readings');
+        setReadingsDirty(false);
+        setReadingSync('saved');
+        setReadingSavedAt(new Date());
+      } else {
+        setReadingSync('dirty');
+      }
     } catch (err: any) {
       const data = err?.response?.data;
+      if (!interactive && err?.response?.status === 409) {
+        setReadingSync('review');
+        setReadingError(`${data?.error || 'These readings need confirmation.'} Select Sync Now to review.`);
+        return;
+      }
       if (err?.response?.status === 409 && data?.code === 'ROLLOVER_REQUIRED') {
+        setReadingSync('review');
         const lines = (data.rollovers || []).map((rv: any) =>
           `• ${rv.pump_label} (${rv.field}): display ${rv.raw.toFixed(2)} → cumulative ${rv.cumulative.toFixed(2)}`
         ).join('\n');
@@ -199,6 +276,7 @@ export default function ShiftDetail() {
         return;
       }
       if (err?.response?.status === 409 && data?.code === 'PRICE_ANOMALY') {
+        setReadingSync('review');
         const lines = (data.anomalies || []).map((a: any) =>
           `• ${a.pump_label}: KES ${a.observed.toFixed(2)}/L (expected ~KES ${a.expected.toFixed(2)}/L, ${a.deviation_pct > 0 ? '+' : ''}${a.deviation_pct}%)`
         ).join('\n');
@@ -208,6 +286,7 @@ export default function ShiftDetail() {
         return;
       }
       if (err?.response?.status === 409 && data?.code === 'LARGE_SALE_CONFIRMATION_REQUIRED') {
+        setReadingSync('review');
         const lines = (data.large_sales || []).map((s: any) =>
           `• ${s.pump_label}: ${Number(s.litres_sold).toFixed(2)} L / KES ${Number(s.amount_sold).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
         ).join('\n');
@@ -218,21 +297,37 @@ export default function ShiftDetail() {
       }
       console.error('[ShiftDetail:saveReadings]', data || err.message);
       setReadingError(data?.error || err.message || 'Failed to save readings');
-    } finally { setSaving(false); }
+      setReadingSync('error');
+    }
   }
 
-  async function handleSaveCollections() {
-    setSaving(true);
+  async function handleSaveCollections(interactive = true) {
+    const revision = collectionRevision.current;
+    setCollectionSync('saving');
+    setCollectionError('');
     try {
       const creditsTotal = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
-      await updateCollections(parseInt(id!), {
+      const response = await updateCollections(parseInt(id!), {
         cash_amount: parseFloat(String(collections.cash_amount)) || 0,
         mpesa_amount: parseFloat(String(collections.mpesa_amount)) || 0,
         credits_amount: creditsTotal,
       });
-      await loadShift();
-    } catch (err) { console.error(err); }
-    finally { setSaving(false); }
+      setMpesaFee(Number(response.data.data?.mpesa_fee) || 0);
+      setMpesaNet(Number(response.data.data?.mpesa_net) || 0);
+      if (revision === collectionRevision.current) {
+        clearShiftDraftSection(id!, 'collections');
+        setCollectionsDirty(false);
+        setCollectionSync('saved');
+        setCollectionSavedAt(new Date());
+      } else {
+        setCollectionSync('dirty');
+      }
+    } catch (err: any) {
+      console.error('[ShiftDetail:saveCollections]', err);
+      setCollectionError(err?.response?.data?.error || err?.message || 'Failed to sync collections');
+      setCollectionSync('error');
+      if (interactive) alert(err?.response?.data?.error || err?.message || 'Failed to sync collections');
+    }
   }
 
   async function handleAddExpense() {
@@ -322,6 +417,10 @@ export default function ShiftDetail() {
   }
 
   async function handleCloseShift() {
+    if (readingsDirty || collectionsDirty || readingSync === 'saving' || collectionSync === 'saving' || readingSync === 'error' || collectionSync === 'error' || readingSync === 'review') {
+      alert('Pump readings and collections must finish syncing before this shift can close. Use Sync Now on any section needing attention.');
+      return;
+    }
     let deductAmount: number | null = null;
     if (variance < 0 && shift.compensation_plan?.pay_schedule === 'daily') {
       if (deductOption === 'full') {
@@ -333,6 +432,7 @@ export default function ShiftDetail() {
     }
     try {
       const res = await closeShift(parseInt(id!), { notes, deduct_amount: deductAmount, wage_paid: parseFloat(wagePaid) || 0 });
+      clearShiftDraft(id!);
       setShowCloseModal(false);
       if (res.data?.warnings?.length) {
         alert('Shift closed with warnings:\n\n' + res.data.warnings.join('\n'));
@@ -398,6 +498,24 @@ export default function ShiftDetail() {
     row._rolledOverL = cL.rolledOver;
     row._rolledOverA = cA.rolledOver;
     setReadings(updated);
+    readingRevision.current += 1;
+    writeShiftDraft(id!, {
+      readings: Object.fromEntries(updated.map((reading) => [String(reading.pump_id), {
+        raw_l_input: String(reading.raw_l_input ?? ''),
+        raw_a_input: String(reading.raw_a_input ?? ''),
+      }])),
+    });
+    setReadingsDirty(true);
+    setReadingSync('dirty');
+  }
+
+  function updateCollection(field: 'cash_amount' | 'mpesa_amount', value: string) {
+    const next = { ...collections, [field]: parseFloat(value) || 0 };
+    setCollections(next);
+    collectionRevision.current += 1;
+    writeShiftDraft(id!, { collections: next });
+    setCollectionsDirty(true);
+    setCollectionSync('dirty');
   }
 
   if (loading) return <div className="text-gray-500">Loading...</div>;
@@ -405,6 +523,10 @@ export default function ShiftDetail() {
 
   const isOpen = shift.status === 'open';
   const isCancelled = shift.status === 'cancelled';
+  const hasUnsyncedDraft = readingsDirty
+    || collectionsDirty
+    || ['saving', 'error', 'review'].includes(readingSync)
+    || ['saving', 'error'].includes(collectionSync);
   const invoicePumpSources = readings.filter((reading: any) => reading.fuel_type === newInvoice.fuel_type);
   const numVal = (v: any) => { const n = parseFloat(v); return n === 0 ? '' : v; };
   const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
@@ -642,9 +764,14 @@ export default function ShiftDetail() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Pump Readings</h2>
           {isOpen && (
-            <button onClick={() => handleSaveReadings({})} disabled={saving} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
-              <Save size={14} /> Save Readings
-            </button>
+            <div className="flex items-center gap-3">
+              <span className={`text-xs ${readingSync === 'error' || readingSync === 'review' ? 'text-amber-700' : 'text-gray-500'}`}>
+                {syncLabel(readingSync, readingSavedAt)}
+              </span>
+              <button onClick={() => handleSaveReadings({})} disabled={readingSync === 'saving'} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+                <Save size={14} /> Sync Now
+              </button>
+            </div>
           )}
         </div>
         {readingError && (
@@ -765,23 +892,33 @@ export default function ShiftDetail() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Sales Collections</h2>
           {isOpen && (
-            <button onClick={handleSaveCollections} disabled={saving} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
-              <Save size={14} /> Save
-            </button>
+            <div className="flex items-center gap-3">
+              <span className={`text-xs ${collectionSync === 'error' ? 'text-amber-700' : 'text-gray-500'}`}>
+                {syncLabel(collectionSync, collectionSavedAt)}
+              </span>
+              <button onClick={() => handleSaveCollections()} disabled={collectionSync === 'saving'} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+                <Save size={14} /> Sync Now
+              </button>
+            </div>
           )}
         </div>
+        {collectionError && (
+          <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded">
+            {collectionError}
+          </div>
+        )}
         <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-sm text-gray-600 mb-1">Cash Received (KES)</label>
             <input type="number" step="0.01" value={numVal(collections.cash_amount)} disabled={!isOpen}
-              onChange={e => setCollections({ ...collections, cash_amount: parseFloat(e.target.value) || 0 })}
+              onChange={e => updateCollection('cash_amount', e.target.value)}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
           <div>
             <label className="block text-sm text-gray-600 mb-1">M-Pesa Received (KES)</label>
             <input type="number" step="0.01" value={numVal(collections.mpesa_amount)} disabled={!isOpen}
-              onChange={e => setCollections({ ...collections, mpesa_amount: parseFloat(e.target.value) || 0 })}
+              onChange={e => updateCollection('mpesa_amount', e.target.value)}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
@@ -1281,7 +1418,7 @@ export default function ShiftDetail() {
               <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                 Cancel
               </button>
-              <button onClick={handleCloseShift} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+              <button onClick={handleCloseShift} disabled={hasUnsyncedDraft} title={hasUnsyncedDraft ? 'Sync readings and collections before closing' : undefined} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 Close Shift
               </button>
             </div>

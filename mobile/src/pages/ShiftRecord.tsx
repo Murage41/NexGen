@@ -4,6 +4,18 @@ import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShi
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
 import { Save, Plus, Trash2, Search, UserPlus, Banknote } from 'lucide-react';
+import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
+
+type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
+
+function syncLabel(state: SyncState, savedAt: Date | null) {
+  if (state === 'dirty') return 'Waiting to sync';
+  if (state === 'saving') return 'Syncing...';
+  if (state === 'error') return 'Saved on this device';
+  if (state === 'review') return 'Review required';
+  if (state === 'saved' && savedAt) return `Synced ${savedAt.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}`;
+  return 'Synced';
+}
 
 const PREDEFINED_EXPENSE_CATEGORIES = [
   'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
@@ -33,7 +45,16 @@ export default function ShiftRecord() {
   });
   const [selectedBillingMode, setSelectedBillingMode] = useState<'money' | 'invoice' | null>(null);
   const [tab, setTab] = useState<'readings' | 'collections' | 'credits' | 'expenses'>('readings');
-  const [saving, setSaving] = useState(false);
+  const [readingSync, setReadingSync] = useState<SyncState>('idle');
+  const [collectionSync, setCollectionSync] = useState<SyncState>('idle');
+  const [readingsDirty, setReadingsDirty] = useState(false);
+  const [collectionsDirty, setCollectionsDirty] = useState(false);
+  const [readingSavedAt, setReadingSavedAt] = useState<Date | null>(null);
+  const [collectionSavedAt, setCollectionSavedAt] = useState<Date | null>(null);
+  const [readingError, setReadingError] = useState('');
+  const [collectionError, setCollectionError] = useState('');
+  const readingRevision = useRef(0);
+  const collectionRevision = useRef(0);
   const [loading, setLoading] = useState(true);
   // Credit account search
   const [creditAccounts, setCreditAccounts] = useState<any[]>([]);
@@ -45,6 +66,27 @@ export default function ShiftRecord() {
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
   useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
+
+  useEffect(() => {
+    if (!readingsDirty || shiftStatus !== 'open' || readingSync !== 'dirty') return;
+    const complete = readings.every((reading) =>
+      String(reading.raw_l_input ?? '').trim() !== ''
+      && String(reading.raw_a_input ?? '').trim() !== ''
+      && Number.isFinite(Number(reading.raw_l_input))
+      && Number.isFinite(Number(reading.raw_a_input))
+      && Number(reading.raw_l_input) >= 0
+      && Number(reading.raw_a_input) >= 0
+    );
+    if (!complete) return;
+    const timer = window.setTimeout(() => { void saveReadings({}, false); }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [readings, readingsDirty, readingSync, shiftStatus]);
+
+  useEffect(() => {
+    if (!collectionsDirty || shiftStatus !== 'open' || collectionSync !== 'dirty') return;
+    const timer = window.setTimeout(() => { void saveCollections(false); }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [collections, collectionsDirty, collectionSync, shiftStatus]);
 
   async function loadExpenseCategories() {
     try {
@@ -95,17 +137,38 @@ export default function ShiftRecord() {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
       setShiftStatus(d.status || 'open');
+      const draft = d.status === 'open' ? readShiftDraft(id!) : null;
+      if (d.status !== 'open') clearShiftDraft(id!);
       const rs = (d.readings || []).map((r: any) => {
         const capL = Number(r.meter_capacity_litres) || 1000000;
         const capA = Number(r.meter_capacity_amount) || 1000000;
-        return {
+        const savedInput = draft?.readings?.[String(r.pump_id)];
+        const row = {
           ...r,
-          raw_l_input: displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
-          raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+          raw_l_input: savedInput?.raw_l_input ?? displayMod(Number(r.closing_litres) || 0, capL).toFixed(2),
+          raw_a_input: savedInput?.raw_a_input ?? displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
+        };
+        const closingL = compensateClient(Number(r.opening_litres) || 0, Number(row.raw_l_input) || 0, capL);
+        const closingA = compensateClient(Number(r.opening_amount) || 0, Number(row.raw_a_input) || 0, capA);
+        return {
+          ...row,
+          closing_litres: closingL.cumulative,
+          closing_amount: closingA.cumulative,
+          litres_sold: Math.max(0, closingL.cumulative - (Number(r.opening_litres) || 0)),
+          amount_sold: Math.max(0, closingA.cumulative - (Number(r.opening_amount) || 0)),
+          _rolledOverL: closingL.rolledOver,
+          _rolledOverA: closingA.rolledOver,
         };
       });
       setReadings(rs);
-      if (d.collections) setCollections({ cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount });
+      setReadingsDirty(Boolean(draft?.readings));
+      setReadingSync(draft?.readings ? 'dirty' : 'idle');
+      const serverCollections = d.collections
+        ? { cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount }
+        : { cash_amount: 0, mpesa_amount: 0 };
+      setCollections(draft?.collections || serverCollections);
+      setCollectionsDirty(Boolean(draft?.collections));
+      setCollectionSync(draft?.collections ? 'dirty' : 'idle');
       setShiftCredits(d.shift_credits || []);
       setCreditReceipts(d.credit_receipts || []);
       setInvoiceConsumption(d.invoice_consumption || []);
@@ -118,8 +181,10 @@ export default function ShiftRecord() {
     confirmAnomaly?: boolean;
     confirmLargeSale?: boolean;
     rolloverByPump?: Record<number, { litres?: boolean; amount?: boolean }>;
-  } = {}) {
-    setSaving(true);
+  } = {}, interactive = true) {
+    const revision = readingRevision.current;
+    setReadingSync('saving');
+    setReadingError('');
     try {
       const payload = readings.map(r => {
         const ro = opts.rolloverByPump?.[r.pump_id] || {};
@@ -141,15 +206,27 @@ export default function ShiftRecord() {
           raw_a_input: displayMod(Number(r.closing_amount) || 0, capA).toFixed(2),
         };
       });
-      setReadings(rs);
-      alert('Readings saved');
+      if (revision === readingRevision.current) {
+        setReadings(rs);
+        clearShiftDraftSection(id!, 'readings');
+        setReadingsDirty(false);
+        setReadingSync('saved');
+        setReadingSavedAt(new Date());
+      } else {
+        setReadingSync('dirty');
+      }
     } catch (err: any) {
       const data = err?.response?.data;
+      if (!interactive && err?.response?.status === 409) {
+        setReadingSync('review');
+        setReadingError(`${data?.error || 'These readings need confirmation.'} Select Sync Now to review.`);
+        return;
+      }
       if (err?.response?.status === 409 && data?.code === 'ROLLOVER_REQUIRED') {
+        setReadingSync('review');
         const lines = (data.rollovers || []).map((rv: any) =>
           `• ${rv.pump_label} (${rv.field}): display ${rv.raw.toFixed(2)} → cumulative ${rv.cumulative.toFixed(2)}`
         ).join('\n');
-        setSaving(false);
         if (window.confirm(`Pump display rollover detected:\n\n${lines}\n\nThis means the meter passed its capacity (e.g. 999,999.99 → 0). Confirm to proceed?`)) {
           const rolloverByPump: Record<number, { litres?: boolean; amount?: boolean }> = {};
           for (const rv of data.rollovers || []) {
@@ -162,34 +239,37 @@ export default function ShiftRecord() {
         return;
       }
       if (err?.response?.status === 409 && data?.code === 'PRICE_ANOMALY') {
+        setReadingSync('review');
         const lines = (data.anomalies || []).map((a: any) =>
           `• ${a.pump_label}: KES ${a.observed.toFixed(2)}/L (expected ~KES ${a.expected.toFixed(2)}/L, ${a.deviation_pct > 0 ? '+' : ''}${a.deviation_pct}%)`
         ).join('\n');
-        setSaving(false);
         if (window.confirm(`Price-per-litre looks off:\n\n${lines}\n\nDouble-check the readings. Save anyway?`)) {
           return saveReadings({ ...opts, confirmAnomaly: true });
         }
         return;
       }
       if (err?.response?.status === 409 && data?.code === 'LARGE_SALE_CONFIRMATION_REQUIRED') {
+        setReadingSync('review');
         const lines = (data.large_sales || []).map((s: any) =>
           `• ${s.pump_label}: ${Number(s.litres_sold).toFixed(2)} L / KES ${Number(s.amount_sold).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`
         ).join('\n');
-        setSaving(false);
         if (window.confirm(`Unusually large pump sale detected:\n\n${lines}\n\nRe-check the readings. Confirm only after manager approval.`)) {
           return saveReadings({ ...opts, confirmLargeSale: true });
         }
         return;
       }
       const msg = data?.error || err?.message || 'Failed to save readings';
-      alert(msg);
+      setReadingError(msg);
+      setReadingSync('error');
+      if (interactive) alert(msg);
       console.error('[ShiftRecord:saveReadings]', err);
     }
-    finally { setSaving(false); }
   }
 
-  async function saveCollections() {
-    setSaving(true);
+  async function saveCollections(interactive = true) {
+    const revision = collectionRevision.current;
+    setCollectionSync('saving');
+    setCollectionError('');
     try {
       const creditsTotal = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
       await updateCollections(parseInt(id!), {
@@ -197,13 +277,21 @@ export default function ShiftRecord() {
         mpesa_amount: parseFloat(String(collections.mpesa_amount)) || 0,
         credits_amount: creditsTotal,
       });
-      alert('Sales collections saved');
+      if (revision === collectionRevision.current) {
+        clearShiftDraftSection(id!, 'collections');
+        setCollectionsDirty(false);
+        setCollectionSync('saved');
+        setCollectionSavedAt(new Date());
+      } else {
+        setCollectionSync('dirty');
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.message || 'Failed to save collections';
-      alert(msg);
+      setCollectionError(msg);
+      setCollectionSync('error');
+      if (interactive) alert(msg);
       console.error(err);
     }
-    finally { setSaving(false); }
   }
 
   async function handleAddExpense() {
@@ -365,6 +453,24 @@ export default function ShiftRecord() {
     row._rolledOverL = cL.rolledOver;
     row._rolledOverA = cA.rolledOver;
     setReadings(updated);
+    readingRevision.current += 1;
+    writeShiftDraft(id!, {
+      readings: Object.fromEntries(updated.map((reading) => [String(reading.pump_id), {
+        raw_l_input: String(reading.raw_l_input ?? ''),
+        raw_a_input: String(reading.raw_a_input ?? ''),
+      }])),
+    });
+    setReadingsDirty(true);
+    setReadingSync('dirty');
+  }
+
+  function updateCollection(field: 'cash_amount' | 'mpesa_amount', value: string) {
+    const next = { ...collections, [field]: parseFloat(value) || 0 };
+    setCollections(next);
+    collectionRevision.current += 1;
+    writeShiftDraft(id!, { collections: next });
+    setCollectionsDirty(true);
+    setCollectionSync('dirty');
   }
 
   // Helper: show empty string for 0 values so the input clears on focus
@@ -515,9 +621,15 @@ export default function ShiftRecord() {
             </div>
           ))}
           <p className="text-xs text-gray-400 px-1">Closing accepts the digits showing on the pump display. Rollovers are detected automatically.</p>
-          <button onClick={() => saveReadings({})} disabled={saving}
+          {readingError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{readingError}</div>
+          )}
+          <p className={`text-center text-xs ${readingSync === 'error' || readingSync === 'review' ? 'text-amber-700' : 'text-gray-500'}`}>
+            {syncLabel(readingSync, readingSavedAt)}
+          </p>
+          <button onClick={() => saveReadings({})} disabled={readingSync === 'saving'}
             className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50">
-            <Save size={18} /> Save Readings
+            <Save size={18} /> Sync Now
           </button>
         </div>
       )}
@@ -529,14 +641,14 @@ export default function ShiftRecord() {
             <div>
               <label className="text-sm text-gray-600 mb-1 block">Cash Received (KES)</label>
               <input type="number" step="0.01" value={numVal(collections.cash_amount)}
-                onChange={e => setCollections({ ...collections, cash_amount: parseFloat(e.target.value) || 0 })}
+                onChange={e => updateCollection('cash_amount', e.target.value)}
                 onFocus={selectOnFocus} placeholder="0.00"
                 className="w-full border border-gray-300 rounded-lg p-3 text-base" />
             </div>
             <div>
               <label className="text-sm text-gray-600 mb-1 block">M-Pesa Received (KES)</label>
               <input type="number" step="0.01" value={numVal(collections.mpesa_amount)}
-                onChange={e => setCollections({ ...collections, mpesa_amount: parseFloat(e.target.value) || 0 })}
+                onChange={e => updateCollection('mpesa_amount', e.target.value)}
                 onFocus={selectOnFocus} placeholder="0.00"
                 className="w-full border border-gray-300 rounded-lg p-3 text-base" />
             </div>
@@ -569,9 +681,15 @@ export default function ShiftRecord() {
               )}
             </div>
           </div>
-          <button onClick={saveCollections} disabled={saving}
+          {collectionError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{collectionError}</div>
+          )}
+          <p className={`text-center text-xs ${collectionSync === 'error' ? 'text-amber-700' : 'text-gray-500'}`}>
+            {syncLabel(collectionSync, collectionSavedAt)}
+          </p>
+          <button onClick={() => saveCollections()} disabled={collectionSync === 'saving'}
             className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-2 disabled:opacity-50">
-            <Save size={18} /> Save Collections
+            <Save size={18} /> Sync Now
           </button>
         </div>
       )}

@@ -7,6 +7,7 @@ import {
   openShift,
   previewShiftCancellation,
 } from '../services/api';
+import { clearShiftDraft } from '../utils/shiftDraft';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -184,6 +185,7 @@ export default function Shifts() {
     setCancelling(true);
     try {
       await cancelShift(Number(cancelTarget.id), cancelReason.trim());
+      clearShiftDraft(Number(cancelTarget.id));
       setCancelTarget(null);
       setPage(1);
       const response = await getShifts({ limit: 15, ...(status ? { status } : {}), sort });
