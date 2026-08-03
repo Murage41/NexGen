@@ -69,6 +69,8 @@ export default function Shifts() {
 
   const invalidDateRange = Boolean(fromDate && toDate && fromDate > toDate);
   const hasFilters = Boolean(fromDate || toDate || status || sort !== 'newest');
+  const selectedEmployeeRecord = employees.find((employee: any) => String(employee.id) === selectedEmployee);
+  const selectedPlan = selectedEmployeeRecord?.compensation_plan;
 
   useEffect(() => {
     getActiveEmployees()
@@ -164,9 +166,12 @@ export default function Shifts() {
   }
 
   async function handleOpenShift() {
-    if (!selectedEmployee) return;
+    if (!selectedEmployee || !selectedPlan) return;
     try {
-      const response = await openShift({ employee_id: parseInt(selectedEmployee, 10) });
+      const response = await openShift({
+        employee_id: parseInt(selectedEmployee, 10),
+        compensation_plan_id: Number(selectedPlan.id),
+      });
       setShowNew(false);
       setSelectedEmployee('');
       navigate(`/shifts/${response.data.data.id}`);
@@ -244,13 +249,35 @@ export default function Shifts() {
             <select
               value={selectedEmployee}
               onChange={(event) => setSelectedEmployee(event.target.value)}
-              className="w-full border border-gray-300 rounded-md p-2 mb-4"
+              className="w-full border border-gray-300 rounded-md p-2 mb-3"
             >
               <option value="">-- Select --</option>
               {employees.map((employee: any) => (
                 <option key={employee.id} value={employee.id}>{employee.name}</option>
               ))}
             </select>
+            {selectedEmployee && selectedPlan && (
+              <div className="mb-4 border border-blue-200 bg-blue-50 p-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-gray-800">{selectedPlan.name}</p>
+                    <p className="text-xs text-gray-600 mt-0.5">{selectedEmployeeRecord.compensation_summary}</p>
+                  </div>
+                  <span className="capitalize text-xs font-medium text-blue-700">{selectedPlan.pay_schedule}</span>
+                </div>
+                <p className="mt-2 text-xs text-gray-600">
+                  {selectedPlan.pay_schedule === 'daily'
+                    ? 'Shift earnings are finalized at close and may be paid directly from this shift.'
+                    : `Shift earnings accrue to ${selectedPlan.pay_schedule} payroll; no wage is taken from this shift drawer.`}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">Effective from {selectedPlan.effective_from} · Plan v{selectedPlan.version}</p>
+              </div>
+            )}
+            {selectedEmployee && !selectedPlan && (
+              <p className="mb-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                This employee has no compensation plan for today.
+              </p>
+            )}
             {employees.length === 0 && (
               <p className="text-sm text-red-500 mb-4">No employees found. Add employees first.</p>
             )}
@@ -263,7 +290,7 @@ export default function Shifts() {
               </button>
               <button
                 onClick={handleOpenShift}
-                disabled={!selectedEmployee}
+                disabled={!selectedEmployee || !selectedPlan}
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
               >
                 Open Shift

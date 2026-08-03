@@ -144,6 +144,12 @@ export const createDeliverySchema = z.object({
 
 export const updateDeliverySchema = createDeliverySchema;
 
+// --- Shifts ---
+export const openShiftSchema = z.object({
+  employee_id: z.number({ error: 'employee_id is required' }).int().positive(),
+  compensation_plan_id: z.number({ error: 'compensation_plan_id is required' }).int().positive(),
+});
+
 // --- Pump Readings ---
 // Accept either cumulative `closing_*` (legacy / direct) or display `raw_closing_*`
 // (preferred — what the user reads off the pump). The route compensates raw values

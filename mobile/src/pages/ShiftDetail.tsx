@@ -6,6 +6,13 @@ import { useAuth } from '../context/AuthContext';
 import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus } from 'lucide-react';
 import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
 
+function compensationComponentLabel(component: any, schedule: string) {
+  if (component.component_type === 'fixed_per_shift') return `KES ${Number(component.amount || 0).toLocaleString('en-KE')} per shift`;
+  if (component.component_type === 'fixed_periodic') return `KES ${Number(component.amount || 0).toLocaleString('en-KE')} per ${schedule}`;
+  if (component.component_type === 'sales_percentage') return `${Number(component.rate || 0)}% of ${component.fuel_type || 'all fuel'} sales`;
+  return `KES ${Number(component.rate || 0).toLocaleString('en-KE')} per ${component.fuel_type || 'all fuel'} litre`;
+}
+
 export default function ShiftDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -156,6 +163,10 @@ export default function ShiftDetail() {
   const totalPayrollPayments = Number(shift.total_payroll_payments || 0);
   const employeeWage = Number(shift.employee_wage || 0);
   const enteredWagePaid = Math.max(0, Number(wagePaid) || 0);
+  const compensationPlan = shift.compensation_plan;
+  const grossShiftEarnings = Number(isOpen ? shift.gross_earning_preview : shift.total_gross_earnings) || 0;
+  const earningBreakdown = (isOpen ? shift.earning_preview : shift.earnings) || [];
+  const directDrawerPayment = isOpen ? enteredWagePaid : Number(shift.wage_paid ?? shift.employee_wage ?? 0);
 
   const totalDebt = debts.reduce((s: number, d: any) => s + (d.balance || 0), 0);
   const totalCreditReceipts = Number(
@@ -227,8 +238,12 @@ export default function ShiftDetail() {
           </div>
           <div className="text-right">
             <p className="font-bold text-orange-700">{fmt(totalDebt)}</p>
-            <button onClick={() => { setRepayAmount(String(Math.min(totalDebt, employeeWage))); setShowDebtModal(true); }}
-              className="text-xs text-orange-600 underline mt-0.5">Repay from Wage</button>
+            {compensationPlan?.pay_schedule === 'daily' ? (
+              <button onClick={() => { setRepayAmount(String(Math.min(totalDebt, employeeWage))); setShowDebtModal(true); }}
+                className="text-xs text-orange-600 underline mt-0.5">Repay from Wage</button>
+            ) : (
+              <p className="text-xs text-orange-700 mt-0.5">Recover through payroll</p>
+            )}
           </div>
         </div>
       )}
@@ -345,12 +360,39 @@ export default function ShiftDetail() {
 
       {/* Wage & Deduction */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-        <p className="font-semibold text-gray-700 mb-2">Wage</p>
-        <div className="text-sm space-y-1">
-          <div className="flex justify-between">
-            <span className="text-gray-500">Daily Wage</span>
-            <span className="font-medium">{fmt(employeeWage)}</span>
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div>
+            <p className="font-semibold text-gray-700">Compensation</p>
+            <p className="text-xs text-gray-400">{compensationPlan?.name || 'Plan unavailable'} · v{compensationPlan?.version || '?'}</p>
           </div>
+          <span className="capitalize text-xs font-medium text-blue-700">{compensationPlan?.pay_schedule || 'unknown'}</span>
+        </div>
+        <div className="text-sm space-y-1.5">
+          {(compensationPlan?.components || []).map((component: any) => (
+            <div key={component.id || component.component_type} className="flex justify-between text-xs text-gray-500 gap-3">
+              <span className="capitalize">{String(component.component_type).replace(/_/g, ' ')}</span>
+              <span className="text-right">{compensationComponentLabel(component, compensationPlan.pay_schedule)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between">
+            <span className="text-gray-600">Earned by this shift</span>
+            <span className="font-semibold">{fmt(grossShiftEarnings)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">{isOpen ? 'Planned drawer payment' : 'Paid from shift drawer'}</span>
+            <span className="font-medium">{fmt(directDrawerPayment)}</span>
+          </div>
+          {compensationPlan?.pay_schedule !== 'daily' && (
+            <p className="border-t pt-2 text-xs text-gray-500">
+              Shift earnings accrue to {compensationPlan?.pay_schedule} payroll. Periodic salary is added by the payroll run.
+            </p>
+          )}
+          {earningBreakdown.map((earning: any) => (
+            <div key={earning.id || `${earning.component_id}-${earning.description}`} className="flex justify-between text-xs text-gray-500 gap-3">
+              <span>{earning.description}</span>
+              <span>{fmt(Number(earning.gross_amount || 0))}</span>
+            </div>
+          ))}
           {shift.wage_deduction && (
             <>
               <div className="flex justify-between text-red-600">
@@ -560,6 +602,20 @@ export default function ShiftDetail() {
               <button onClick={() => setShowCloseModal(false)} className="p-1 text-gray-400">
                 <X size={20} />
               </button>
+            </div>
+
+            <div className="mb-4 border border-blue-200 bg-blue-50 p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-gray-800">{compensationPlan?.name || 'Compensation plan unavailable'}</p>
+                  <p className="text-xs text-gray-500">Effective {compensationPlan?.effective_from} · Plan v{compensationPlan?.version}</p>
+                </div>
+                <span className="capitalize text-xs font-medium text-blue-700">{compensationPlan?.pay_schedule}</span>
+              </div>
+              <div className="mt-2 flex justify-between border-t border-blue-100 pt-2">
+                <span className="text-gray-600">Earned by this shift</span>
+                <span className="font-semibold">{fmt(grossShiftEarnings)}</span>
+              </div>
             </div>
 
             {/* Wages paid input */}

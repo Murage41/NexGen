@@ -20,6 +20,13 @@ function syncLabel(state: SyncState, savedAt: Date | null) {
   return 'Synced';
 }
 
+function compensationComponentLabel(component: any, schedule: string) {
+  if (component.component_type === 'fixed_per_shift') return `KES ${Number(component.amount || 0).toLocaleString('en-KE')} per shift`;
+  if (component.component_type === 'fixed_periodic') return `KES ${Number(component.amount || 0).toLocaleString('en-KE')} per ${schedule}`;
+  if (component.component_type === 'sales_percentage') return `${Number(component.rate || 0)}% of ${component.fuel_type || 'all fuel'} sales`;
+  return `KES ${Number(component.rate || 0).toLocaleString('en-KE')} per ${component.fuel_type || 'all fuel'} litre`;
+}
+
 const PREDEFINED_EXPENSE_CATEGORIES = [
   'Rent', 'Utilities', 'Maintenance', 'Transport', 'Licenses',
   'Security', 'Bank Charges', 'Stationery', 'Communication', 'Generator Fuel',
@@ -539,6 +546,10 @@ export default function ShiftDetail() {
   const totalPayrollPayments = Number(shift.total_payroll_payments || 0);
   const employeeWage = Number(shift.employee_wage || 0);
   const enteredWagePaid = Math.max(0, Number(wagePaid) || 0);
+  const compensationPlan = shift.compensation_plan;
+  const grossShiftEarnings = Number(isOpen ? shift.gross_earning_preview : shift.total_gross_earnings) || 0;
+  const earningBreakdown = (isOpen ? shift.earning_preview : shift.earnings) || [];
+  const directDrawerPayment = isOpen ? enteredWagePaid : Number(shift.wage_paid ?? shift.employee_wage ?? 0);
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
   const creditReceiptsCash = creditReceipts
     .filter((r: any) => (r.payment_method || 'cash') !== 'mpesa')
@@ -605,10 +616,14 @@ export default function ShiftDetail() {
               <p className="text-xs text-orange-600">{shift.employee_name} owes {formatKES(totalOutstandingDebt)} from previous shifts</p>
             </div>
           </div>
-          <button onClick={() => { setDebtRepayAmount(String(Math.min(totalOutstandingDebt, employeeWage))); setShowDebtRepayModal(true); }}
-            className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600">
-            Repay from Wage
-          </button>
+          {compensationPlan?.pay_schedule === 'daily' ? (
+            <button onClick={() => { setDebtRepayAmount(String(Math.min(totalOutstandingDebt, employeeWage))); setShowDebtRepayModal(true); }}
+              className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600">
+              Repay from Wage
+            </button>
+          ) : (
+            <span className="text-xs font-medium text-orange-700">Recover through payroll</span>
+          )}
         </div>
       )}
 
@@ -738,12 +753,39 @@ export default function ShiftDetail() {
 
       {/* Wage & Deduction */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
-        <h2 className="text-lg font-semibold text-gray-700">Wage</h2>
-        <div className="mt-2 text-sm space-y-1">
-          <div className="flex justify-between">
-            <span className="text-gray-500">Daily Wage</span>
-            <span className="font-medium">{formatKES(employeeWage)}</span>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-700">Compensation</h2>
+            <p className="text-xs text-gray-500">{compensationPlan?.name || 'Plan unavailable'} · v{compensationPlan?.version || '?'}</p>
           </div>
+          <span className="capitalize text-xs font-medium text-blue-700">{compensationPlan?.pay_schedule || 'unknown'} payroll</span>
+        </div>
+        <div className="mt-3 text-sm space-y-1.5">
+          {(compensationPlan?.components || []).map((component: any) => (
+            <div key={component.id || component.component_type} className="flex justify-between text-xs text-gray-500">
+              <span className="capitalize">{String(component.component_type).replace(/_/g, ' ')}</span>
+              <span>{compensationComponentLabel(component, compensationPlan.pay_schedule)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between">
+            <span className="text-gray-600">Earned by this shift</span>
+            <span className="font-semibold">{formatKES(grossShiftEarnings)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">{isOpen ? 'Planned drawer payment' : 'Paid from shift drawer'}</span>
+            <span className="font-medium">{formatKES(directDrawerPayment)}</span>
+          </div>
+          {compensationPlan?.pay_schedule !== 'daily' && (
+            <p className="border-t pt-2 text-xs text-gray-500">
+              Shift earnings accrue to {compensationPlan?.pay_schedule} payroll. Periodic salary components are added by the payroll run.
+            </p>
+          )}
+          {earningBreakdown.map((earning: any) => (
+            <div key={earning.id || `${earning.component_id}-${earning.description}`} className="flex justify-between text-xs text-gray-500">
+              <span>{earning.description}</span>
+              <span>{formatKES(Number(earning.gross_amount || 0))}</span>
+            </div>
+          ))}
           {wageDeduction && (
             <>
               <div className="flex justify-between text-red-600">
@@ -1334,6 +1376,20 @@ export default function ShiftDetail() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <h2 className="text-lg font-semibold mb-4">Close Shift #{shift.id}</h2>
+
+            <div className="mb-4 border border-blue-200 bg-blue-50 p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-gray-800">{compensationPlan?.name || 'Compensation plan unavailable'}</p>
+                  <p className="text-xs text-gray-500">Effective {compensationPlan?.effective_from} · Plan v{compensationPlan?.version}</p>
+                </div>
+                <span className="capitalize text-xs font-medium text-blue-700">{compensationPlan?.pay_schedule}</span>
+              </div>
+              <div className="mt-2 flex justify-between border-t border-blue-100 pt-2">
+                <span className="text-gray-600">Earned by this shift</span>
+                <span className="font-semibold">{formatKES(grossShiftEarnings)}</span>
+              </div>
+            </div>
 
             {shift.compensation_plan?.pay_schedule === 'daily' ? (
               <div className="mb-4">

@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate';
 import {
   createShiftExpenseSchema,
   createShiftCreditSchema,
+  openShiftSchema,
   shiftCancellationSchema,
   updateReadingsSchema,
 } from '../schemas';
@@ -355,18 +356,11 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST open a new shift
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', requireAdmin, validate(openShiftSchema), async (req, res) => {
   try {
-    const { employee_id, shift_date } = req.body;
+    const { employee_id, compensation_plan_id } = req.body;
     const today = getKenyaDate();
     const resolvedDate = today;
-
-    if (shift_date && shift_date !== today) {
-      return res.status(400).json({
-        success: false,
-        error: 'Shift date is controlled by the system date. Open the shift on the day it is actually worked.',
-      });
-    }
 
     // Phase 12: wrap the "at most one open shift" check + insert in a single
     // SQLite transaction so a near-simultaneous second POST cannot win the
@@ -390,6 +384,13 @@ router.post('/', requireAdmin, async (req, res) => {
       if (!compensationPlan) {
         const err: any = new Error('This employee has no compensation plan for the shift date.');
         err.httpStatus = 400;
+        throw err;
+      }
+      if (Number(compensationPlan.id) !== Number(compensation_plan_id)) {
+        const err: any = new Error(
+          'The selected compensation plan changed before the shift was opened. Review the employee and try again.',
+        );
+        err.httpStatus = 409;
         throw err;
       }
       const lockedPayrollPeriod = await trx('payroll_periods')
@@ -449,8 +450,8 @@ router.post('/', requireAdmin, async (req, res) => {
 
     res.status(201).json({ success: true, data: shift });
   } catch (err: any) {
-    if (err.httpStatus === 400) {
-      return res.status(400).json({ success: false, error: err.message });
+    if (Number(err.httpStatus) >= 400 && Number(err.httpStatus) < 500) {
+      return res.status(Number(err.httpStatus)).json({ success: false, error: err.message });
     }
     console.error('[shifts:create] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
