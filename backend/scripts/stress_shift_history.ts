@@ -1,5 +1,6 @@
 import knexFactory from 'knex';
 import {
+  getShiftHistoryNeighbors,
   listShiftHistory,
   normalizeShiftHistoryQuery,
   ShiftHistoryQueryError,
@@ -92,6 +93,30 @@ async function main() {
     assert(oldest.shifts[0].review_status === 'reviewed', 'stored review status was not returned');
     assert(oldest.shifts[1].review_status === 'pending_review', 'legacy closed shift did not default to pending review');
 
+    const middleId = 50_000;
+    const newestNeighbors = await getShiftHistoryNeighbors(
+      db,
+      middleId,
+      normalizeShiftHistoryQuery({ sort: 'newest' }),
+    );
+    assert(Number(newestNeighbors?.previous?.id) === middleId + 1, 'newest previous neighbor is incorrect');
+    assert(Number(newestNeighbors?.next?.id) === middleId - 1, 'newest next neighbor is incorrect');
+
+    const oldestNeighbors = await getShiftHistoryNeighbors(
+      db,
+      middleId,
+      normalizeShiftHistoryQuery({ sort: 'oldest' }),
+    );
+    assert(Number(oldestNeighbors?.previous?.id) === middleId - 1, 'oldest previous neighbor is incorrect');
+    assert(Number(oldestNeighbors?.next?.id) === middleId + 1, 'oldest next neighbor is incorrect');
+
+    const firstNeighbors = await getShiftHistoryNeighbors(
+      db,
+      1,
+      normalizeShiftHistoryQuery({ sort: 'oldest', status: 'closed' }),
+    );
+    assert(firstNeighbors?.previous === null && Number(firstNeighbors?.next?.id) === 2, 'first-row boundary navigation is incorrect');
+
     const finalPage = await listShiftHistory(
       db,
       normalizeShiftHistoryQuery({ page: '999999', limit: '25' }),
@@ -154,7 +179,7 @@ async function main() {
     );
 
     console.log(`PASS shift history correctness across ${SHIFT_COUNT.toLocaleString()} rows`);
-    console.log('PASS validation, date/status filters, sort order, page cap, and final-page access');
+    console.log('PASS validation, filters, sort order, page cap, final-page access, and cross-page neighbors');
     console.log(
       `PASS 250 stress queries: p50 ${percentile(queryTimes, 0.5).toFixed(2)}ms, `
       + `p95 ${percentile(queryTimes, 0.95).toFixed(2)}ms, max ${Math.max(...queryTimes).toFixed(2)}ms`,

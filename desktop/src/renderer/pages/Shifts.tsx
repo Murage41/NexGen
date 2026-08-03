@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   cancelShift,
   getShifts,
@@ -53,11 +53,16 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [status, setStatus] = useState<ShiftStatusFilter>('');
-  const [sort, setSort] = useState<ShiftSort>('newest');
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const fromDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('from') || '') ? searchParams.get('from')! : '';
+  const toDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('to') || '') ? searchParams.get('to')! : '';
+  const statusParam = searchParams.get('status') || '';
+  const status: ShiftStatusFilter = ['open', 'closed', 'cancelled'].includes(statusParam)
+    ? statusParam as ShiftStatusFilter
+    : '';
+  const sort: ShiftSort = searchParams.get('sort') === 'oldest' ? 'oldest' : 'newest';
+  const requestedPage = Number(searchParams.get('page') || 1);
+  const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
   const [pagination, setPagination] = useState<ShiftPagination>(EMPTY_PAGINATION);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -66,6 +71,8 @@ export default function Shifts() {
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const navigate = useNavigate();
+  const listContext = searchParams.toString();
+  const shiftPath = (shiftId: number) => `/shifts/${shiftId}${listContext ? `?${listContext}` : ''}`;
 
   const invalidDateRange = Boolean(fromDate && toDate && fromDate > toDate);
   const hasFilters = Boolean(fromDate || toDate || status || sort !== 'newest');
@@ -138,31 +145,36 @@ export default function Shifts() {
   }, [fromDate, invalidDateRange, page, sort, status, toDate]);
 
   function updateFromDate(value: string) {
-    setFromDate(value);
-    setPage(1);
+    updateQuery('from', value, true);
   }
 
   function updateToDate(value: string) {
-    setToDate(value);
-    setPage(1);
+    updateQuery('to', value, true);
   }
 
   function updateStatus(value: ShiftStatusFilter) {
-    setStatus(value);
-    setPage(1);
+    updateQuery('status', value, true);
   }
 
   function updateSort(value: ShiftSort) {
-    setSort(value);
-    setPage(1);
+    updateQuery('sort', value === 'newest' ? '' : value, true);
   }
 
   function clearFilters() {
-    setFromDate('');
-    setToDate('');
-    setStatus('');
-    setSort('newest');
-    setPage(1);
+    setSearchParams(new URLSearchParams(), { replace: true });
+  }
+
+  function updateQuery(key: string, value: string, resetPage = false) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    if (resetPage) next.delete('page');
+    setSearchParams(next, { replace: true });
+  }
+
+  function setPage(value: number | ((current: number) => number)) {
+    const resolved = typeof value === 'function' ? value(page) : value;
+    updateQuery('page', resolved > 1 ? String(resolved) : '');
   }
 
   async function handleOpenShift() {
@@ -174,7 +186,7 @@ export default function Shifts() {
       });
       setShowNew(false);
       setSelectedEmployee('');
-      navigate(`/shifts/${response.data.data.id}`);
+      navigate(shiftPath(Number(response.data.data.id)));
     } catch (openError: any) {
       alert(openError.response?.data?.error || 'Failed to open shift');
     }
@@ -471,7 +483,7 @@ export default function Shifts() {
                       </button>
                     )}
                     <button
-                      onClick={() => navigate(`/shifts/${shift.id}`)}
+                      onClick={() => navigate(shiftPath(Number(shift.id)))}
                       className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800"
                     >
                       <Eye size={15} /> View

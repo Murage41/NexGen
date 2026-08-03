@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
   repayDebt, getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
-  addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview,
+  addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview, getShiftNeighbors,
 } from '../services/api';
-import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity } from 'lucide-react';
+import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
 import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
@@ -36,6 +36,7 @@ const PREDEFINED_EXPENSE_CATEGORIES = [
 export default function ShiftDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [shift, setShift] = useState<any>(null);
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
@@ -78,6 +79,7 @@ export default function ShiftDetail() {
   const [reviewAction, setReviewAction] = useState<'reviewed' | 'flagged' | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [neighbors, setNeighbors] = useState<{ previous: any | null; next: any | null }>({ previous: null, next: null });
   const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
   const [partialAmount, setPartialAmount] = useState('');
   const [showDebtRepayModal, setShowDebtRepayModal] = useState(false);
@@ -111,6 +113,13 @@ export default function ShiftDetail() {
   }
 
   useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
+
+  useEffect(() => {
+    const params = Object.fromEntries(new URLSearchParams(location.search));
+    getShiftNeighbors(parseInt(id!), params)
+      .then((response) => setNeighbors(response.data.data || { previous: null, next: null }))
+      .catch(() => setNeighbors({ previous: null, next: null }));
+  }, [id, location.search]);
 
   useEffect(() => {
     if (!readingsDirty || shift?.status !== 'open' || readingSync !== 'dirty') return;
@@ -633,9 +642,19 @@ export default function ShiftDetail() {
 
   return (
     <div>
-      <button onClick={() => navigate('/shifts')} className="flex items-center gap-1 text-blue-600 hover:underline mb-4 text-sm">
-        <ArrowLeft size={16} /> Back to Shifts
-      </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <button onClick={() => navigate(`/shifts${location.search}`)} className="flex items-center gap-1 text-blue-600 hover:underline text-sm">
+          <ArrowLeft size={16} /> Back to Shifts
+        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => neighbors.previous && navigate(`/shifts/${neighbors.previous.id}${location.search}`)} disabled={!neighbors.previous} className="inline-flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 disabled:opacity-40">
+            <ChevronLeft size={16} /> Previous in list
+          </button>
+          <button type="button" onClick={() => neighbors.next && navigate(`/shifts/${neighbors.next.id}${location.search}`)} disabled={!neighbors.next} className="inline-flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-700 disabled:opacity-40">
+            Next in list <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
 
       <div className="flex items-center justify-between mb-6">
         <div>

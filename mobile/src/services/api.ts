@@ -50,6 +50,7 @@ export const getDashboard = () => api.get('/dashboard');
 export const getShifts = (params?: any) => api.get('/shifts', { params });
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
+export const getShiftNeighbors = (id: number, params?: any) => api.get(`/shifts/${id}/neighbors`, { params });
 export const openShift = (data: { employee_id: number; compensation_plan_id: number }) => api.post('/shifts', data);
 export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean, confirm_large_sale?: boolean) =>
   api.put(`/shifts/${shiftId}/readings`, {

@@ -17,6 +17,7 @@ import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
 import {
   listShiftHistory,
+  getShiftHistoryNeighbors,
   normalizeShiftHistoryQuery,
   ShiftHistoryQueryError,
 } from '../services/shiftHistory';
@@ -192,6 +193,20 @@ router.get('/current', async (_req, res) => {
       .first();
     res.json({ success: true, data: shift || null });
   } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/:id/neighbors', async (req, res) => {
+  try {
+    const options = normalizeShiftHistoryQuery(req.query as Record<string, unknown>);
+    const neighbors = await getShiftHistoryNeighbors(db, Number(req.params.id), options);
+    if (!neighbors) return res.status(404).json({ success: false, error: 'Shift not found' });
+    res.json({ success: true, data: neighbors });
+  } catch (err: any) {
+    if (err instanceof ShiftHistoryQueryError) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview } from '../services/api';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity } from 'lucide-react';
+import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
 import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
 
 function compensationComponentLabel(component: any, schedule: string) {
@@ -16,6 +16,7 @@ function compensationComponentLabel(component: any, schedule: string) {
 export default function ShiftDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAdmin } = useAuth();
   const [shift, setShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -25,6 +26,7 @@ export default function ShiftDetail() {
   const [reviewAction, setReviewAction] = useState<'reviewed' | 'flagged' | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [neighbors, setNeighbors] = useState<{ previous: any | null; next: any | null }>({ previous: null, next: null });
   const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
   const [partialAmount, setPartialAmount] = useState('');
   const [closeNotes, setCloseNotes] = useState('');
@@ -45,6 +47,13 @@ export default function ShiftDetail() {
   const [collectingReceipt, setCollectingReceipt] = useState(false);
 
   useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
+
+  useEffect(() => {
+    const params = Object.fromEntries(new URLSearchParams(location.search));
+    getShiftNeighbors(parseInt(id!), params)
+      .then((response) => setNeighbors(response.data.data || { previous: null, next: null }))
+      .catch(() => setNeighbors({ previous: null, next: null }));
+  }, [id, location.search]);
 
   async function loadCreditAccounts() {
     try {
@@ -255,7 +264,15 @@ export default function ShiftDetail() {
 
   return (
     <div className="pb-6">
-      <PageHeader title={`Shift #${shift.id}`} back />
+      <PageHeader title={`Shift #${shift.id}`} back onBack={() => navigate(`/shifts${location.search}`)} />
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <button type="button" onClick={() => neighbors.previous && navigate(`/shifts/${neighbors.previous.id}${location.search}`)} disabled={!neighbors.previous} className="flex items-center justify-center gap-1 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 disabled:opacity-40">
+          <ChevronLeft size={16} /> Previous
+        </button>
+        <button type="button" onClick={() => neighbors.next && navigate(`/shifts/${neighbors.next.id}${location.search}`)} disabled={!neighbors.next} className="flex items-center justify-center gap-1 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 disabled:opacity-40">
+          Next <ChevronRight size={16} />
+        </button>
+      </div>
 
       {/* Summary */}
       <div className="flex items-center justify-between mb-3">

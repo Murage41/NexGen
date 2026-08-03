@@ -33,6 +33,11 @@ export interface ShiftHistoryResult {
   };
 }
 
+export interface ShiftHistoryNeighbors {
+  previous: any | null;
+  next: any | null;
+}
+
 export class ShiftHistoryQueryError extends Error {}
 
 function singleQueryValue(value: unknown, name: string): string | undefined {
@@ -161,4 +166,73 @@ export async function listShiftHistory(
       sort: options.sort,
     },
   };
+}
+
+function applyNeighborKeyCondition(
+  query: Knex.QueryBuilder,
+  current: any,
+  operator: '>' | '<',
+) {
+  return query.where(function keyComparison() {
+    this.where('shifts.shift_date', operator, current.shift_date)
+      .orWhere(function sameDateLaterTime() {
+        this.where('shifts.shift_date', current.shift_date)
+          .andWhere('shifts.start_time', operator, current.start_time);
+      })
+      .orWhere(function sameTimestampLaterId() {
+        this.where('shifts.shift_date', current.shift_date)
+          .andWhere('shifts.start_time', current.start_time)
+          .andWhere('shifts.id', operator, current.id);
+      });
+  });
+}
+
+export async function getShiftHistoryNeighbors(
+  connection: Knex,
+  shiftId: number,
+  options: ShiftHistoryOptions,
+): Promise<ShiftHistoryNeighbors | null> {
+  const current = await connection('shifts')
+    .where({ id: shiftId })
+    .select('id', 'shift_date', 'start_time')
+    .first();
+  if (!current) return null;
+
+  const neighborQuery = (
+    operator: '>' | '<',
+    direction: 'asc' | 'desc',
+  ) => {
+    const query = connection('shifts')
+      .join('employees', 'shifts.employee_id', 'employees.id')
+      .leftJoin('shift_reviews', 'shifts.id', 'shift_reviews.shift_id')
+      .select(
+        'shifts.id',
+        'shifts.shift_date',
+        'shifts.start_time',
+        'shifts.end_time',
+        'shifts.status',
+        'employees.name as employee_name',
+        connection.raw(`
+          CASE
+            WHEN shifts.status = 'closed' THEN COALESCE(shift_reviews.review_status, 'pending_review')
+            ELSE NULL
+          END AS review_status
+        `),
+      );
+    applyShiftHistoryFilters(query, options);
+    applyNeighborKeyCondition(query, current, operator);
+    return query
+      .orderBy('shifts.shift_date', direction)
+      .orderBy('shifts.start_time', direction)
+      .orderBy('shifts.id', direction)
+      .first();
+  };
+
+  const newestFirst = options.sort === 'newest';
+  const [previous, next] = await Promise.all([
+    neighborQuery(newestFirst ? '>' : '<', newestFirst ? 'asc' : 'desc'),
+    neighborQuery(newestFirst ? '<' : '>', newestFirst ? 'desc' : 'asc'),
+  ]);
+
+  return { previous: previous || null, next: next || null };
 }
