@@ -35,7 +35,8 @@
     "test:delivery-replay": "tsx scripts/test_delivery_replay.ts",
     "audit:receivables": "tsx scripts/audit_receivable_integrity.ts",
     "audit:operations": "tsx scripts/audit_operational_integrity.ts",
-    "maintenance:delivery-timestamps:dry-run": "tsx scripts/dry_run_delivery_timestamp_normalization.ts"
+    "maintenance:delivery-timestamps:dry-run": "tsx scripts/dry_run_delivery_timestamp_normalization.ts",
+    "repair:diwafa-shifts": "tsx scripts/repair_diwafa_shifts_27_28_43.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
