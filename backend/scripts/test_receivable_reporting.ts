@@ -43,6 +43,7 @@ async function run() {
       table.integer('shift_id').nullable();
       table.decimal('amount', 14, 2).notNullable();
       table.string('payment_method').notNullable();
+      table.string('payment_type').nullable();
       table.string('status').notNullable().defaultTo('posted');
       table.date('date').notNullable();
       table.timestamp('deleted_at').nullable();
@@ -172,6 +173,16 @@ async function run() {
     assert.equal(julyCash.invoice_payments, 500);
     assert.deepEqual(julyCash.invoice_payments_by_account, { cash: 500 });
     assert.equal(julyCash.total_direct_receivable_cash, 800);
+    await db('credit_accounts').insert({ id: 3, name: 'Employee', type: 'employee', billing_mode: 'money' });
+    await db('credit_payments').insert([
+      { account_id: 3, amount: 80, status: 'posted', payment_type: 'staff_debt', payment_method: 'cash', date: '2026-07-21' },
+      { account_id: 3, amount: 90, status: 'posted', shift_id: 9, payment_type: 'staff_debt', payment_method: 'mpesa', date: '2026-07-21' },
+      { account_id: 3, amount: 70, status: 'reversed', payment_type: 'staff_debt', payment_method: 'cash', date: '2026-07-21' },
+    ]);
+    const withEmployeeReceipts = await getDirectReceivableCashInflows(db, '2026-07-01', '2026-07-31');
+    assert.equal(withEmployeeReceipts.employee_debt_repayments, 80);
+    assert.equal(withEmployeeReceipts.money_credit_payments, 300);
+    assert.equal(withEmployeeReceipts.total_direct_receivable_cash, 880);
     const augustCash = await getDirectReceivableCashInflows(db, '2026-08-02', '2026-08-02');
     assert.equal(augustCash.money_credit_payments, 0);
     assert.equal(augustCash.invoice_payments, -500);

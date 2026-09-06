@@ -1,3 +1,5 @@
+import { up as migrateSettlement } from '../migrations/20260906_043_employee_settlement';
+import { payrollRecoveryPreview } from '../src/services/payrollDetails';
 import assert from 'node:assert/strict';
 import knexFactory from 'knex';
 import { up as migrateCompensation } from '../migrations/20260728_032_employee_compensation_plans';
@@ -61,6 +63,7 @@ async function main() {
       table.decimal('carried_forward', 14, 2).notNullable();
       table.decimal('balance', 14, 2).notNullable();
       table.string('status').notNullable();
+      table.timestamp('created_at').defaultTo(db.fn.now());
     });
     await db.schema.createTable('credit_accounts', (table) => {
       table.increments('id').primary();
@@ -73,6 +76,7 @@ async function main() {
     await migrateCompensation(db);
     await migrateEarnings(db);
     await migratePayroll(db);
+    await migrateSettlement(db);
 
     const [dailyA] = await db('employees').insert({ name: 'Daily A', daily_wage: 800 });
     const [dailyB] = await db('employees').insert({ name: 'Daily B', daily_wage: 800 });

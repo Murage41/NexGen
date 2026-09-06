@@ -1,3 +1,4 @@
+import { syncEmployeeDebt } from './employeeDebt';
 import db from '../database';
 import type { Knex } from 'knex';
 
@@ -32,7 +33,8 @@ export async function recomputeAccountBalance(
   const qb = conn || db;
 
   // Invoice-mode truth is the sum of each open invoice's remaining balance.
-  const acct = await qb('credit_accounts').where({ id: accountId }).first('billing_mode');
+  const acct = await qb('credit_accounts').where({ id: accountId }).first();
+  if (acct?.type === 'employee') return syncEmployeeDebt(Number(acct.employee_id), qb);
   if (acct && acct.billing_mode === 'invoice') {
     const outstandingRow = await qb('customer_invoices')
       .where({ account_id: accountId })

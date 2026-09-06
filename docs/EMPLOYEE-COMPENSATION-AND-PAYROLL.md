@@ -3,6 +3,9 @@
 This guide defines the production workflow for employees, compensation,
 earnings, deductions, and payments in NexGen.
 
+For the current repayment controls, My Pay, detailed shift statements and safe
+database transfer, see [Employee repayment workflow](EMPLOYEE-REPAYMENT-WORKFLOW.md).
+
 ## What Changed
 
 The old employee record assumed one fixed daily wage. The new model separates:
@@ -108,7 +111,8 @@ Void an incorrect run before calculating a corrected replacement.
 Deductions are added while a run is calculated and still editable.
 
 - Staff debt deductions require an authorization reference.
-- A deduction cannot exceed gross earnings.
+- Recovery is reviewed explicitly and cannot exceed compensation remaining
+  after actual payments and other deductions.
 - A staff debt deduction cannot exceed the employee's outstanding staff debt.
 - Staff debt is reduced only when payroll is approved.
 - Voiding the run restores approved staff-debt allocations.
@@ -174,7 +178,8 @@ periods that also contain migrated employee earnings.
 2. Select **Calculate Payroll**.
 3. Choose the schedule and period start. NexGen derives the valid period end.
 4. Review eligible employees, gross earnings, prior shift payments, and balance.
-5. Add authorized deductions while the run is calculated.
+5. Review and save the debt recovery decision for each employee; add any other
+   authorized deductions while the run is calculated.
 6. Approve the run.
 7. Record one or more payments until the balance is zero.
 8. Expand an employee line to review earnings, deductions, and payments.
@@ -190,7 +195,8 @@ Admin users can open **More**, then **Employees** or **Payroll**.
 - Payroll runs can be calculated, reviewed, and approved.
 - Approved payroll can be paid directly or from an open shift when eligible.
 
-Attendants do not receive admin employee or payroll routes.
+Attendants open **My Pay** to view only their own pay, shift details, plan
+history and debt. They do not receive admin employee or payroll routes.
 
 ## Verification
 
@@ -203,6 +209,7 @@ npm run test:employee-earnings
 npm run test:payroll-ledger
 npm run test:payroll-schedules
 npm run test:shift-debt-receipts
+npm run test:employee-settlement
 npm run stress:employee-payroll
 ```
 
@@ -240,6 +247,7 @@ REM Back up E:\NexGen\backend\data and verify nexgen.db exists in the backup.
 
 git pull --ff-only origin main
 npm install
+npm run backup:database --workspace=backend
 
 cd /d E:\NexGen\backend
 npm run build

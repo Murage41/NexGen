@@ -1,3 +1,6 @@
+import { Link } from 'react-router-dom';
+import { PayrollStatement } from '../../../shared/ui/PayrollStatement';
+import { savePayrollRecovery, createPayrollSupplement, createOperationKey } from '../services/api';
 import { useEffect, useState } from 'react';
 import { BadgeCheck, Calculator, CircleDollarSign, WalletCards, X } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
@@ -47,6 +50,7 @@ export default function Payroll() {
   const [currentShift, setCurrentShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [paymentKey, setPaymentKey] = useState(() => createOperationKey('payroll-payment'));
   const [calculateSheet, setCalculateSheet] = useState(false);
   const [paymentSheet, setPaymentSheet] = useState(false);
   const [preview, setPreview] = useState<any>(null);
@@ -181,6 +185,7 @@ export default function Payroll() {
   }
 
   function openPayment(payrollLine: any) {
+    setPaymentKey(createOperationKey('payroll-payment'));
     setLine(payrollLine);
     setPayment({
       amount: String(payrollLine.balance_due),
@@ -202,7 +207,7 @@ export default function Payroll() {
         payment_date: payment.payment_date,
         reference: payment.reference || null,
         shift_id: payment.from_shift ? currentShift?.id : null,
-      });
+      }, paymentKey);
       setPaymentSheet(false);
       await load(run.id);
     } catch (error: any) {
@@ -260,6 +265,7 @@ export default function Payroll() {
             )}
           </div>
 
+{['approved', 'partially_paid', 'paid'].includes(run.status) && <button className="text-sm text-blue-700 underline p-2" disabled={busy} onClick={async () => { setBusy(true); try { const response = await createPayrollSupplement(run.id); setRun(response.data.data); } catch(e: any) { alert(e.response?.data?.error || 'No additional shifts are available.'); } finally { setBusy(false); } }}>Include late shifts in a supplemental payroll</button>}
           <p className="text-xs uppercase font-semibold text-gray-400 mt-5 mb-2">Employees</p>
           <div className="space-y-3">
             {run.lines.map((payrollLine: any) => (
@@ -267,7 +273,7 @@ export default function Payroll() {
                 <div className="flex justify-between items-start">
                   <div>
                     <p className="font-semibold text-gray-900">{payrollLine.employee_name}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{payrollLine.earnings.length} earning line{payrollLine.earnings.length === 1 ? '' : 's'}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{payrollLine.shift_count} shifts · {payrollLine.earnings.length} components</p>
                   </div>
                   <p className="font-bold text-gray-800">{kes(payrollLine.net_pay)}</p>
                 </div>
@@ -276,6 +282,8 @@ export default function Payroll() {
                   <Metric label="Paid" value={kes(payrollLine.paid_amount)} small />
                   <Metric label="Due" value={kes(payrollLine.balance_due)} small />
                 </div>
+                <Link to={`/employee-pay/${payrollLine.employee_id}`} className="text-blue-700 underline text-sm inline-block mt-3">Full pay and debt statement</Link>
+                <details className="mt-3" open={run.status === 'calculated'}><summary className="font-medium cursor-pointer py-2">Shifts, rates and recovery</summary><PayrollStatement line={payrollLine} run={run} onRecovery={async (value: any, key: string) => { await savePayrollRecovery(run.id, payrollLine.id, value, key); const response = await getPayrollRun(run.id); setRun(response.data.data); }} /></details>
                 {['approved', 'partially_paid'].includes(run.status) && Number(payrollLine.balance_due) > 0 && (
                   <button onClick={() => openPayment(payrollLine)}
                     className="w-full mt-3 border border-blue-200 text-blue-700 py-2 rounded-xl text-sm font-medium flex justify-center items-center gap-2">

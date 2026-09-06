@@ -1,3 +1,7 @@
+import { ReasonDialog } from '../../../../shared/ui/ReasonDialog';
+import { Link } from 'react-router-dom';
+import { PayrollStatement } from '../../../../shared/ui/PayrollStatement';
+import { savePayrollRecovery, createPayrollSupplement, createOperationKey } from '../services/api';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   BadgeCheck,
@@ -64,6 +68,9 @@ export default function Payroll() {
   const [currentShift, setCurrentShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [reasonAction, setReasonAction] = useState<any>(null);
+  const [paymentKey, setPaymentKey] = useState(() => createOperationKey('payroll-payment'));
+  const [deductionKey, setDeductionKey] = useState(() => createOperationKey('payroll-deduction'));
   const [showCalculate, setShowCalculate] = useState(false);
   const [showDeduction, setShowDeduction] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
@@ -77,7 +84,7 @@ export default function Payroll() {
     period_end: bounds.end,
   });
   const [deductionForm, setDeductionForm] = useState({
-    deduction_type: 'staff_debt',
+    deduction_type: 'manual',
     amount: '',
     authorization_reference: '',
     notes: '',
@@ -211,6 +218,7 @@ export default function Payroll() {
   }
 
   function openDeduction(line: any) {
+    setDeductionKey(createOperationKey('payroll-deduction'));
     setSelectedLine(line);
     setDeductionForm({
       deduction_type: 'staff_debt',
@@ -229,7 +237,7 @@ export default function Payroll() {
       await addPayrollDeduction(selectedRun.id, selectedLine.id, {
         ...deductionForm,
         amount: Number(deductionForm.amount),
-      });
+      }, deductionKey);
       setShowDeduction(false);
       await loadRun(selectedRun.id);
     } catch (error: any) {
@@ -250,6 +258,7 @@ export default function Payroll() {
   }
 
   function openPayment(line: any) {
+    setPaymentKey(createOperationKey('payroll-payment'));
     setSelectedLine(line);
     setPaymentForm({
       amount: String(line.balance_due || ''),
@@ -274,7 +283,7 @@ export default function Payroll() {
         shift_id: paymentForm.from_shift ? currentShift?.id : null,
         reference: paymentForm.reference || null,
         notes: paymentForm.notes || null,
-      });
+      }, paymentKey);
       setShowPayment(false);
       await loadRuns(selectedRun.id);
     } catch (error: any) {
@@ -284,27 +293,12 @@ export default function Payroll() {
     }
   }
 
-  async function reversePayment(payment: any) {
-    const reason = prompt('Reason for reversing this payment:');
-    if (!reason) return;
-    try {
-      await reversePayrollPayment(payment.id, reason);
-      await loadRuns(selectedRun.id);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to reverse payment');
-    }
+  function reversePayment(payment: any) {
+    setReasonAction({ type: 'payment', id: payment.id });
   }
 
-  async function voidRun() {
-    if (!selectedRun) return;
-    const reason = prompt('Reason for voiding this payroll run:');
-    if (!reason) return;
-    try {
-      await voidPayrollRun(selectedRun.id, reason);
-      await loadRuns(selectedRun.id);
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to void payroll');
-    }
+  function voidRun() {
+    if (selectedRun) setReasonAction({ type: 'run', id: selectedRun.id });
   }
 
   const outstanding = useMemo(
@@ -376,6 +370,7 @@ export default function Payroll() {
                     <BadgeCheck size={17} /> Approve
                   </button>
                 )}
+                {['approved', 'partially_paid', 'paid'].includes(selectedRun.status) && (<button disabled={busy || selectedRun.status === 'calculated'} className="text-xs text-blue-700 underline px-2" onClick={async () => { setBusy(true); try { const response = await createPayrollSupplement(selectedRun.id); setSelectedRun(response.data.data); } catch(e: any) { alert(e.response?.data?.error || 'No additional shifts are available.'); } finally { setBusy(false); } }}>Supplemental shifts</button>)}
                 {!['void', 'paid'].includes(selectedRun.status) && (
                   <button onClick={voidRun} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Void payroll run">
                     <Trash2 size={18} />
@@ -409,7 +404,7 @@ export default function Payroll() {
                     <tr className={`border-t border-gray-100 ${selectedLine?.id === line.id ? 'bg-blue-50' : ''}`}>
                       <td className="p-3">
                         <button onClick={() => setSelectedLine(selectedLine?.id === line.id ? null : line)}
-                          className="font-medium text-gray-900 hover:text-blue-700">{line.employee_name}</button>
+                          className="font-medium text-gray-900 hover:text-blue-700">{line.employee_name}</button><p className="text-xs text-gray-500 mt-1">{line.shift_count} shifts · debt {kes(line.recovery?.outstanding)}</p><Link to={`/employee-pay/${line.employee_id}`} className="text-xs text-blue-700 underline">Full statement</Link>
                       </td>
                       <td className="p-3 text-right tabular-nums">{kes(line.gross_earnings)}</td>
                       <td className="p-3 text-right tabular-nums">{kes(line.total_deductions)}</td>
@@ -430,7 +425,8 @@ export default function Payroll() {
                     {selectedLine?.id === line.id && (
                       <tr key={`${line.id}-details`} className="bg-gray-50 border-t border-gray-100">
                         <td colSpan={7} className="p-4">
-                          <LineDetails line={line} run={selectedRun} removeDeduction={removeDeduction} reversePayment={reversePayment} />
+                          <PayrollStatement line={line} run={selectedRun} onRecovery={async (value: any, key: string) => { await savePayrollRecovery(selectedRun.id, line.id, value, key); const response = await getPayrollRun(selectedRun.id); setSelectedRun(response.data.data); }} />
+                              <LineDetails line={line} run={selectedRun} removeDeduction={removeDeduction} reversePayment={reversePayment} />
                         </td>
                       </tr>
                     )}
@@ -483,7 +479,7 @@ export default function Payroll() {
           <form onSubmit={saveDeduction} className="space-y-3">
             <Field label="Deduction type">
               <select className="input" value={deductionForm.deduction_type} onChange={(event) => setDeductionForm({ ...deductionForm, deduction_type: event.target.value })}>
-                <option value="staff_debt">Staff debt</option><option value="statutory">Statutory</option><option value="advance">Salary advance</option><option value="manual">Other authorized deduction</option>
+                <option value="statutory">Statutory</option><option value="advance">Salary advance</option><option value="manual">Other authorized deduction</option>
               </select>
             </Field>
             <Field label="Amount (KES)"><input required min="0.01" step="0.01" type="number" className="input" value={deductionForm.amount} onChange={(event) => setDeductionForm({ ...deductionForm, amount: event.target.value })} /></Field>
@@ -521,18 +517,19 @@ export default function Payroll() {
           </form>
         </Modal>
       )}
+      {reasonAction && <ReasonDialog title={reasonAction.type === 'payment' ? 'Reverse payroll payment' : 'Void payroll run'} onCancel={() => setReasonAction(null)} onConfirm={async (reason: string) => {
+        if (reasonAction.type === 'payment') await reversePayrollPayment(reasonAction.id, reason);
+        else await voidPayrollRun(reasonAction.id, reason);
+        await loadRuns(selectedRun.id);
+      }} />}
+
     </div>
   );
 }
 
 function LineDetails({ line, run, removeDeduction, reversePayment }: any) {
   return (
-    <div className="grid grid-cols-3 gap-5">
-      <DetailList title="Earnings" rows={line.earnings.map((row: any) => ({
-        id: row.id,
-        label: row.description || row.source_type,
-        value: kes(row.gross_amount),
-      }))} />
+    <div className="grid grid-cols-2 gap-5">
       <div>
         <p className="text-xs uppercase font-semibold text-gray-400 mb-2">Deductions</p>
         <div className="space-y-2">
@@ -566,18 +563,6 @@ function LineDetails({ line, run, removeDeduction, reversePayment }: any) {
           ))}
           {line.payments.length === 0 && <p className="text-sm text-gray-400">No payments</p>}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function DetailList({ title, rows }: any) {
-  return (
-    <div>
-      <p className="text-xs uppercase font-semibold text-gray-400 mb-2">{title}</p>
-      <div className="space-y-2">
-        {rows.map((row: any) => <div key={row.id} className="flex justify-between text-sm"><span className="text-gray-600">{row.label}</span><span>{row.value}</span></div>)}
-        {rows.length === 0 && <p className="text-sm text-gray-400">None</p>}
       </div>
     </div>
   );

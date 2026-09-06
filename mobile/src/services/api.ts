@@ -76,6 +76,7 @@ export const deleteShiftExpense = (shiftId: number, expenseId: number) => api.de
 export const closeShift = (shiftId: number, data: {
   notes?: string;
   deduct_amount?: number | null;
+  recovery_decision?: any;
   wage_paid: number;
   variance_reason?: string;
   reconciliation: { readings_reviewed: true; collections_reviewed: true; entries_reviewed: true };
@@ -134,8 +135,8 @@ export const getPayrollRun = (id: number) => api.get(`/payroll/runs/${id}`);
 export const previewPayrollRun = (params: any) => api.get('/payroll/runs/preview', { params });
 export const calculatePayrollRun = (data: any) => api.post('/payroll/runs/calculate', data);
 export const approvePayrollRun = (id: number) => api.post(`/payroll/runs/${id}/approve`);
-export const addPayrollPayment = (lineId: number, data: any) =>
-  api.post(`/payroll/lines/${lineId}/payments`, data);
+export const addPayrollPayment = (lineId: number, data: any, operationKey?: string) =>
+  financialPost(`/payroll/lines/${lineId}/payments`, data, operationKey);
 
 // Pumps
 export const getPumps = () => api.get('/pumps');
@@ -247,3 +248,22 @@ export const getShiftTankSummary = (shiftId: number) => api.get(`/shifts/${shift
 export const getTankLedger = (tankId: number, params?: any) => api.get(`/tanks/${tankId}/ledger`, { params });
 
 export default api;
+
+// Retain the same operation key across uncertain retries of the same financial form.
+const financialKeys = new Map<string, string>();
+function financialConfig(path: string, data: any, suppliedKey?: string) {
+  const fingerprint = path + JSON.stringify(data);
+  if (!financialKeys.has(fingerprint)) financialKeys.set(fingerprint, createOperationKey('payroll'));
+  return { headers: { 'Idempotency-Key': suppliedKey || financialKeys.get(fingerprint)! } };
+}
+function financialPost(path: string, data: any, key?: string) { return api.post(path, data, financialConfig(path, data, key)); }
+export const savePayrollRecovery = (runId: number, lineId: number, data: any, operationKey?: string) => { const path = `/payroll/runs/${runId}/lines/${lineId}/recovery`; return api.put(path, data, financialConfig(path, data, operationKey)); };
+export const getMyPay = () => api.get('/payroll/me');
+export const getEmployeePay = (id: number) => api.get(`/payroll/employees/${id}`);
+export const recordDebtReceipt = (id: number, data: any, key: string) => financialPost(`/payroll/employees/${id}/receipts`, data, key);
+export const reverseDebtReceipt = (id: number, reason: string) => financialPost(`/payroll/receipts/${id}/reverse`, { reason });
+export const setRecoveryLimit = (id: number, percent: number) => api.put(`/payroll/employees/${id}/recovery-limit`, { percent });
+export const reviewEmployeeDebt = (id: number, data: any) => api.put(`/payroll/debts/${id}/review`, data);
+export const previewShiftRecovery = (id: number, wage_paid: number) => api.post(`/shifts/${id}/recovery-preview`, { wage_paid });
+
+export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/${id}/supplement`);

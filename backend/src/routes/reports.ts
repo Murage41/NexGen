@@ -84,7 +84,7 @@ router.get('/daily', async (req, res) => {
 
       const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
       const actualWagePaid = shift.status === 'closed'
-        ? Number(wageDeduction?.final_wage ?? shift.wage_paid ?? 0)
+        ? Number(shift.direct_wage_cash_amount ?? Math.max(0, Number(shift.wage_paid || 0) - Number(wageDeduction?.deduction_amount || 0)))
         : 0;
       const wageDeductionAmount = shift.status === 'closed'
         ? Number(wageDeduction?.deduction_amount || 0)
@@ -896,7 +896,8 @@ router.get('/cash-flow', async (req, res) => {
       shiftCashReceived
       + shiftMpesaReceived
       + creditPaymentsReceived
-      + invoicePaymentsReceived,
+      + invoicePaymentsReceived
+      + directReceivableCash.employee_debt_repayments,
     );
 
     // Cash Outflows
@@ -945,6 +946,7 @@ router.get('/cash-flow', async (req, res) => {
           shift_mpesa_received: shiftMpesaReceived,
           credit_payments_received: creditPaymentsReceived,
           direct_money_credit_payments: directMoneyByMethod,
+          employee_debt_repayments: directReceivableCash.employee_debt_repayments,
           invoice_payments_received: invoicePaymentsReceived,
           invoice_payments_by_account: invoicePaymentsByAccount,
           total: totalInflows,

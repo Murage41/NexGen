@@ -1,6 +1,8 @@
 import type { Knex } from 'knex';
 import Decimal, { Numeric } from 'decimal.js-light';
 import db from '../database';
+import { allocateEmployeeDebt, syncEmployeeDebt, settlementError, validateRecoveryDecision } from './employeeDebt';
+import { enrichPayrollLine, payrollRecoveryPreview, allocatePayrollSettlements } from './payrollDetails';
 import {
   PaySchedule,
   PayrollPeriodError,
@@ -8,6 +10,7 @@ import {
 } from './payrollPeriods';
 
 interface PayrollRunInput {
+  supplement_of?: number;
   name: string;
   pay_schedule: PaySchedule;
   period_start: string;
@@ -16,6 +19,7 @@ interface PayrollRunInput {
 }
 
 interface PayrollPeriod {
+  supplement_of?: number;
   id?: number;
   pay_schedule: PaySchedule;
   period_start: string;
@@ -57,6 +61,7 @@ async function buildPeriodicEarningRows(
   period: PayrollPeriod,
   trx: Knex.Transaction | Knex,
 ): Promise<any[]> {
+  if (period.supplement_of) return [];
   const plans = await trx('employee_compensation_plans')
     .where({ pay_schedule: period.pay_schedule })
     .where('effective_from', '<=', period.period_end)
@@ -78,13 +83,17 @@ async function buildPeriodicEarningRows(
     componentsByPlan.set(Number(component.plan_id), planComponents);
   }
 
+  const employees = await trx('employees').whereIn('id', plans.map(p => p.employee_id)).select('*');
   const periodDays = inclusiveDays(period.period_start, period.period_end);
   const earningRows: any[] = [];
 
   for (const planRow of plans) {
-    const overlapStart = laterDate(period.period_start, String(planRow.effective_from).slice(0, 10));
+    const employee = employees.find(e => e.id === planRow.employee_id);
+    const employmentStart = employee?.employment_start_date || period.period_start;
+    const employmentEnd = employee?.employment_end_date || period.period_end;
+    const overlapStart = laterDate(laterDate(period.period_start, employmentStart), String(planRow.effective_from).slice(0, 10));
     const overlapEnd = earlierDate(
-      period.period_end,
+      earlierDate(period.period_end, employmentEnd),
       planRow.effective_to ? String(planRow.effective_to).slice(0, 10) : period.period_end,
     );
     if (overlapStart > overlapEnd) continue;
@@ -92,7 +101,9 @@ async function buildPeriodicEarningRows(
 
     for (const component of componentsByPlan.get(Number(planRow.id)) || []) {
       const sourceKey = `payroll-period:${period.id}:plan:${planRow.id}:component:${component.id}`;
-      const fullAmount = new Decimal(component.amount || 0);
+      let fullAmount = new Decimal(component.amount || 0);
+      if (component.minimum_amount != null && fullAmount.lt(component.minimum_amount)) fullAmount = new Decimal(component.minimum_amount);
+      if (component.maximum_amount != null && fullAmount.gt(component.maximum_amount)) fullAmount = new Decimal(component.maximum_amount);
       const gross = planRow.proration_method === 'none'
         ? fullAmount
         : fullAmount.mul(overlapDays).div(periodDays);
@@ -145,7 +156,12 @@ async function assertPayrollPeriodAvailable(
     .where('period_end', '>=', input.period_start)
     .orderBy('period_start')
     .first();
-  if (overlap) {
+  if (input.supplement_of) {
+    const original = await database('payroll_runs as r').join('payroll_periods as p', 'r.period_id', 'p.id').where('r.id', input.supplement_of).select('r.status', 'p.pay_schedule', 'p.period_start', 'p.period_end').first();
+    if (!original || !['approved', 'partially_paid', 'paid'].includes(original.status) || original.pay_schedule !== input.pay_schedule || original.period_start !== input.period_start || original.period_end !== input.period_end) throw new PayrollPeriodError('SUPPLEMENT_PERIOD', 'A supplement must use the exact period of an approved payroll.');
+    const draft = await database('payroll_periods').where({ pay_schedule: input.pay_schedule, status: 'calculated' }).whereBetween('period_start', [input.period_start, input.period_end]).first();
+    if (draft) throw new PayrollPeriodError('SUPPLEMENT_DRAFT', 'Complete the existing draft payroll before creating a supplement.');
+  } else if (overlap) {
     throw new PayrollPeriodError(
       'PAYROLL_PERIOD_OVERLAP',
       `${input.pay_schedule} payroll already covers ${overlap.period_start} to ${overlap.period_end}.`,
@@ -216,7 +232,7 @@ async function getShiftSettlements(
   const [shifts, deductions] = await Promise.all([
     database('shifts')
       .whereIn('id', shiftIds)
-      .select('id', 'employee_id', 'shift_date', 'start_time', 'wage_paid'),
+      .select('*'),
     database('wage_deductions')
       .whereIn('shift_id', shiftIds)
       .whereNull('deleted_at')
@@ -233,10 +249,7 @@ async function getShiftSettlements(
       employee_id: Number(shift.employee_id),
       shift_id: Number(shift.id),
       payment_date: String(shift.shift_date || shift.start_time).slice(0, 10),
-      direct_paid: money(
-        deduction?.final_wage
-          ?? Math.max(0, Number(shift.wage_paid || 0) - Number(deduction?.deduction_amount || 0)),
-      ),
+      direct_paid: money(shift.direct_wage_cash_amount ?? Math.max(0, Number(shift.wage_paid || 0) - Number(deduction?.deduction_amount || 0))),
       deduction: money(deduction?.deduction_amount || 0),
       deduction_id: deduction ? Number(deduction.id) : null,
     };
@@ -285,6 +298,7 @@ export async function previewPayrollRun(
       employee_id: employeeId,
       employee_name: employeeName.get(employeeId) || `Employee ${employeeId}`,
       earning_count: rows.length,
+      shift_count: new Set(rows.filter(r => r.shift_id).map(r => r.shift_id)).size,
       gross_earnings: gross,
       prior_shift_deductions: deductions,
       prior_shift_payments: paid,
@@ -403,6 +417,7 @@ export async function refreshPayrollLine(
     status,
     updated_at: trx.fn.now(),
   });
+  await allocatePayrollSettlements(lineId, trx);
   return trx('payroll_lines').where({ id: lineId }).first();
 }
 
@@ -467,6 +482,7 @@ export async function calculatePayrollRun(
     });
 
     await generatePeriodicEarnings({
+      supplement_of: input.supplement_of,
       id: periodId,
       pay_schedule: input.pay_schedule,
       period_start: input.period_start,
@@ -494,6 +510,7 @@ export async function calculatePayrollRun(
       const gross = money(rows.reduce((sum, earning) => sum + Number(earning.gross_amount || 0), 0));
       lineRows.push({
         run_id: runId,
+        settlement_version: 1,
         employee_id: employeeId,
         gross_earnings: gross,
         net_pay: gross,
@@ -583,6 +600,7 @@ export async function getPayrollRun(runId: number, database: Knex = db): Promise
     line.earnings = earningsByLine.get(lineId) || [];
     line.deductions = deductionsByLine.get(lineId) || [];
     line.payments = paymentsByLine.get(lineId) || [];
+    await enrichPayrollLine(line, database);
   }
   return { ...run, lines };
 }
@@ -591,42 +609,7 @@ export async function applyStaffDebtDeduction(
   deduction: any,
   trx: Knex.Transaction,
 ): Promise<void> {
-  let remaining = Number(deduction.amount || 0);
-  const debts = await trx('staff_debts')
-    .where({ employee_id: deduction.employee_id, status: 'outstanding' })
-    .orderBy('created_at')
-    .orderBy('id');
-  const outstanding = debts.reduce((sum, debt) => sum + Number(debt.balance || 0), 0);
-  if (remaining > outstanding) {
-    throw new Error(
-      `Staff debt deduction of KES ${remaining.toFixed(2)} exceeds outstanding debt of KES ${outstanding.toFixed(2)}`,
-    );
-  }
-
-  for (const debt of debts) {
-    if (remaining <= 0) break;
-    const amount = money(Math.min(remaining, Number(debt.balance || 0)));
-    const balance = money(Number(debt.balance || 0) - amount);
-    await trx('staff_debts').where({ id: debt.id }).update({
-      balance,
-      status: balance <= 0 ? 'cleared' : 'outstanding',
-    });
-    await trx('payroll_debt_allocations').insert({
-      deduction_id: deduction.id,
-      staff_debt_id: debt.id,
-      amount,
-    });
-    remaining = money(remaining - amount);
-  }
-
-  const account = await trx('credit_accounts')
-    .where({ employee_id: deduction.employee_id, type: 'employee' })
-    .first();
-  if (account) {
-    await trx('credit_accounts').where({ id: account.id }).update({
-      balance: money(Math.max(0, Number(account.balance || 0) - Number(deduction.amount || 0))),
-    });
-  }
+  await allocateEmployeeDebt(Number(deduction.employee_id), Number(deduction.amount), { table: 'payroll_debt_allocations', fields: { deduction_id: deduction.id } }, trx);
 }
 
 export async function approvePayrollRun(
@@ -639,6 +622,17 @@ export async function approvePayrollRun(
     if (!run) throw new Error('Payroll run not found');
     if (run.status !== 'calculated') throw new Error('Only a calculated payroll run can be approved');
 
+    const lines = await trx('payroll_lines').where({ run_id: runId });
+    for (const line of lines) {
+      const preview = await payrollRecoveryPreview(line.id, trx);
+      const draft = await trx('payroll_deductions').where({ payroll_line_id: line.id, deduction_type: 'staff_debt', status: 'draft' }).sum('amount as total').first();
+      if (preview.recoverable > 0 || Number(draft?.total || 0) > 0 || line.recovery_review) {
+        const decision = line.recovery_review ? JSON.parse(line.recovery_review) : null;
+        const amount = validateRecoveryDecision(preview, decision);
+        if (Math.abs(amount - Number(draft?.total || 0)) > 0.005) throw settlementError('Recovery changed. Review the debt deduction before approval.');
+      }
+      if (Number(line.total_deductions) + Number(line.paid_amount) > Number(line.gross_earnings) + 0.005) throw settlementError('Payroll exceeds earned compensation. Reconcile it before approval.');
+    }
     const deductions = await trx('payroll_deductions')
       .join('payroll_lines', 'payroll_deductions.payroll_line_id', 'payroll_lines.id')
       .where({ 'payroll_lines.run_id': runId, 'payroll_deductions.status': 'draft' })
@@ -674,6 +668,7 @@ export async function approvePayrollRun(
       status: 'approved',
       updated_at: trx.fn.now(),
     });
+    for (const line of lines) await allocatePayrollSettlements(line.id, trx);
     await refreshPayrollRun(runId, trx);
   });
 }
@@ -726,13 +721,8 @@ export async function voidPayrollRun(
         money((restoredByEmployee.get(employeeId) || 0) + Number(allocation.amount || 0)),
       );
     }
-    for (const [employeeId, amount] of restoredByEmployee) {
-      const account = await trx('credit_accounts').where({ employee_id: employeeId, type: 'employee' }).first();
-      if (account) {
-        await trx('credit_accounts').where({ id: account.id }).update({
-          balance: money(Number(account.balance || 0) + amount),
-        });
-      }
+    for (const [employeeId] of restoredByEmployee) {
+      await syncEmployeeDebt(employeeId, trx);
     }
 
     const links = await trx('payroll_line_earnings')
@@ -759,6 +749,7 @@ export async function voidPayrollRun(
       .where({ status: 'posted' })
       .where('reference', 'like', 'SHIFT-WAGE:%')
       .update({ status: 'reversed', reversed_at: trx.fn.now() });
+    await trx('payroll_settlement_allocations').whereIn('payroll_line_id', trx('payroll_lines').where({ run_id: runId }).select('id')).whereNull('reversed_at').update({ reversed_at: trx.fn.now() });
     await trx('payroll_lines').where({ run_id: runId }).update({
       status: 'void',
       balance_due: 0,

@@ -13,6 +13,7 @@ import {
 import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
+router.use(requireAdmin);
 
 // Columns safe to expose in list/detail responses (never leak PIN)
 const SAFE_COLUMNS = [
@@ -322,6 +323,7 @@ router.put('/:id', requireAdmin, validate(updateEmployeeSchema), async (req, res
     if (daily_wage !== undefined) updates.daily_wage = daily_wage;
     if (phone !== undefined) updates.phone = phone;
     if (active !== undefined) updates.active = active;
+    if (active === false && !existing.employment_end_date && employment_end_date === undefined) updates.employment_end_date = getKenyaDate();
     if (pin !== undefined) updates.pin = hashPin(pin);
     if (role !== undefined) updates.role = role;
     if (job_title !== undefined) updates.job_title = job_title || null;
@@ -354,7 +356,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       });
     }
 
-    await db('employees').where({ id: req.params.id }).update({ active: false });
+    await db('employees').where({ id: req.params.id }).update({ active: false, employment_end_date: employee.employment_end_date || getKenyaDate() });
     res.json({ success: true, message: 'Employee deactivated' });
   } catch (err: any) {
     console.error('[employees:delete] ERROR', err.message, err.stack);

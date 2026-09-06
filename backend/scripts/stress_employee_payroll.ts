@@ -4,6 +4,7 @@ import knexFactory from 'knex';
 import { up as migrateCompensation } from '../migrations/20260728_032_employee_compensation_plans';
 import { up as migrateEarnings } from '../migrations/20260728_033_employee_earnings';
 import { up as migratePayroll } from '../migrations/20260728_034_payroll_ledger';
+import { up as migrateSettlement } from '../migrations/20260906_043_employee_settlement';
 import {
   approvePayrollRun,
   calculatePayrollRun,
@@ -76,6 +77,7 @@ async function main() {
     await migrateCompensation(db);
     await migrateEarnings(db);
     await migratePayroll(db);
+    await migrateSettlement(db);
 
     await db('employee_compensation_plans').update({
       name: 'Stress monthly plan',

@@ -439,8 +439,11 @@ The protected endpoint is:
 POST /api/health/backup
 ```
 
-It now requires admin authentication and checkpoints WAL before copying the
-database file.
+It requires admin authentication and uses SQLite `VACUUM INTO` to produce a
+consistent standalone snapshot. SQLite integrity and foreign-key checks verify
+the resulting copy before reporting success. See
+[Employee repayment workflow](EMPLOYEE-REPAYMENT-WORKFLOW.md#database-backup-and-transfer)
+for safe station-to-development transfers and the read-only payroll audit.
 
 Minimum backup policy:
 
@@ -449,8 +452,8 @@ Minimum backup policy:
 - Monthly restore test on a different machine.
 - Keep at least 30 daily backups and 12 monthly backups.
 
-For a stronger setup, use SQLite's online backup tooling or `VACUUM INTO`
-from a controlled local script.
+The standalone `npm run backup:database --workspace=backend` command provides
+the same verified snapshot without starting the application or running migrations.
 
 ## Shift Operations Monitoring
 

@@ -22,6 +22,7 @@ import InvoiceCustomers from './pages/InvoiceCustomers';
 import InvoiceCustomerDetail from './pages/InvoiceCustomerDetail';
 import More from './pages/More';
 import Payroll from './pages/Payroll';
+import EmployeePay from './pages/EmployeePay';
 
 export default function App() {
   const { user, isAdmin } = useAuth();
@@ -43,6 +44,7 @@ export default function App() {
               <Route path="/more" element={<More />} />
               <Route path="/employees" element={<Employees />} />
               <Route path="/payroll" element={<Payroll />} />
+              <Route path="/employee-pay/:id" element={<EmployeePay />} />
               <Route path="/pumps" element={<Pumps />} />
               <Route path="/tanks" element={<Tanks />} />
               <Route path="/tanks/:id/dips" element={<TankDips />} />
@@ -57,6 +59,7 @@ export default function App() {
           ) : (
             <>
               <Route path="/my-shift" element={<MyShift />} />
+              <Route path="/my-pay" element={<EmployeePay />} />
               <Route path="/prices" element={<FuelPricing />} />
               <Route path="/shifts/:id" element={<ShiftDetail />} />
               <Route path="/shifts/:id/record" element={<ShiftRecord />} />

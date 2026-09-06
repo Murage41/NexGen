@@ -1,15 +1,17 @@
 import { Router } from 'express';
 import db from '../database';
+import { employeeDebtHistory } from '../services/employeePay';
 import { getKenyaDate } from '../utils/timezone';
-import { requireAdmin } from '../middleware/requireAdmin';
+import { requireAdmin, requireAuth } from '../middleware/requireAdmin';
 import { paymentHttpStatus, recordMoneyAccountPayment } from '../services/receivablePayments';
 
 const router = Router();
+router.use(requireAuth);
 
 // GET / - List all credit accounts with running balance
 router.get('/', async (req, res) => {
   try {
-    const type = req.query.type as string;
+    const type = (req as any).employee?.role === 'admin' ? req.query.type as string : 'customer';
 
     const billingMode = req.query.billing_mode as string;
 
@@ -44,6 +46,7 @@ router.get('/:id', async (req, res) => {
   try {
     const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
+    if ((req as any).employee?.role !== 'admin' && account.type === 'employee' && Number(account.employee_id) !== Number((req as any).employee?.id)) return res.status(403).json({ success: false, error: 'You may only view your own employee account.' });
 
     let credits: any[] = [];
     let payments: any[] = [];
@@ -275,6 +278,7 @@ router.get('/:id/statement', async (req, res) => {
   try {
     const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
+    if ((req as any).employee?.role !== 'admin' && account.type === 'employee' && Number(account.employee_id) !== Number((req as any).employee?.id)) return res.status(403).json({ success: false, error: 'You may only view your own employee statement.' });
 
     let entries: Array<{
       date: string;
@@ -343,30 +347,12 @@ router.get('/:id/statement', async (req, res) => {
         });
       }
     } else if (account.type === 'employee') {
-      // For employees, staff_debts are debits (deficit carried forward)
-      const debts = await db('staff_debts')
-        .where({ employee_id: account.employee_id })
-        .select('created_at as date', 'original_deficit', 'deducted_from_wage', 'carried_forward', 'balance', 'status')
-        .orderBy('created_at', 'asc');
-
-      for (const d of debts) {
-        if (Number(d.carried_forward) > 0) {
-          entries.push({
-            date: d.date,
-            description: 'Shift deficit carried forward',
-            debit_amount: Number(d.carried_forward),
-            credit_amount: 0,
-          });
-        }
-        if (Number(d.deducted_from_wage) > 0) {
-          entries.push({
-            date: d.date,
-            description: 'Deducted from wage',
-            debit_amount: 0,
-            credit_amount: Number(d.deducted_from_wage),
-          });
-        }
+      const data = await employeeDebtHistory(Number(account.employee_id), db);
+      for (const debt of data.debts) {
+        entries.push({ date: debt.created_at, description: `Shift #${debt.shift_id} deficit carried forward`, debit_amount: Number(debt.carried_forward), credit_amount: 0 });
+        if (debt.historical_adjustment) entries.push({ date: debt.created_at, description: `Historical corrections / settlements for shift #${debt.shift_id} (not a new repayment)`, debit_amount: Math.max(0, debt.historical_adjustment), credit_amount: Math.max(0, -debt.historical_adjustment) });
       }
+      for (const item of data.history.filter(h => !h.reversed_at)) entries.push({ date: item.created_at || data.debts.find(d => d.id === item.staff_debt_id)?.created_at, description: `${item.type} #${item.source_id} for shift #${item.origin_shift_id}`, debit_amount: 0, credit_amount: Number(item.amount) });
     }
 
     // Sort chronologically

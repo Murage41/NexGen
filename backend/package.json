@@ -36,7 +36,10 @@
     "audit:receivables": "tsx scripts/audit_receivable_integrity.ts",
     "audit:operations": "tsx scripts/audit_operational_integrity.ts",
     "maintenance:delivery-timestamps:dry-run": "tsx scripts/dry_run_delivery_timestamp_normalization.ts",
-    "repair:diwafa-shifts": "tsx scripts/repair_diwafa_shifts_27_28_43.ts"
+    "repair:diwafa-shifts": "tsx scripts/repair_diwafa_shifts_27_28_43.ts",
+    "test:employee-settlement": "tsx scripts/test_employee_settlement.ts",
+    "backup:database": "tsx scripts/backup_database.ts",
+    "audit:employee-payroll": "tsx scripts/audit_employee_payroll.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

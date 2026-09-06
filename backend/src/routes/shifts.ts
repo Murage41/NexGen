@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import db from '../database';
+import { shiftRecoveryPreview, postShiftRecovery } from '../services/shiftSettlement';
 import { validate } from '../middleware/validate';
 import {
   createShiftExpenseSchema,
@@ -199,9 +200,10 @@ async function requireOpenShift(req: any, res: any): Promise<boolean> {
 }
 
 // GET all shifts (with pagination)
-router.get('/', async (req, res) => {
+router.get('/', requireAuth, async (req: any, res) => {
   try {
     const options = normalizeShiftHistoryQuery(req.query as Record<string, unknown>);
+    if ((req as any).employee?.role !== 'admin') options.employeeId = Number((req as any).employee?.id);
     const [result, staleShiftHours] = await Promise.all([
       listShiftHistory(db, options),
       getStaleShiftHours(db),
@@ -268,13 +270,14 @@ router.get('/export.csv', requireAdmin, async (req, res) => {
 });
 
 // GET current open shift
-router.get('/current', async (_req, res) => {
+router.get('/current', requireAuth, async (req: any, res) => {
   try {
     const [shift, staleShiftHours] = await Promise.all([
       db('shifts')
         .join('employees', 'shifts.employee_id', 'employees.id')
         .select('shifts.*', 'employees.name as employee_name')
         .where('shifts.status', 'open')
+        .modify(query => { if (req.employee.role !== 'admin') query.where('shifts.employee_id', req.employee.id); })
         .orderBy('shifts.start_time', 'desc')
         .first(),
       getStaleShiftHours(db),
@@ -288,9 +291,10 @@ router.get('/current', async (_req, res) => {
   }
 });
 
-router.get('/:id/neighbors', async (req, res) => {
+router.get('/:id/neighbors', requireAuth, requireOwnShiftOrAdmin, async (req: any, res) => {
   try {
     const options = normalizeShiftHistoryQuery(req.query as Record<string, unknown>);
+    if ((req as any).employee?.role !== 'admin') options.employeeId = Number((req as any).employee?.id);
     const neighbors = await getShiftHistoryNeighbors(db, Number(req.params.id), options);
     if (!neighbors) return res.status(404).json({ success: false, error: 'Shift not found' });
     res.json({ success: true, data: neighbors });
@@ -303,7 +307,7 @@ router.get('/:id/neighbors', async (req, res) => {
 });
 
 // GET shift with full details
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   try {
     const shift = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
@@ -412,7 +416,7 @@ router.get('/:id', async (req, res) => {
       .where('credit_payments.shift_id', shift.id)
       .where('credit_payments.status', 'posted')
       .whereNull('credit_payments.deleted_at')
-      .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone')
+      .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone', 'credit_accounts.type as account_type', 'credit_accounts.employee_id as account_employee_id')
       .orderBy('credit_payments.date', 'asc');
 
     // Get employee's outstanding debt
@@ -443,14 +447,17 @@ router.get('/:id', async (req, res) => {
       employee_wage,
       payrollPayments,
     });
+    const viewer = (req as any).employee;
+    const visiblePayments = viewer?.role === 'admin' ? payrollPayments : payrollPayments.filter(p => Number(p.employee_id) === Number(viewer?.id));
+    const visibleReceipts = viewer?.role === 'admin' ? creditReceipts : creditReceipts.filter(p => p.account_type !== 'employee' || Number(p.account_employee_id) === Number(viewer?.id));
     const activityTimeline = buildShiftTimeline({
       shift,
       closeReconciliation,
       shiftCredits,
       invoiceConsumption,
-      creditReceipts,
+      creditReceipts: visibleReceipts,
       expenses,
-      payrollPayments,
+      payrollPayments: visiblePayments,
       reviewEvents,
     });
 
@@ -466,9 +473,9 @@ router.get('/:id', async (req, res) => {
         expenses,
         shift_credits: shiftCredits,
         invoice_consumption: invoiceConsumption,
-        credit_receipts: creditReceipts,
+        credit_receipts: visibleReceipts,
         wage_deduction: wageDeduction || null,
-        payroll_payments: payrollPayments,
+        payroll_payments: visiblePayments,
         compensation_plan: compensationPlan,
         earnings,
         earning_preview: earningPreview,
@@ -1964,61 +1971,29 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
   }
 });
 
-// POST/PUT wage deduction for shift
-router.put('/:id/wage-deduction', requireAdmin, async (req, res) => {
+// Retired endpoints cannot change posted recovery independently of compensation.
+router.put('/:id/wage-deduction', requireAdmin, (_req, res) => res.status(409).json({ success: false, error: 'Review debt recovery when closing the shift or approving payroll.' }));
+router.delete('/:id/wage-deduction', requireAdmin, (_req, res) => res.status(409).json({ success: false, error: 'A recorded wage recovery requires an audited reversal, not deletion.' }));
+
+router.post('/:id/recovery-preview', requireAdmin, async (req, res) => {
   try {
-    if (!(await requireOpenShift(req, res))) return;
-    const { deduction_amount, reason } = req.body;
-    const normalizedDeduction = Number(deduction_amount);
-    if (!Number.isFinite(normalizedDeduction) || normalizedDeduction < 0) {
-      return res.status(400).json({ success: false, error: 'deduction_amount must be a non-negative number' });
-    }
-
-    const shift = await db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .select('shifts.employee_id', 'employees.daily_wage')
-      .where('shifts.id', req.params.id)
-      .first();
-
-    if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
-
-    const original_wage = Number(shift.daily_wage || 0);
-    if (normalizedDeduction > original_wage) {
-      return res.status(400).json({
-        success: false,
-        error: `Deduction cannot exceed the available wage of KES ${original_wage.toFixed(2)}`,
-      });
-    }
-    const final_wage = original_wage - normalizedDeduction;
-
-    const existing = await db('wage_deductions').where({ shift_id: req.params.id }).first();
-    if (existing) {
-      await db('wage_deductions').where({ shift_id: req.params.id }).update({
-        deduction_amount: normalizedDeduction, original_wage, final_wage, reason: reason || null,
-      });
-    } else {
-      await db('wage_deductions').insert({
-        shift_id: req.params.id, employee_id: shift.employee_id,
-        original_wage, deduction_amount: normalizedDeduction, final_wage, reason: reason || null,
-      });
-    }
-
-    const deduction = await db('wage_deductions').where({ shift_id: req.params.id }).first();
-    res.json({ success: true, data: deduction });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// DELETE wage deduction
-router.delete('/:id/wage-deduction', requireAdmin, async (req, res) => {
-  try {
-    if (!(await requireOpenShift(req, res))) return;
-    await db('wage_deductions').where({ shift_id: req.params.id }).update({ deleted_at: new Date().toISOString() });
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+    const data = await db.transaction(async trx => {
+      const shift = await trx('shifts').where({ id: req.params.id, status: 'open' }).first();
+      if (!shift) throw new Error('Open shift not found.');
+      const cash = Number(req.body.wage_paid);
+      if (!Number.isFinite(cash) || cash < 0) throw new Error('Enter the actual non-negative cash wage payment.');
+      const readings = await trx('pump_readings').join('pumps', 'pump_readings.pump_id', 'pumps.id').where('pump_readings.shift_id', shift.id).where('pumps.active', true);
+      const collections = await trx('shift_collections').where({ shift_id: shift.id }).first();
+      const expenses = await trx('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
+      const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
+      const creditReceipts = await trx('credit_payments').where({ shift_id: shift.id, status: 'posted' }).whereNull('deleted_at');
+      const payrollPayments = await trx('payroll_payments').where({ shift_id: shift.id, status: 'posted' });
+      const invoiceConsumption = await trx('invoice_consumption').where({ shift_id: shift.id }).whereNull('deleted_at');
+      const { variance } = computeShiftAccountability({ readings, collections, expenses, shiftCredits, creditReceipts, payrollPayments, invoiceConsumption, employee_wage: cash });
+      return shiftRecoveryPreview(shift, readings, cash, variance, trx);
+    });
+    res.json({ success: true, data });
+  } catch (e: any) { res.status(e.httpStatus || 409).json({ success: false, error: e.message }); }
 });
 
 // PUT close shift — with deduction options and debt carry-forward
@@ -2027,15 +2002,11 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
   try {
     const {
       notes,
-      deduct_amount,
       wage_paid: submittedWage,
       variance_reason: varianceReason,
       reconciliation,
     } = req.body;
-    // deduct_amount: number | null
-    //   null/undefined = don't deduct (full deficit becomes debt)
-    //   number = deduct this amount from wage (can be partial or full)
-    // wage_paid: number | undefined — the actual wage taken from the drawer this shift
+    // wage_paid records money actually taken from the drawer.
 
     const shift = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
@@ -2057,18 +2028,13 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
       return res.status(400).json({ success: false, error: 'wage_paid must be a non-negative number' });
     }
 
-    const normalizedDeduction = deduct_amount === undefined || deduct_amount === null
-      ? null
-      : Number(deduct_amount);
-    if (normalizedDeduction !== null && (!Number.isFinite(normalizedDeduction) || normalizedDeduction < 0)) {
-      return res.status(400).json({ success: false, error: 'deduct_amount must be a non-negative number' });
-    }
-
     const warnings: string[] = [];
     const closeTime = new Date().toISOString();
     const closeTimeSql = toSqliteDateTime(closeTime);
 
     await db.transaction(async (trx) => {
+      const currentShift = await trx('shifts').where({ id: shift.id }).first();
+      if (currentShift?.status !== 'open') throw Object.assign(new Error('Shift is no longer open.'), { httpStatus: 409 });
       // Calculate variance
       const readings = await trx('pump_readings')
         .join('pumps', 'pump_readings.pump_id', 'pumps.id')
@@ -2142,63 +2108,7 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         throw err;
       }
 
-      // Handle deficit and deductions
-      if (variance < 0) {
-        const deficit = Math.abs(variance);
-        const actualDeduction = normalizedDeduction != null
-          ? Math.min(normalizedDeduction, employee_wage, deficit)
-          : 0;
-        const carriedForward = deficit - actualDeduction;
-
-        if (actualDeduction > 0) {
-          const existing = await trx('wage_deductions').where({ shift_id: shift.id }).first();
-          if (existing) {
-            await trx('wage_deductions').where({ shift_id: shift.id }).update({
-              deduction_amount: actualDeduction,
-              original_wage: employee_wage,
-              final_wage: employee_wage - actualDeduction,
-              reason: `Shift deficit of KES ${deficit.toFixed(2)}`,
-            });
-          } else {
-            await trx('wage_deductions').insert({
-              shift_id: shift.id,
-              employee_id: shift.emp_id,
-              original_wage: employee_wage,
-              deduction_amount: actualDeduction,
-              final_wage: employee_wage - actualDeduction,
-              reason: `Shift deficit of KES ${deficit.toFixed(2)}`,
-            });
-          }
-        }
-
-        if (carriedForward > 0) {
-          await trx('staff_debts').insert({
-            employee_id: shift.emp_id,
-            shift_id: shift.id,
-            original_deficit: deficit,
-            deducted_from_wage: actualDeduction,
-            carried_forward: carriedForward,
-            balance: carriedForward,
-            status: 'outstanding',
-          });
-
-          const existingAccount = await trx('credit_accounts')
-            .where({ employee_id: shift.emp_id, type: 'employee' })
-            .first();
-          if (!existingAccount) {
-            await trx('credit_accounts').insert({
-              name: shift.emp_name,
-              type: 'employee',
-              employee_id: shift.emp_id,
-              balance: carriedForward,
-            });
-          } else {
-            await trx('credit_accounts')
-              .where({ id: existingAccount.id })
-              .update({ balance: Number(existingAccount.balance || 0) + carriedForward });
-          }
-        }
-      }
+      await postShiftRecovery(shift, readings, employee_wage, variance, req.body.recovery_decision, String(varianceReason || ''), trx, req.employee?.id > 0 ? req.employee.id : null);
 
       // --- Litre accountability: computed book stock + FIFO costing ---
       const allTanks = await trx('tanks').select('id');
@@ -2362,7 +2272,8 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
 });
 
 // GET staff debts for an employee
-router.get('/staff-debts/:employeeId', async (req, res) => {
+router.get('/staff-debts/:employeeId', requireAuth, async (req: any, res) => {
+  if (req.employee.role !== 'admin' && Number(req.params.employeeId) !== Number(req.employee.id)) return res.status(403).json({ success: false, error: 'You can only view your own debt.' });
   try {
     const debts = await db('staff_debts')
       .where({ employee_id: req.params.employeeId })
@@ -2379,124 +2290,10 @@ router.get('/staff-debts/:employeeId', async (req, res) => {
 // PUT repay staff debt from wage (used when opening/during a shift to clear past debts)
 // Phase 3 fix: wrapped in transaction — writes staff_debts + credit_accounts + wage_deductions
 // Phase 5: require admin — adjusts financial records
-router.put('/:id/repay-debt', requireAdmin, async (req, res) => {
-  try {
-    if (!(await requireOpenShift(req, res))) return;
-    const amount = Number(req.body.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return res.status(400).json({ success: false, error: 'amount must be greater than zero' });
-    }
-
-    const shift = await db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .select('shifts.*', 'employees.daily_wage', 'employees.id as emp_id')
-      .where('shifts.id', req.params.id)
-      .first();
-
-    if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
-
-    await db.transaction(async (trx) => {
-      const existingDeduction = await trx('wage_deductions')
-        .where({ shift_id: shift.id })
-        .whereNull('deleted_at')
-        .first();
-      const availableWage = Math.max(
-        0,
-        Number(shift.daily_wage || 0) - Number(existingDeduction?.deduction_amount || 0),
-      );
-      if (amount > availableWage) {
-        const error: any = new Error(`Debt deduction cannot exceed the available wage of KES ${availableWage.toFixed(2)}`);
-        error.http = 400;
-        throw error;
-      }
-
-      // Get outstanding debts oldest first
-      const debts = await trx('staff_debts')
-        .where({ employee_id: shift.emp_id, status: 'outstanding' })
-        .orderBy('created_at', 'asc');
-
-      let remaining = amount;
-      const debtAllocations: Array<{ staff_debt_id: number; amount: number }> = [];
-      for (const debt of debts) {
-        if (remaining <= 0) break;
-        const payment = Math.min(remaining, debt.balance);
-        const newBalance = debt.balance - payment;
-        await trx('staff_debts').where({ id: debt.id }).update({
-          balance: newBalance,
-          status: newBalance <= 0 ? 'cleared' : 'outstanding',
-        });
-        debtAllocations.push({ staff_debt_id: Number(debt.id), amount: payment });
-        remaining -= payment;
-      }
-
-      // Sync credit_accounts.balance for this employee
-      const deductionAmount = amount - remaining; // actual amount applied
-      if (deductionAmount > 0) {
-        const empAccount = await trx('credit_accounts')
-          .where({ employee_id: shift.emp_id, type: 'employee' })
-          .first();
-        if (empAccount) {
-          const newBalance = Math.max(0, Number(empAccount.balance) - deductionAmount);
-          await trx('credit_accounts')
-            .where({ id: empAccount.id })
-            .update({ balance: newBalance });
-        }
-      }
-
-      // Create/update wage deduction for this debt repayment
-      if (deductionAmount > 0) {
-        const existing = existingDeduction;
-        const totalDeduction = (existing?.deduction_amount || 0) + deductionAmount;
-        let deductionId = existing?.id ? Number(existing.id) : null;
-        if (existing) {
-          await trx('wage_deductions').where({ shift_id: shift.id }).update({
-            deduction_amount: totalDeduction,
-            final_wage: shift.daily_wage - totalDeduction,
-            reason: existing.reason
-              ? `${existing.reason} + Debt repayment KES ${deductionAmount.toFixed(2)}`
-              : `Debt repayment KES ${deductionAmount.toFixed(2)}`,
-          });
-        } else {
-          const [createdDeductionId] = await trx('wage_deductions').insert({
-            shift_id: shift.id,
-            employee_id: shift.emp_id,
-            original_wage: shift.daily_wage,
-            deduction_amount: totalDeduction,
-            final_wage: shift.daily_wage - totalDeduction,
-            reason: `Debt repayment KES ${deductionAmount.toFixed(2)}`,
-          });
-          deductionId = Number(createdDeductionId);
-        }
-        if (debtAllocations.length > 0) {
-          await trx('shift_staff_debt_allocations').insert(
-            debtAllocations.map((allocation) => ({
-              shift_id: shift.id,
-              wage_deduction_id: deductionId,
-              staff_debt_id: allocation.staff_debt_id,
-              amount: allocation.amount,
-            })),
-          );
-        }
-      }
-    });
-
-    // Return updated debts (outside trx — read-only)
-    const updatedDebts = await db('staff_debts')
-      .where({ employee_id: shift.emp_id })
-      .orderBy('created_at', 'desc');
-    const totalOutstanding = updatedDebts
-      .filter((d: any) => d.status === 'outstanding')
-      .reduce((sum: number, d: any) => sum + d.balance, 0);
-
-    res.json({ success: true, data: { debts: updatedDebts, total_outstanding: totalOutstanding } });
-  } catch (err: any) {
-    console.error('[shifts:repay-debt] ERROR', err.message, err.stack);
-    res.status(err.http || 500).json({ success: false, error: err.message });
-  }
-});
+router.put('/:id/repay-debt', requireAdmin, (_req, res) => res.status(409).json({ success: false, error: 'Use Review debt recovery in shift close or payroll; repayment is posted with compensation approval.' }));
 
 // GET per-shift tank stock summary
-router.get('/:id/tank-summary', async (req, res) => {
+router.get('/:id/tank-summary', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   try {
     const shift = await db('shifts').where({ id: req.params.id }).first();
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });

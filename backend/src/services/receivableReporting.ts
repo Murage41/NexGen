@@ -207,12 +207,17 @@ export async function getDirectReceivableCashInflows(db: Knex, from: string, to:
       .reduce((sum, event) => sum + Number(event.total || 0), 0),
   );
 
+  const staffReceipts = await db('credit_payments as payment').join('credit_accounts as account', 'payment.account_id', 'account.id')
+    .where({ 'account.type': 'employee', 'payment.payment_type': 'staff_debt', 'payment.status': 'posted' }).whereNull('payment.deleted_at').whereNull('payment.shift_id')
+    .whereBetween('payment.date', [from, to]).sum('payment.amount as total').first();
+  const staffTotal = roundMoney(Number(staffReceipts?.total || 0));
   return {
     money_credit_payments: moneyTotal,
     money_credit_payments_by_method: directMoneyByMethod,
     invoice_payments: invoiceTotal,
     invoice_payments_by_account: invoiceByAccount,
-    total_direct_receivable_cash: roundMoney(moneyTotal + invoiceTotal),
+    employee_debt_repayments: staffTotal,
+    total_direct_receivable_cash: roundMoney(moneyTotal + invoiceTotal + staffTotal),
   };
 }
 

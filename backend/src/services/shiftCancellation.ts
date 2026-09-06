@@ -1,5 +1,6 @@
 import type { Knex } from 'knex';
 import db from '../database';
+import { reverseEmployeeDebtReceipt } from './employeePay';
 import { recomputeAccountBalance } from './accountBalance';
 import { refreshPayrollLine, refreshPayrollRun } from './payroll';
 import { reverseMoneyAccountPaymentInTransaction } from './receivablePayments';
@@ -139,6 +140,10 @@ export async function cancelOpenShift(
       .whereNull('deleted_at')
       .orderBy('id');
     for (const payment of creditPayments) {
+      if (payment.payment_type === 'staff_debt') {
+        await reverseEmployeeDebtReceipt(Number(payment.id), reason, trx, actorId);
+        continue;
+      }
       await reverseMoneyAccountPaymentInTransaction(trx, {
         paymentId: Number(payment.id),
         reason: `Shift #${shiftId} cancelled: ${reason}`,

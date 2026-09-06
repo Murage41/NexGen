@@ -1,3 +1,5 @@
+import { up as migrateSettlement } from '../migrations/20260906_043_employee_settlement';
+import { payrollRecoveryPreview } from '../src/services/payrollDetails';
 import assert from 'node:assert/strict';
 import knexFactory from 'knex';
 import { up as migrateCompensation } from '../migrations/20260728_032_employee_compensation_plans';
@@ -70,6 +72,7 @@ async function main() {
     await migrateCompensation(db);
     await migrateEarnings(db);
     await migratePayroll(db);
+    await migrateSettlement(db);
 
     const [weeklyEmployeeId] = await db('employees').insert({
       name: 'Weekly Employee',
@@ -174,6 +177,8 @@ async function main() {
       await refreshPayrollLine(line.id, trx);
       await refreshPayrollRun(runId, trx);
     });
+    const recovery = await payrollRecoveryPreview(line.id, db);
+    await db('payroll_lines').where({ id: line.id }).update({ recovery_review: JSON.stringify({ version: recovery.version, amount: 1000, authorization_reference: 'AUTH-001', reason: 'Agreed instalment' }) });
     await approvePayrollRun(runId, null, db);
     assert.equal(
       (await db('employee_earnings').where({ component_id: salaryComponentId }).first()).status,

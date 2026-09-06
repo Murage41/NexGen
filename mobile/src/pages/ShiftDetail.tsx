@@ -1,6 +1,8 @@
+import { DailyRecovery } from '../../../shared/ui/DailyRecovery';
+import { previewShiftRecovery } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { getShift, closeShift, getStaffDebts, repayDebt, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey } from '../services/api';
+import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -20,6 +22,7 @@ export default function ShiftDetail() {
   const { isAdmin } = useAuth();
   const [shift, setShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [recoveryDecision, setRecoveryDecision] = useState<any>(null);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [varianceReason, setVarianceReason] = useState('');
@@ -27,16 +30,11 @@ export default function ShiftDetail() {
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
   const [neighbors, setNeighbors] = useState<{ previous: any | null; next: any | null }>({ previous: null, next: null });
-  const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
-  const [partialAmount, setPartialAmount] = useState('');
   const [closeNotes, setCloseNotes] = useState('');
   const [closing, setClosing] = useState(false);
 
   // Debt repay state
   const [debts, setDebts] = useState<any[]>([]);
-  const [showDebtModal, setShowDebtModal] = useState(false);
-  const [repayAmount, setRepayAmount] = useState('');
-  const [repaying, setRepaying] = useState(false);
   const [tankSummary, setTankSummary] = useState<any[]>([]);
   const [wagePaid, setWagePaid] = useState('');
   // Credit receipt state
@@ -102,22 +100,9 @@ export default function ShiftDetail() {
     }
     setClosing(true);
     try {
-      let deduct_amount: number | null = null;
-      if (closeVariance < 0 && shift.compensation_plan?.pay_schedule === 'daily') {
-        const deficit = Math.abs(closeVariance);
-        const wage = enteredWagePaid;
-        if (deductOption === 'full') {
-          deduct_amount = Math.min(deficit, wage);
-        } else if (deductOption === 'partial') {
-          const amt = parseFloat(partialAmount) || 0;
-          deduct_amount = Math.min(amt, wage, deficit);
-        } else {
-          deduct_amount = 0;
-        }
-      }
       const res = await closeShift(parseInt(id!), {
         notes: closeNotes || undefined,
-        deduct_amount,
+        recovery_decision: recoveryDecision || undefined,
         wage_paid: parseFloat(wagePaid) || 0,
         variance_reason: varianceReason.trim() || undefined,
         reconciliation: {
@@ -163,20 +148,6 @@ export default function ShiftDetail() {
   function openReviewAction(status: 'reviewed' | 'flagged') {
     setReviewNotes('');
     setReviewAction(status);
-  }
-
-  async function handleRepayDebt() {
-    const amt = parseFloat(repayAmount);
-    if (!amt || amt <= 0) return;
-    setRepaying(true);
-    try {
-      await repayDebt(parseInt(id!), amt);
-      setShowDebtModal(false);
-      setRepayAmount('');
-      await loadShift();
-    } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to repay debt');
-    } finally { setRepaying(false); }
   }
 
   async function handleCollectReceipt() {
@@ -407,8 +378,7 @@ export default function ShiftDetail() {
           <div className="text-right">
             <p className="font-bold text-orange-700">{fmt(totalDebt)}</p>
             {compensationPlan?.pay_schedule === 'daily' ? (
-              <button onClick={() => { setRepayAmount(String(Math.min(totalDebt, employeeWage))); setShowDebtModal(true); }}
-                className="text-xs text-orange-600 underline mt-0.5">Repay from Wage</button>
+              <p className="text-xs text-orange-700">Review recovery when closing the shift</p>
             ) : (
               <p className="text-xs text-orange-700 mt-0.5">Recover through payroll</p>
             )}
@@ -547,7 +517,7 @@ export default function ShiftDetail() {
             <span className="font-semibold">{fmt(grossShiftEarnings)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">{isOpen ? 'Planned drawer payment' : 'Paid from shift drawer'}</span>
+            <span className="text-gray-500">{isOpen ? 'Cash wage taken from drawer' : 'Paid from shift drawer'}</span>
             <span className="font-medium">{fmt(directDrawerPayment)}</span>
           </div>
           {compensationPlan?.pay_schedule !== 'daily' && (
@@ -854,70 +824,7 @@ export default function ShiftDetail() {
             </div>
 
             {/* Deduction options — only when deficit */}
-            {closeVariance < 0 && shift.compensation_plan?.pay_schedule === 'daily' && (
-              <div className="mb-4">
-                <p className="text-sm font-semibold text-gray-700 mb-2">
-                  Deficit: {fmt(Math.abs(closeVariance))} - Paid from shift: {fmt(enteredWagePaid)}
-                </p>
-
-                {/* Option: Full deduct */}
-                <label className="flex items-start gap-3 p-3 rounded-lg border mb-2 cursor-pointer"
-                  style={{ borderColor: deductOption === 'full' ? '#2563eb' : '#e5e7eb', background: deductOption === 'full' ? '#eff6ff' : 'white' }}>
-                  <input type="radio" name="deduct" checked={deductOption === 'full'} onChange={() => setDeductOption('full')} className="mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium">Deduct Full</p>
-                    <p className="text-xs text-gray-500">
-                      Deduct {fmt(Math.min(Math.abs(closeVariance), enteredWagePaid))} from wage
-                      {Math.abs(closeVariance) > enteredWagePaid && (
-                        <span className="text-orange-600"> · {fmt(Math.abs(closeVariance) - enteredWagePaid)} carried as debt</span>
-                      )}
-                    </p>
-                  </div>
-                </label>
-
-                {/* Option: Partial deduct */}
-                <label className="flex items-start gap-3 p-3 rounded-lg border mb-2 cursor-pointer"
-                  style={{ borderColor: deductOption === 'partial' ? '#2563eb' : '#e5e7eb', background: deductOption === 'partial' ? '#eff6ff' : 'white' }}>
-                  <input type="radio" name="deduct" checked={deductOption === 'partial'} onChange={() => setDeductOption('partial')} className="mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Deduct Partial</p>
-                    {deductOption === 'partial' && (
-                      <div className="mt-2">
-                        <input type="number" step="0.01" value={partialAmount}
-                          onChange={e => setPartialAmount(e.target.value)}
-                          placeholder={`Max ${Math.min(Math.abs(closeVariance), enteredWagePaid).toFixed(2)}`}
-                          className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
-                        {partialAmount && (
-                          <p className="text-xs text-orange-600 mt-1">
-                            {fmt(Math.abs(closeVariance) - Math.min(parseFloat(partialAmount) || 0, enteredWagePaid, Math.abs(closeVariance)))} carried as debt
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </label>
-
-                {/* Option: Don't deduct */}
-                <label className="flex items-start gap-3 p-3 rounded-lg border mb-2 cursor-pointer"
-                  style={{ borderColor: deductOption === 'none' ? '#2563eb' : '#e5e7eb', background: deductOption === 'none' ? '#eff6ff' : 'white' }}>
-                  <input type="radio" name="deduct" checked={deductOption === 'none'} onChange={() => setDeductOption('none')} className="mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium">Don't Deduct</p>
-                    <p className="text-xs text-orange-600">
-                      Full {fmt(Math.abs(closeVariance))} carried as debt
-                    </p>
-                  </div>
-                </label>
-              </div>
-            )}
-            {closeVariance < 0 && shift.compensation_plan?.pay_schedule !== 'daily' && (
-              <div className="mb-4 border border-red-200 bg-red-50 rounded-lg p-3">
-                <p className="text-sm font-semibold text-red-800">Deficit: {fmt(Math.abs(closeVariance))}</p>
-                <p className="text-xs text-red-600 mt-1">
-                  Recorded as staff debt. Recovery is handled through payroll.
-                </p>
-              </div>
-            )}
+            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} />
 
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
@@ -1027,47 +934,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
-      {/* Debt Repay Modal */}
-      {showDebtModal && (
-        <div className="mobile-modal-overlay flex items-end justify-center">
-          <div className="mobile-bottom-sheet max-w-lg rounded-t-2xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-800">Repay Staff Debt</h3>
-              <button onClick={() => setShowDebtModal(false)} className="p-1 text-gray-400">
-                <X size={20} />
-              </button>
-            </div>
 
-            <div className="bg-orange-50 rounded-lg p-3 mb-4 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Total Outstanding</span>
-                <span className="font-bold text-orange-700">{fmt(totalDebt)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Today's Wage</span>
-                <span className="font-semibold">{fmt(employeeWage)}</span>
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <label className="text-sm text-gray-600 mb-1 block">Amount to Deduct from Wage</label>
-              <input type="number" step="0.01" value={repayAmount}
-                onChange={e => setRepayAmount(e.target.value)}
-                placeholder={`Max ${Math.min(totalDebt, employeeWage).toFixed(2)}`}
-                className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
-              <p className="text-xs text-gray-400 mt-1">
-                Clears oldest debts first. Max: {fmt(Math.min(totalDebt, employeeWage))}
-              </p>
-            </div>
-
-            <button onClick={handleRepayDebt} disabled={repaying}
-              className="w-full bg-orange-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
-              <DollarSign size={18} />
-              {repaying ? 'Processing...' : 'Confirm Repayment'}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

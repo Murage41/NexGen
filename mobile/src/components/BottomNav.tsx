@@ -16,6 +16,7 @@ export default function BottomNav() {
   const attendantTabs = [
     { to: '/', icon: LayoutDashboard, label: 'Home' },
     { to: '/my-shift', icon: Gauge, label: 'My Shift' },
+    { to: '/my-pay', icon: Receipt, label: 'My Pay' },
     { to: '/prices', icon: DollarSign, label: 'Prices' },
   ];
 

@@ -44,7 +44,7 @@ export async function getUnmirroredShiftWagesPaid(
   const shifts = await database('shifts')
     .where({ status: 'closed' })
     .whereBetween('shift_date', [from, to])
-    .select('id', 'wage_paid');
+    .select('*');
   if (shifts.length === 0) return 0;
 
   const shiftIds = shifts.map((shift) => Number(shift.id));
@@ -69,7 +69,7 @@ export async function getUnmirroredShiftWagesPaid(
     if (mirrored.has(`SHIFT-WAGE:${shift.id}`)) return sum;
     const deduction = deductionByShift.get(Number(shift.id));
     return sum + Number(
-      deduction?.final_wage
+      shift.direct_wage_cash_amount
         ?? Math.max(0, Number(shift.wage_paid || 0) - Number(deduction?.deduction_amount || 0)),
     );
   }, 0));

@@ -3,6 +3,7 @@ import express from 'express';
 import cors, { CorsOptionsDelegate } from 'cors';
 import path from 'path';
 import db, { dataDir } from './database';
+import { verifiedDatabaseBackup } from './services/databaseBackup';
 import { recomputeAllDipsFromDate } from './services/stockCalculator';
 import { recomputeAllAccountBalances } from './services/accountBalance';
 import { detectDrift } from './services/driftDetector';
@@ -98,7 +99,7 @@ const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {
 
   callback(null, {
     origin: allowed && origin ? origin : false,
-    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'x-desktop-key'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning', 'x-desktop-key', 'Idempotency-Key'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     optionsSuccessStatus: 204,
   });
@@ -187,19 +188,8 @@ app.get('/api/health/drift-check', requireAdmin, async (_req, res) => {
 
 app.post('/api/health/backup', requireAdmin, async (_req, res) => {
   try {
-    const fs = await import('fs');
-    const src = path.join(dataDir, 'nexgen.db');
-    const dir = path.join(dataDir, 'backups');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-    await db.raw('PRAGMA wal_checkpoint(TRUNCATE)');
-
-    const now = new Date().toLocaleString('sv-SE', { timeZone: 'Africa/Nairobi' })
-      .replace(/[-: ]/g, '').slice(0, 14);
-    const dest = path.join(dir, `nexgen-${now}.db`);
-    fs.copyFileSync(src, dest);
-    const { size } = fs.statSync(dest);
-    res.json({ success: true, file: path.basename(dest), size_bytes: size });
+    const backup = await verifiedDatabaseBackup(db, path.join(dataDir, 'backups'));
+    res.json({ success: true, file: backup.file, size_bytes: backup.size_bytes });
   } catch (err: any) {
     console.error('[health:backup] ERROR', err.message);
     res.status(500).json({ success: false, error: err.message });

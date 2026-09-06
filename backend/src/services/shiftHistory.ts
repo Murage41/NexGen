@@ -7,6 +7,7 @@ export type ShiftHistoryStatus = 'open' | 'closed' | 'cancelled';
 export type ShiftHistorySort = 'newest' | 'oldest';
 
 export interface ShiftHistoryOptions {
+  employeeId?: number;
   requestedPage: number;
   limit: number;
   status?: ShiftHistoryStatus;
@@ -109,6 +110,7 @@ export function normalizeShiftHistoryQuery(query: Record<string, unknown>): Shif
 }
 
 function applyShiftHistoryFilters(query: Knex.QueryBuilder, options: ShiftHistoryOptions) {
+  if (options.employeeId) query.where('shifts.employee_id', options.employeeId);
   if (options.status) query.where('shifts.status', options.status);
   if (options.from) query.where('shifts.shift_date', '>=', options.from);
   if (options.to) query.where('shifts.shift_date', '<=', options.to);

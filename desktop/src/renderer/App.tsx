@@ -20,6 +20,7 @@ import Reports from './pages/Reports';
 import Suppliers from './pages/Suppliers';
 import SettingsPage from './pages/Settings';
 import Payroll from './pages/Payroll';
+import EmployeePay from './pages/EmployeePay';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -85,6 +86,7 @@ export default function App() {
             <Route path="/pumps" element={<Pumps />} />
             <Route path="/employees" element={<Employees />} />
             <Route path="/payroll" element={<Payroll />} />
+            <Route path="/employee-pay/:id" element={<EmployeePay />} />
             <Route path="/fuel-pricing" element={<FuelPricing />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/credit-accounts" element={<CreditAccounts />} />

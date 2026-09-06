@@ -1,9 +1,11 @@
+import { DailyRecovery } from '../../../../shared/ui/DailyRecovery';
+import { previewShiftRecovery } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
-  repayDebt, getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
+  getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
   addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview, getShiftNeighbors, createOperationKey,
 } from '../services/api';
 import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
@@ -94,6 +96,7 @@ export default function ShiftDetail() {
   const creditOperation = useRef<PendingOperation | null>(null);
   const invoiceOperation = useRef<PendingOperation | null>(null);
   const receiptOperation = useRef<PendingOperation | null>(null);
+  const [recoveryDecision, setRecoveryDecision] = useState<any>(null);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [varianceReason, setVarianceReason] = useState('');
@@ -101,10 +104,6 @@ export default function ShiftDetail() {
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
   const [neighbors, setNeighbors] = useState<{ previous: any | null; next: any | null }>({ previous: null, next: null });
-  const [deductOption, setDeductOption] = useState<'full' | 'partial' | 'none'>('full');
-  const [partialAmount, setPartialAmount] = useState('');
-  const [showDebtRepayModal, setShowDebtRepayModal] = useState(false);
-  const [debtRepayAmount, setDebtRepayAmount] = useState('');
   const [tankSummary, setTankSummary] = useState<any[]>([]);
   const [wagePaid, setWagePaid] = useState('');
   const [creditReceipts, setCreditReceipts] = useState<any[]>([]);
@@ -560,19 +559,10 @@ export default function ShiftDetail() {
       alert('Pump readings and collections must finish syncing before this shift can close. Use Sync Now on any section needing attention.');
       return;
     }
-    let deductAmount: number | null = null;
-    if (variance < 0 && shift.compensation_plan?.pay_schedule === 'daily') {
-      if (deductOption === 'full') {
-        deductAmount = Math.min(Math.abs(variance), enteredWagePaid);
-      } else if (deductOption === 'partial') {
-        deductAmount = Math.min(parseFloat(partialAmount) || 0, enteredWagePaid, Math.abs(variance));
-      }
-      // 'none' = null (no deduction, full deficit becomes debt)
-    }
     try {
       const res = await closeShift(parseInt(id!), {
         notes,
-        deduct_amount: deductAmount,
+        recovery_decision: recoveryDecision || undefined,
         wage_paid: parseFloat(wagePaid) || 0,
         variance_reason: varianceReason.trim() || undefined,
         reconciliation: {
@@ -587,18 +577,7 @@ export default function ShiftDetail() {
         alert('Shift closed with warnings:\n\n' + res.data.warnings.join('\n'));
       }
       await loadShift();
-    } catch (err) { console.error(err); }
-  }
-
-  async function handleRepayDebt() {
-    const amount = parseFloat(debtRepayAmount);
-    if (!amount || amount <= 0) return;
-    try {
-      await repayDebt(parseInt(id!), amount);
-      setShowDebtRepayModal(false);
-      setDebtRepayAmount('');
-      await loadShift();
-    } catch (err) { console.error(err); }
+    } catch (err: any) { alert(err.response?.data?.error || 'Failed to close shift'); }
   }
 
   async function handleCollectReceipt() {
@@ -901,10 +880,7 @@ export default function ShiftDetail() {
             </div>
           </div>
           {compensationPlan?.pay_schedule === 'daily' ? (
-            <button onClick={() => { setDebtRepayAmount(String(Math.min(totalOutstandingDebt, employeeWage))); setShowDebtRepayModal(true); }}
-              className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600">
-              Repay from Wage
-            </button>
+            <p className="text-sm text-orange-700">Review recovery when closing the shift</p>
           ) : (
             <span className="text-xs font-medium text-orange-700">Recover through payroll</span>
           )}
@@ -1736,69 +1712,7 @@ export default function ShiftDetail() {
               </div>
             )}
 
-            {variance >= 0 ? (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-green-800">
-                  {variance === 0 ? 'Shift balanced perfectly.' : `Surplus of ${formatKES(variance)}.`}
-                </p>
-                <p className="text-xs text-green-600 mt-1">Paid from shift: {formatKES(enteredWagePaid)}</p>
-              </div>
-            ) : shift.compensation_plan?.pay_schedule !== 'daily' ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-red-800 font-semibold">Deficit: {formatKES(Math.abs(variance))}</p>
-                <p className="text-xs text-red-600 mt-1">
-                  Recorded as staff debt. Recovery is handled through payroll.
-                </p>
-              </div>
-            ) : (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-red-800 font-semibold">Deficit: {formatKES(Math.abs(variance))}</p>
-                <p className="text-xs text-red-600 mt-1">Paid from shift: {formatKES(enteredWagePaid)}</p>
-
-                <div className="mt-3 space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="deduct" checked={deductOption === 'full'}
-                      onChange={() => setDeductOption('full')} className="text-red-600" />
-                    <span className="text-sm">
-                      Deduct {formatKES(Math.min(Math.abs(variance), enteredWagePaid))} from wage
-                      {Math.abs(variance) > enteredWagePaid && (
-                        <span className="text-red-500 text-xs ml-1">
-                          ({formatKES(Math.abs(variance) - enteredWagePaid)} carried as debt)
-                        </span>
-                      )}
-                    </span>
-                  </label>
-
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="deduct" checked={deductOption === 'partial'}
-                      onChange={() => setDeductOption('partial')} className="text-red-600" />
-                    <span className="text-sm">Deduct partial amount</span>
-                  </label>
-                  {deductOption === 'partial' && (
-                    <div className="ml-6">
-                      <input type="number" step="0.01" value={partialAmount}
-                        onChange={e => setPartialAmount(e.target.value)}
-                        placeholder="Amount to deduct" className="border border-gray-300 rounded p-2 text-sm w-48" />
-                      {partialAmount && (
-                        <p className="text-xs text-gray-500 mt-1">
-                          Wage: {formatKES(enteredWagePaid - Math.min(parseFloat(partialAmount) || 0, enteredWagePaid))} |
-                          Debt: {formatKES(Math.abs(variance) - Math.min(parseFloat(partialAmount) || 0, Math.abs(variance)))}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="deduct" checked={deductOption === 'none'}
-                      onChange={() => setDeductOption('none')} className="text-red-600" />
-                    <span className="text-sm">
-                      Don't deduct
-                      <span className="text-red-500 text-xs ml-1">({formatKES(Math.abs(variance))} carried as debt)</span>
-                    </span>
-                  </label>
-                </div>
-              </div>
-            )}
+            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} />
 
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
@@ -1926,47 +1840,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
-      {/* Debt Repay Modal */}
-      {showDebtRepayModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h2 className="text-lg font-semibold mb-4">Repay Staff Debt</h2>
-            <p className="text-sm text-gray-600 mb-2">
-              {shift.employee_name} has {formatKES(totalOutstandingDebt)} outstanding debt.
-            </p>
-            <p className="text-sm text-gray-600 mb-4">
-              Daily wage: {formatKES(employeeWage)}
-            </p>
 
-            {outstandingDebts.filter((d: any) => d.status === 'outstanding').map((d: any) => (
-              <div key={d.id} className="text-xs text-gray-500 mb-1 flex justify-between">
-                <span>Shift #{d.shift_id} deficit</span>
-                <span>{formatKES(d.balance)} remaining</span>
-              </div>
-            ))}
-
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Deduct from this shift's wage</label>
-              <input type="number" step="0.01" value={debtRepayAmount}
-                onChange={e => setDebtRepayAmount(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg p-2" placeholder="0.00" />
-              {debtRepayAmount && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Wage after deduction: {formatKES(employeeWage - Math.min(parseFloat(debtRepayAmount) || 0, employeeWage))}
-                </p>
-              )}
-            </div>
-            <div className="flex gap-2 justify-end mt-4">
-              <button onClick={() => setShowDebtRepayModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-                Cancel
-              </button>
-              <button onClick={handleRepayDebt} className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
-                Deduct & Repay
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
