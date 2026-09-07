@@ -42,7 +42,8 @@
     "audit:employee-payroll": "tsx scripts/audit_employee_payroll.ts",
     "clear:employee-debt": "tsx scripts/clear_employee_debt.ts",
     "test:employee-debt-clearance": "tsx scripts/test_employee_debt_clearance.ts",
-    "test:closed-shift-variance": "tsx scripts/test_closed_shift_variance.ts"
+    "test:closed-shift-variance": "tsx scripts/test_closed_shift_variance.ts",
+    "test:payroll-report-integration": "tsx scripts/test_payroll_report_integration.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

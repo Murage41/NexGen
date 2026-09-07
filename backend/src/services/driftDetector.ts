@@ -1,4 +1,5 @@
 import db from '../database';
+import { readAccountBalance } from './accountBalance';
 import { computeBookStock } from './stockCalculator';
 
 /**
@@ -75,18 +76,7 @@ export async function detectDrift(): Promise<DriftReport> {
   const accountDrift: AccountDrift[] = [];
   const accounts = await db('credit_accounts').whereNull('deleted_at').select('id', 'name', 'balance');
   for (const a of accounts) {
-    const creditsSum = await db('credits')
-      .where('account_id', a.id).whereNull('deleted_at').sum('amount as t').first();
-    const ids = await db('credits').where('account_id', a.id).whereNull('deleted_at').pluck('id');
-    const paySum = await db('credit_payments')
-      .whereNull('deleted_at')
-      .where({ status: 'posted' })
-      .where((q: any) => {
-        q.where('account_id', a.id);
-        if (ids.length) q.orWhereIn('credit_id', ids);
-      })
-      .sum('amount as t').first();
-    const truth = (parseFloat(creditsSum?.t) || 0) - (parseFloat(paySum?.t) || 0);
+    const truth = await readAccountBalance(a.id);
     const cached = parseFloat(a.balance) || 0;
     if (Math.abs(cached - truth) > 0.01) {
       accountDrift.push({

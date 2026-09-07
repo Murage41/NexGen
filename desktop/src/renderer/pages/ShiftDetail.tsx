@@ -97,6 +97,7 @@ export default function ShiftDetail() {
   const invoiceOperation = useRef<PendingOperation | null>(null);
   const receiptOperation = useRef<PendingOperation | null>(null);
   const [recoveryDecision, setRecoveryDecision] = useState<any>(null);
+  const [recoveryReady, setRecoveryReady] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [varianceReason, setVarianceReason] = useState('');
@@ -551,6 +552,7 @@ export default function ShiftDetail() {
   }
 
   async function handleCloseShift() {
+    if (!recoveryReady) { alert('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
     if (!closeReviewComplete) {
       alert('Complete the reconciliation review and record a variance reason when required.');
       return;
@@ -1032,7 +1034,7 @@ export default function ShiftDetail() {
             <span className="font-semibold">{formatKES(grossShiftEarnings)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">{isOpen ? 'Planned drawer payment' : 'Paid from shift drawer'}</span>
+            <span className="text-gray-500">{isOpen ? 'Planned drawer payment' : shift.direct_wage_cash_amount == null ? 'Wage recorded at close' : 'Paid from shift drawer'}</span>
             <span className="font-medium">{formatKES(directDrawerPayment)}</span>
           </div>
           {compensationPlan?.pay_schedule !== 'daily' && (
@@ -1053,7 +1055,7 @@ export default function ShiftDetail() {
                 <span className="font-medium">-{formatKES(wageDeduction.deduction_amount)}</span>
               </div>
               <div className="flex justify-between border-t pt-1 font-bold">
-                <span className="text-gray-700">Final Wage</span>
+                <span className="text-gray-700">Earnings after deductions</span>
                 <span className="text-gray-800">{formatKES(wageDeduction.final_wage)}</span>
               </div>
             </>
@@ -1712,7 +1714,7 @@ export default function ShiftDetail() {
               </div>
             )}
 
-            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} />
+            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} onReady={setRecoveryReady} revision={JSON.stringify([readings, collections, expenses, shiftCredits, invoiceConsumption, creditReceipts, totalPayrollPayments, readingSync, collectionSync])} />
 
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
@@ -1747,7 +1749,7 @@ export default function ShiftDetail() {
               <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                 Cancel
               </button>
-              <button onClick={handleCloseShift} disabled={hasUnsyncedDraft || !closeReviewComplete} title={hasUnsyncedDraft ? 'Sync readings and collections before closing' : !closeReviewComplete ? 'Complete the reconciliation review' : undefined} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleCloseShift} disabled={hasUnsyncedDraft || !closeReviewComplete || !recoveryReady} title={hasUnsyncedDraft ? 'Sync readings and collections before closing' : !recoveryReady ? 'Review debt recovery before closing' : !closeReviewComplete ? 'Complete the reconciliation review' : undefined} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 Close Shift
               </button>
             </div>

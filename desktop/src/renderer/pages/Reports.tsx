@@ -913,6 +913,9 @@ export default function Reports() {
                     <PnLRow label="Shift M-Pesa Received" value={cfData.inflows.shift_mpesa_received ?? cfData.inflows.mpesa_sales} color="text-green-600" />
                     <PnLRow label="Direct Money-Credit Payments" value={cfData.inflows.credit_payments_received} color="text-green-600" />
                     <PnLRow label="Invoice Payments (net)" value={cfData.inflows.invoice_payments_received} color="text-green-600" />
+                    <PnLRow label="Direct Employee Debt Repayments" value={cfData.inflows.employee_debt_repayments || 0} color="text-green-600" />
+                    <PnLRow label="Shift Payouts Added Back" value={cfData.inflows.drawer_payouts_already_reflected || 0} color="text-green-600" />
+                    <p className="text-xs text-gray-500 py-2">Shift collections are cash and M-Pesa remaining after payouts. Those payouts are added back here so they are deducted only once under outflows.</p>
                     <PnLRow label="Total Inflows" value={cfData.inflows.total} bold border color="text-green-700" />
                   </div>
                 </div>

@@ -36,10 +36,11 @@ export async function getPayrollCashPaid(
   return money(Number(row?.total || 0));
 }
 
-export async function getUnmirroredShiftWagesPaid(
+async function getShiftWagesPaid(
   from: string,
   to: string,
   database: Knex = db,
+  excludeMirrors = true,
 ): Promise<number> {
   const shifts = await database('shifts')
     .where({ status: 'closed' })
@@ -66,13 +67,21 @@ export async function getUnmirroredShiftWagesPaid(
   const mirrored = new Set(mirrors.map((payment) => String(payment.reference)));
 
   return money(shifts.reduce((sum, shift) => {
-    if (mirrored.has(`SHIFT-WAGE:${shift.id}`)) return sum;
+    if (excludeMirrors && mirrored.has(`SHIFT-WAGE:${shift.id}`)) return sum;
     const deduction = deductionByShift.get(Number(shift.id));
     return sum + Number(
       shift.direct_wage_cash_amount
         ?? Math.max(0, Number(shift.wage_paid || 0) - Number(deduction?.deduction_amount || 0)),
     );
   }, 0));
+}
+
+export function getUnmirroredShiftWagesPaid(from: string, to: string, database: Knex = db) {
+  return getShiftWagesPaid(from, to, database, true);
+}
+
+export function getRecordedShiftWagesPaid(from: string, to: string, database: Knex = db) {
+  return getShiftWagesPaid(from, to, database, false);
 }
 
 export async function getTotalPayrollCashOutflow(

@@ -2,6 +2,21 @@ import { syncEmployeeDebt } from './employeeDebt';
 import db from '../database';
 import type { Knex } from 'knex';
 
+/** Read the same source balances used by repairs, without changing any rows. */
+export async function readAccountBalance(accountId: number, qb: Knex = db): Promise<number> {
+  const account = await qb('credit_accounts').where({id: accountId}).first();
+  if (account?.type === 'employee') {
+    const row = await qb('staff_debts').where({employee_id: account.employee_id}).sum('balance as total').first();
+    return Math.round(Number(row?.total || 0) * 100) / 100;
+  }
+  if (account?.billing_mode === 'invoice') {
+    const row = await qb('customer_invoices').where({account_id: accountId}).whereNull('deleted_at').whereIn('status', ['issued', 'partial']).sum('balance as total').first();
+    return Math.max(0, Number(row?.total || 0));
+  }
+  const row = await qb('credits').where({account_id: accountId}).whereNull('deleted_at').where('balance', '>', 0).sum('balance as total').first();
+  return Math.max(0, Number(row?.total || 0));
+}
+
 /**
  * Recompute the cached `credit_accounts.balance` from source data.
  *
@@ -35,26 +50,7 @@ export async function recomputeAccountBalance(
   // Invoice-mode truth is the sum of each open invoice's remaining balance.
   const acct = await qb('credit_accounts').where({ id: accountId }).first();
   if (acct?.type === 'employee') return syncEmployeeDebt(Number(acct.employee_id), qb);
-  if (acct && acct.billing_mode === 'invoice') {
-    const outstandingRow = await qb('customer_invoices')
-      .where({ account_id: accountId })
-      .whereNull('deleted_at')
-      .whereIn('status', ['issued', 'partial'])
-      .sum('balance as total')
-      .first();
-    const invBalance = Math.max(0, parseFloat((outstandingRow as any)?.total) || 0);
-    await qb('credit_accounts').where({ id: accountId }).update({ balance: invBalance });
-    return invBalance;
-  }
-
-  // Money-mode truth is the sum of each credit line's remaining balance.
-  const creditsSum = await qb('credits')
-    .where('account_id', accountId)
-    .whereNull('deleted_at')
-    .where('balance', '>', 0)
-    .sum('balance as total')
-    .first();
-  const balance = Math.max(0, parseFloat(creditsSum?.total) || 0);
+  const balance = await readAccountBalance(accountId, qb);
 
   const before = await qb('credit_accounts').where({ id: accountId }).first('balance');
   await qb('credit_accounts').where({ id: accountId }).update({ balance });

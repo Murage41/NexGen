@@ -11,6 +11,7 @@ export function RecoveryEditor({
   preview,
   saved,
   onSave,
+  onDirty,
   label = 'Save recovery decision',
   savedMessage = 'Recovery decision saved. It takes effect when compensation is approved.',
 }: any) {
@@ -95,7 +96,7 @@ export function RecoveryEditor({
           max={preview.proposed}
           step="0.01"
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => { setAmount(e.target.value); onDirty?.(); }}
         />
       </label>
       <label className="block text-sm">
@@ -103,7 +104,7 @@ export function RecoveryEditor({
         <input
           className={field}
           value={reference}
-          onChange={(e) => setReference(e.target.value)}
+          onChange={(e) => { setReference(e.target.value); onDirty?.(); }}
           placeholder="Required for a deduction"
         />
       </label>
@@ -112,7 +113,7 @@ export function RecoveryEditor({
         <textarea
           className={field}
           value={reason}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(e) => { setReason(e.target.value); onDirty?.(); }}
         />
       </label>
       {preview.gross != null && (
@@ -127,7 +128,7 @@ export function RecoveryEditor({
         Remaining debt:{' '}
         {kes(Math.max(0, preview.outstanding - Number(amount || 0)))}
       </p>
-      {saved?.version === preview.version && (
+      {saved?.version === preview.version && Number(amount) === Number(saved.amount) && reference === (saved.authorization_reference || '') && reason === (saved.reason || '') && (
         <p className="text-sm text-green-800">{savedMessage}</p>
       )}
       {error && (

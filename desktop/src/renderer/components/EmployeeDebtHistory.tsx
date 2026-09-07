@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 
 export default function EmployeeDebtHistory({account}: {account: any}) {
   const format = (value: any) => `KES ${Number(value || 0).toLocaleString('en-KE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
@@ -8,7 +9,7 @@ export default function EmployeeDebtHistory({account}: {account: any}) {
   return <section className="space-y-3">
     <div className="flex flex-wrap justify-between gap-2">
       <h4 className="text-sm font-semibold text-gray-700">Employee debt history</h4>
-      <a className="text-sm text-blue-600 hover:underline" href={`/employee-pay/${account.employee_id}`}>View full pay and debt statement</a>
+      <Link className="text-sm text-blue-600 hover:underline" to={`/employee-pay/${account.employee_id}`}>View full pay and debt statement</Link>
     </div>
     {debts.length === 0 ? <p className="text-sm text-gray-500">No staff debt entries recorded.</p> : <>
       <div className="overflow-x-auto border rounded-lg"><table className="w-full text-sm">
@@ -18,7 +19,7 @@ export default function EmployeeDebtHistory({account}: {account: any}) {
           <th className="p-2 text-right">Remaining</th><th className="p-2 text-left">Status</th>
         </tr></thead>
         <tbody>{debts.map((debt: any) => <tr className="border-t" key={debt.id}>
-          <td className="p-2"><a className="text-blue-600 hover:underline" href={`/shifts/${debt.shift_id}`}>Shift #{debt.shift_id}</a><div className="text-xs text-gray-500">Recorded {new Date(debt.created_at).toLocaleDateString('en-KE')}</div></td>
+          <td className="p-2"><Link className="text-blue-600 hover:underline" to={`/shifts/${debt.shift_id}`}>Shift #{debt.shift_id}</Link><div className="text-xs text-gray-500">Recorded {new Date(debt.created_at).toLocaleDateString('en-KE')}</div></td>
           <td className="p-2 text-right">{format(debt.carried_forward)}</td>
           <td className="p-2 text-right">{format(debt.allocated_repayments)}</td>
           <td className="p-2 text-right">{format(debt.historical_adjustment)}</td>

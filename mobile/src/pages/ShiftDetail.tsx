@@ -23,6 +23,7 @@ export default function ShiftDetail() {
   const [shift, setShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [recoveryDecision, setRecoveryDecision] = useState<any>(null);
+  const [recoveryReady, setRecoveryReady] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [varianceReason, setVarianceReason] = useState('');
@@ -90,6 +91,7 @@ export default function ShiftDetail() {
   }
 
   async function handleClose() {
+    if (!recoveryReady) { alert('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
     if (!closeReviewComplete) {
       alert('Complete the reconciliation review and record a variance reason when required.');
       return;
@@ -517,7 +519,7 @@ export default function ShiftDetail() {
             <span className="font-semibold">{fmt(grossShiftEarnings)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">{isOpen ? 'Cash wage taken from drawer' : 'Paid from shift drawer'}</span>
+            <span className="text-gray-500">{isOpen ? 'Cash wage taken from drawer' : shift.direct_wage_cash_amount == null ? 'Wage recorded at close' : 'Paid from shift drawer'}</span>
             <span className="font-medium">{fmt(directDrawerPayment)}</span>
           </div>
           {compensationPlan?.pay_schedule !== 'daily' && (
@@ -538,7 +540,7 @@ export default function ShiftDetail() {
                 <span className="font-medium">-{fmt(shift.wage_deduction.deduction_amount)}</span>
               </div>
               <div className="flex justify-between border-t pt-1 font-bold">
-                <span className="text-gray-700">Final Wage</span>
+                <span className="text-gray-700">Earnings after deductions</span>
                 <span>{fmt(shift.wage_deduction.final_wage)}</span>
               </div>
             </>
@@ -824,7 +826,7 @@ export default function ShiftDetail() {
             </div>
 
             {/* Deduction options — only when deficit */}
-            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} />
+            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} onReady={setRecoveryReady} revision={JSON.stringify([shift.readings, shift.collections, shift.expenses, shift.shift_credits, shift.invoice_consumption, shift.credit_receipts, totalPayrollPayments])} />
 
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
@@ -864,7 +866,7 @@ export default function ShiftDetail() {
             </div>
 
             {/* Confirm */}
-            <button onClick={handleClose} disabled={closing || !closeReviewComplete}
+            <button onClick={handleClose} disabled={closing || !closeReviewComplete || !recoveryReady}
               className="w-full bg-red-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50">
               {closing ? 'Closing...' : 'Confirm Close & Lock'}
             </button>

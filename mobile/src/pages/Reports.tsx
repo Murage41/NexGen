@@ -491,6 +491,10 @@ export default function Reports() {
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Cash Sales</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.cash_sales)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">M-Pesa Sales</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.mpesa_sales)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Credit Payments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.credit_payments_received)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Invoice Payments (net)</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.invoice_payments_received)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Employee Debt Repayments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.employee_debt_repayments)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Shift Payouts Added Back</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.drawer_payouts_already_reflected)}</span></div>
+              <p className="text-xs text-gray-500 px-4 py-2">Shift collections are the amounts remaining after payouts. We add payouts back here before deducting them once under outflows.</p>
             </div>
           </div>
 

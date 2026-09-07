@@ -221,7 +221,7 @@ export default function Payroll() {
     setDeductionKey(createOperationKey('payroll-deduction'));
     setSelectedLine(line);
     setDeductionForm({
-      deduction_type: 'staff_debt',
+      deduction_type: 'manual',
       amount: '',
       authorization_reference: '',
       notes: '',

@@ -7,6 +7,7 @@ import {
   getPayrollCashPaid,
   getPayrollExpense,
   getTotalPayrollCashOutflow,
+  getRecordedShiftWagesPaid,
   isShiftWageMirror,
 } from '../services/payrollAccounting';
 import {
@@ -89,6 +90,12 @@ router.get('/daily', async (req, res) => {
       const wageDeductionAmount = shift.status === 'closed'
         ? Number(wageDeduction?.deduction_amount || 0)
         : 0;
+      // Reconciliation must use the amount recorded at close. Legacy closes
+      // stored a gross wage; new closes store actual cash. A debt recovery is
+      // not another cash payout and must not be added to the new cash amount.
+      const reconciliationWage = shift.status === 'closed'
+        ? Number(shift.direct_wage_cash_amount ?? shift.wage_paid ?? 0)
+        : 0;
       const shiftPayrollPayments = (await db('payroll_payments')
         .where({ shift_id: shift.id, status: 'posted' }))
         .filter((payment: any) => !isShiftWageMirror(payment));
@@ -130,7 +137,7 @@ router.get('/daily', async (req, res) => {
       const expectedTotalReceived = roundMoney(expectedCash + expectedMpesa);
       const shiftAccounted = roundMoney(
         cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal
-          + actualWagePaid + wageDeductionAmount + shiftPayrollPaid,
+          + reconciliationWage + shiftPayrollPaid,
       );
 
       const shiftInvoicePetrolLitres = shiftInvoiceConsumption
@@ -186,6 +193,7 @@ router.get('/daily', async (req, res) => {
         standard_wage: Number(shift.daily_wage),
         wage_deduction: wageDeductionAmount,
         actual_wage_paid: actualWagePaid,
+        reconciliation_wage: reconciliationWage,
         payroll_payments: shiftPayrollPayments,
         payroll_paid_from_shift: shiftPayrollPaid,
         shift_accounted: shiftAccounted,
@@ -892,7 +900,7 @@ router.get('/cash-flow', async (req, res) => {
     const invoicePaymentsReceived = directReceivableCash.invoice_payments;
     const invoicePaymentsByAccount = directReceivableCash.invoice_payments_by_account;
 
-    const totalInflows = roundMoney(
+    const recordedInflows = roundMoney(
       shiftCashReceived
       + shiftMpesaReceived
       + creditPaymentsReceived
@@ -931,6 +939,20 @@ router.get('/cash-flow', async (req, res) => {
       .first();
     const totalGeneralExpenses = Number((genExpResult as any)?.total) || 0;
 
+    // Drawer collections are the cash/M-Pesa remaining after shift payouts.
+    // Reconstruct receipts before showing those same payouts as outflows, so
+    // wages/expenses are not subtracted a second time from retained cash.
+    const drawerPayroll = await db('payroll_payments as p')
+      .join('shifts as s', 'p.shift_id', 's.id')
+      .where('p.status', 'posted')
+      .whereBetween('s.shift_date', [from, to])
+      .whereIn('p.payment_method', ['cash', 'mpesa'])
+      .where(q => q.whereNull('p.reference').orWhere('p.reference', 'not like', 'SHIFT-WAGE:%'))
+      .sum('p.amount as total').first();
+    const directShiftCash = await getRecordedShiftWagesPaid(from, to);
+    const drawerPayouts = roundMoney(Number(drawerPayroll?.total || 0) + directShiftCash + totalShiftExpenses);
+    const totalInflows = roundMoney(recordedInflows + drawerPayouts);
+
     const totalOutflows = totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses;
 
     const outstandingReceivables = await getCurrentReceivableTotals(db);
@@ -947,6 +969,7 @@ router.get('/cash-flow', async (req, res) => {
           credit_payments_received: creditPaymentsReceived,
           direct_money_credit_payments: directMoneyByMethod,
           employee_debt_repayments: directReceivableCash.employee_debt_repayments,
+          drawer_payouts_already_reflected: drawerPayouts,
           invoice_payments_received: invoicePaymentsReceived,
           invoice_payments_by_account: invoicePaymentsByAccount,
           total: totalInflows,
