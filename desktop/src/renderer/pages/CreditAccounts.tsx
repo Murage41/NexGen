@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react';
 import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount } from '../services/api';
 import { Users, X, Banknote, Trash2, ChevronDown, ChevronUp, Search, Plus, Pencil } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
+import EmployeeDebtHistory from '../components/EmployeeDebtHistory';
 
 type FilterTab = 'all' | 'customer' | 'employee';
 
@@ -334,6 +335,7 @@ export default function CreditAccounts() {
                           <p className="text-gray-400 text-sm">Loading details...</p>
                         ) : expandedAccount ? (
                           <div className="space-y-4">
+                            {expandedAccount.type === 'employee' && <EmployeeDebtHistory account={expandedAccount} />}
                             {/* Credits (line items) */}
                             {expandedAccount.credits && expandedAccount.credits.length > 0 && (
                               <div>
@@ -408,7 +410,7 @@ export default function CreditAccounts() {
                               </div>
                             )}
 
-                            {(!expandedAccount.credits || expandedAccount.credits.length === 0) &&
+                            {expandedAccount.type !== 'employee' && (!expandedAccount.credits || expandedAccount.credits.length === 0) &&
                              (!expandedAccount.payments || expandedAccount.payments.length === 0) && (
                               <p className="text-sm text-gray-400">No credit history for this account.</p>
                             )}

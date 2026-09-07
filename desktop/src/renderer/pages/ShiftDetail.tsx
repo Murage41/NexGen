@@ -723,13 +723,13 @@ export default function ShiftDetail() {
     + totalCredits
     + totalInvoiceConsumption
     + totalExpenses
-    + enteredWagePaid
+    + directDrawerPayment
     + totalPayrollPayments;
   const totalAccounted = drawerTotal
     + totalCredits
     + totalInvoiceConsumption
     + totalExpenses
-    + enteredWagePaid
+    + directDrawerPayment
     + totalPayrollPayments;
   const variance = Math.round((totalAccounted - expectedShiftTotal) * 100) / 100;
   const requiresVarianceReason = Math.abs(variance) >= 0.01;

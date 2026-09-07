@@ -51,6 +51,8 @@ router.get('/:id', async (req, res) => {
     let credits: any[] = [];
     let payments: any[] = [];
     let debts: any[] = [];
+    let debtHistory: any[] = [];
+    let debtReviews: any[] = [];
     let customerInvoices: any[] = [];
 
     if (account.type === 'customer' && account.billing_mode === 'invoice') {
@@ -72,9 +74,10 @@ router.get('/:id', async (req, res) => {
         .whereNull('deleted_at')
         .orderBy('date', 'desc');
     } else if (account.type === 'employee') {
-      debts = await db('staff_debts')
-        .where({ employee_id: account.employee_id })
-        .orderBy('created_at', 'desc');
+      const history = await employeeDebtHistory(Number(account.employee_id), db);
+      debts = history.debts;
+      debtHistory = history.history;
+      debtReviews = history.reviews;
     }
 
     res.json({
@@ -84,7 +87,7 @@ router.get('/:id', async (req, res) => {
         outstanding_balance: Number(account.balance || 0),
         ...(account.type === 'customer'
           ? { credits, payments, customer_invoices: customerInvoices }
-          : { debts }),
+          : { debts, debt_history: debtHistory, debt_reviews: debtReviews }),
       },
     });
   } catch (err: any) {

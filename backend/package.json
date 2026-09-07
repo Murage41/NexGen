@@ -39,7 +39,10 @@
     "repair:diwafa-shifts": "tsx scripts/repair_diwafa_shifts_27_28_43.ts",
     "test:employee-settlement": "tsx scripts/test_employee_settlement.ts",
     "backup:database": "tsx scripts/backup_database.ts",
-    "audit:employee-payroll": "tsx scripts/audit_employee_payroll.ts"
+    "audit:employee-payroll": "tsx scripts/audit_employee_payroll.ts",
+    "clear:employee-debt": "tsx scripts/clear_employee_debt.ts",
+    "test:employee-debt-clearance": "tsx scripts/test_employee_debt_clearance.ts",
+    "test:closed-shift-variance": "tsx scripts/test_closed_shift_variance.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

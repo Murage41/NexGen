@@ -231,7 +231,7 @@ export default function ShiftDetail() {
     + totalCredits
     + totalInvoiceConsumption
     + totalExpenses
-    + enteredWagePaid
+    + directDrawerPayment
     + totalPayrollPayments;
   const closeVariance = Math.round((closeTotalAccounted - expectedShiftTotal) * 100) / 100;
   const requiresVarianceReason = Math.abs(closeVariance) >= 0.01;
