@@ -6,6 +6,7 @@ import knex from 'knex';
 import { getDataDirectory } from '../src/utils/dataDirectory';
 import { verifiedDatabaseBackup } from '../src/services/databaseBackup';
 import { clearRecordedEmployeeDebt } from '../src/services/clearRecordedEmployeeDebt';
+import type { DebtClearance } from '../src/services/clearRecordedEmployeeDebt';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -19,7 +20,11 @@ async function main() {
     }),
     reason: arg('--reason'),
   };
-  const filename = path.resolve(arg('--database') || path.join(getDataDirectory(), 'nexgen.db'));
+  await runEmployeeDebtClearance(input, {database: arg('--database'), apply: args.includes('--apply')});
+}
+
+export async function runEmployeeDebtClearance(input: DebtClearance, options: {database?: string; apply?: boolean} = {}) {
+  const filename = path.resolve(options.database || path.join(getDataDirectory(), 'nexgen.db'));
   if (!fs.existsSync(filename)) throw new Error(`Database not found: ${filename}`);
   const db = knex({client: 'sqlite3', connection: {filename}, useNullAsDefault: true, pool: {min: 1, max: 1}});
   try {
@@ -27,7 +32,7 @@ async function main() {
     await db.raw('PRAGMA foreign_keys = ON');
     const preview = await clearRecordedEmployeeDebt(db, input);
     console.log(JSON.stringify({database: filename, ...preview}, null, 2));
-    if (!args.includes('--apply') || preview.status === 'already_cleared') return;
+    if (!options.apply || preview.status === 'already_cleared') return;
     const directory = path.join(path.dirname(filename), 'backups');
     const backup = await verifiedDatabaseBackup(db, directory);
     const auditPath = path.join(directory, `employee-debt-clearance-${randomUUID()}.json`);
@@ -43,4 +48,4 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
   } finally { await db.destroy(); }
 }
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });

@@ -1,5 +1,20 @@
 # Historical employee debt clearance
 
+## Emma's reviewed historical settlement
+
+The station-specific command contains the reviewed employee name/ID and five debt IDs, originating shifts and balances totalling KES 4,741.52. Run it on the station; do not transfer the development database.
+
+```text
+npm run clear:emma-debt --workspace=backend
+npm run clear:emma-debt --workspace=backend -- --apply
+```
+
+The first command previews. The second backs up and applies the correction to the configured station database. Both print the database path. Only the reviewed debt balances/status and corresponding employee account balance change, with clearance notes where supported. Updating status alone would leave a contradictory outstanding balance, so the balances must also become zero. Payroll, cash, shift reconciliation and unrelated records are preserved. No migrations run. Repeating an applied clearance makes no further change. Different identity, source shifts, balances, or additional debts stop the command without applying a clearance.
+
+This is an explicit maintenance command, not an automatic startup action. The `--database PATH` option is available for disposable-copy verification or an explicitly identified database.
+
+## General clearance command
+
 Use this maintenance command only when the owner has confirmed an existing employee debt was already settled and explicitly requests a balance-only correction. It does not pay wages, deduct wages, record cash received, change a shift, or recalculate a reconciliation. Normal new repayments still belong in the employee repayment workflow.
 
 From the station project folder, preview using the reviewed employee ID and exact debt ID/amount pairs:

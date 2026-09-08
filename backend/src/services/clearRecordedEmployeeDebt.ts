@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 
 export interface DebtClearance {
   employeeId: number;
-  expectedDebts: {id: number; balance: number}[];
+  expectedEmployeeName?: string;
+  expectedDebts: {id: number; balance: number; shiftId?: number}[];
   reason: string;
 }
 const cents = (value: any) => Math.round(Number(value) * 100);
@@ -35,10 +36,14 @@ export async function clearRecordedEmployeeDebt(db: Knex, input: DebtClearance, 
     requireCondition((await trx.raw('PRAGMA foreign_key_check')).length === 0, 'Foreign-key check failed.');
     const employee = await trx('employees').where({id: input.employeeId}).select('id', 'name').first();
     requireCondition(employee, 'Employee not found.');
+    if (input.expectedEmployeeName !== undefined) requireCondition(employee.name === input.expectedEmployeeName, 'Employee identity differs from the reviewed clearance. No clearance applied.');
     const debts = await trx('staff_debts').where({employee_id: input.employeeId}).orderBy('id');
     const expectedIds = new Set(input.expectedDebts.map(d => d.id));
     const selected = debts.filter(d => expectedIds.has(d.id));
     requireCondition(selected.length === expectedIds.size, 'Expected debts do not all belong to this employee.');
+    for (const expected of input.expectedDebts) {
+      if (expected.shiftId !== undefined) requireCondition(selected.find(d => d.id === expected.id)?.shift_id === expected.shiftId, `Debt #${expected.id} belongs to a different shift. No clearance applied.`);
+    }
     requireCondition(!debts.some(d => !expectedIds.has(d.id) && cents(d.balance) !== 0), 'Additional debt exists. Stop and review a fresh backup.');
     const accounts = await trx('credit_accounts').where({employee_id: input.employeeId, type: 'employee'});
     requireCondition(accounts.length === 1 && !accounts[0].deleted_at, 'Expected one active employee debt account.');
