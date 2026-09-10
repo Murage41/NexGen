@@ -98,7 +98,7 @@ router.get('/categories', async (_req, res) => {
 });
 
 // GET /summary - Expense analytics for a period (combined shift + general)
-router.get('/summary', async (req, res) => {
+router.get('/summary', requireAdmin, async (req, res) => {
   try {
     const { from, to, date_from, date_to } = req.query;
     const today = getKenyaDate();

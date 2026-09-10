@@ -294,7 +294,7 @@ export default function ShiftRecord() {
       if (err?.response?.status === 409 && data?.code === 'PRICE_ANOMALY') {
         setReadingSync('review');
         const lines = (data.anomalies || []).map((a: any) =>
-          `• ${a.pump_label}: KES ${a.observed.toFixed(2)}/L (expected ~KES ${a.expected.toFixed(2)}/L, ${a.deviation_pct > 0 ? '+' : ''}${a.deviation_pct}%)`
+          `• ${a.pump_label}: KES ${a.observed.toFixed(2)}/L (expected ~KES ${a.expected.toFixed(2)}/L, ${a.deviation_kes > 0 ? '+' : ''}${a.deviation_kes} KES/L)`
         ).join('\n');
         if (window.confirm(`Price-per-litre looks off:\n\n${lines}\n\nDouble-check the readings. Save anyway?`)) {
           return saveReadings({ ...opts, confirmAnomaly: true });

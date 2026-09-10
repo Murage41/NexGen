@@ -673,7 +673,14 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
   try {
     console.log('[shifts:readings PUT]', { shiftId: req.params.id, body: req.body });
     if (!(await requireOpenShift(req, res))) return;
-    const { readings, confirm_anomaly, confirm_large_sale, expected_revision } = req.body;
+    const { readings, expected_revision } = req.body;
+    // Employee-access rollout (Tier 1): only an admin session may confirm past a
+    // price-anomaly or implausible-sale warning. An attendant's own request can
+    // still send these flags (older clients may), but they're only honored when
+    // the caller is actually an admin — otherwise the 409 checks below still fire.
+    const isAdminCaller = (req as any).employee?.role === 'admin';
+    const confirm_anomaly = isAdminCaller && !!req.body.confirm_anomaly;
+    const confirm_large_sale = isAdminCaller && !!req.body.confirm_large_sale;
     const shiftState = await db('shifts')
       .where({ id: req.params.id })
       .select('readings_revision')
@@ -702,7 +709,7 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
 
     // Validate every reading first; only persist after all pass.
     const errors: string[] = [];
-    type Anomaly = { pump_id: number; pump_label: string; observed: number; expected: number; deviation_pct: number };
+    type Anomaly = { pump_id: number; pump_label: string; observed: number; expected: number; deviation_kes: number; deviation_pct: number };
     type RolloverConfirm = { pump_id: number; pump_label: string; field: 'litres' | 'amount'; raw: number; cumulative: number };
     type LargeSale = {
       pump_id: number;
@@ -717,7 +724,7 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
     const largeSales: LargeSale[] = [];
     // Resolved cumulative closings, keyed by pump_id, used in the persist loop.
     const resolved: Record<number, { closing_litres: number; closing_amount: number }> = {};
-    const PRICE_DEVIATION = 0.15; // ±15%
+    const MAX_PRICE_DEVIATION_KES = 1.5; // absolute KES/L — station's own set price should be near-exact, not a %
 
     for (const r of readings) {
       const existing = await db('pump_readings as pr')
@@ -805,12 +812,13 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
       if (lDelta > 0 && aDelta > 0) {
         const observed = aDelta / lDelta;
         const expected = priceByFuel[existing.fuel_type];
-        if (expected && Math.abs(observed - expected) / expected > PRICE_DEVIATION) {
+        if (expected && Math.abs(observed - expected) > MAX_PRICE_DEVIATION_KES) {
           anomalies.push({
             pump_id: r.pump_id,
             pump_label: existing.pump_label,
             observed: Math.round(observed * 100) / 100,
             expected: Math.round(expected * 100) / 100,
+            deviation_kes: Math.round((observed - expected) * 100) / 100,
             deviation_pct: Math.round(((observed - expected) / expected) * 1000) / 10,
           });
         }
@@ -1079,6 +1087,17 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
         .first();
 
       if (!account) {
+        // Employee-access rollout (Tier 1): approving a new credit customer is
+        // an admin decision (rights matrix: employees record against *existing
+        // approved* customers only). An admin caller (including the desktop
+        // key) keeps the previous auto-create convenience; an attendant gets a
+        // clear error instead of silently onboarding a new customer.
+        if ((req as any).employee?.role !== 'admin') {
+          throw Object.assign(
+            new Error(`No approved customer account found for "${customer_name}". Ask an admin to create it first.`),
+            { httpStatus: 400 },
+          );
+        }
         const [accountId] = await trx('credit_accounts').insert({
           name: customer_name,
           phone: customer_phone || null,
@@ -1694,7 +1713,7 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
 
 // PUT /shifts/:id/invoice-consumption/:entryId
 // Editable: litres and source. fuel_type/account_id remain frozen.
-router.put('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
+router.put('/:id/invoice-consumption/:entryId', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const shiftId = Number(req.params.id);
@@ -1794,7 +1813,7 @@ router.put('/:id/review', requireAdmin, validate(shiftReviewSchema), async (req:
 });
 
 // DELETE /shifts/:id/invoice-consumption/:entryId (soft-delete; blocked once invoiced)
-router.delete('/:id/invoice-consumption/:entryId', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
+router.delete('/:id/invoice-consumption/:entryId', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
     const shiftId = Number(req.params.id);

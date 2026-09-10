@@ -7,7 +7,7 @@ import { createSupplierInvoiceSchema } from '../schemas';
 const router = Router();
 
 // List invoices (filterable by supplier_id, status, date range)
-router.get('/', async (req, res) => {
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const { supplier_id, status, from, to } = req.query;
     let query = db('supplier_invoices')
@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get single invoice with payment history
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAdmin, async (req, res) => {
   try {
     const invoice = await db('supplier_invoices')
       .join('suppliers', 'supplier_invoices.supplier_id', 'suppliers.id')

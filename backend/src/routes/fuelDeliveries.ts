@@ -118,7 +118,7 @@ function appendCogsReplayWarnings(warnings: string[], replayResults: any[]) {
   }
 }
 
-router.get('/', async (req, res) => {
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const { from, to, tank_id } = req.query;
     let query = db('fuel_deliveries')

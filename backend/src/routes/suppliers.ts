@@ -7,7 +7,7 @@ import { createSupplierSchema, updateSupplierSchema } from '../schemas';
 const router = Router();
 
 // List suppliers with outstanding AP balance
-router.get('/', async (_req, res) => {
+router.get('/', requireAdmin, async (_req, res) => {
   try {
     const suppliers = await db('suppliers')
       .whereNull('deleted_at')
@@ -34,7 +34,7 @@ router.get('/', async (_req, res) => {
 });
 
 // Supplier detail with invoices + payments + delivery count
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAdmin, async (req, res) => {
   try {
     const supplier = await db('suppliers')
       .where({ id: req.params.id })
