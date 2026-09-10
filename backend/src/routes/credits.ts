@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../database';
 import { validate } from '../middleware/validate';
+import { requireAdmin } from '../middleware/requireAdmin';
 import { createCreditSchema, creditPaymentSchema } from '../schemas';
 import { getKenyaDate } from '../utils/timezone';
 import { recomputeAccountBalance } from '../services/accountBalance';
@@ -34,7 +35,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', validate(createCreditSchema), async (req, res) => {
+router.post('/', requireAdmin, validate(createCreditSchema), async (req, res) => {
   try {
     const { customer_name, customer_phone, amount, shift_id, description } = req.body;
 
@@ -76,7 +77,11 @@ router.post('/', validate(createCreditSchema), async (req, res) => {
 // POST payment against a credit (LEGACY — prefer POST /credit-accounts/:id/payments)
 // Kept for backwards compatibility. Internally also decrements the account balance
 // so both paths produce consistent state.
-router.post('/:id/payments', validate(creditPaymentSchema), async (req, res) => {
+// requireAdmin: this route accepts no shift context and never attributes the payment
+// to a shift_id, so it must not be reachable by an unsupervised attendant — an
+// admin-collected payment through this legacy path is a known reconciliation gap
+// (tracked in the production readiness plan), but at least requires authorization.
+router.post('/:id/payments', requireAdmin, validate(creditPaymentSchema), async (req, res) => {
   try {
     const { amount, payment_method, date, payment_date, notes } = req.body;
     const normalizedAmount = roundMoney(Number(amount));

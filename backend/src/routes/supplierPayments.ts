@@ -7,7 +7,7 @@ import { createSupplierPaymentSchema } from '../schemas';
 const router = Router();
 
 // List payments (filterable by supplier_id, date range)
-router.get('/', async (req, res) => {
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const { supplier_id, from, to } = req.query;
     let query = db('supplier_payments')
@@ -136,11 +136,26 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       const allocations = await trx('supplier_payment_allocations')
         .where({ payment_id: payment.id })
         .whereNull('deleted_at');
-      const rowsToReverse = allocations.length > 0
-        ? allocations
-        : (payment.invoice_id ? [{ invoice_id: payment.invoice_id, amount: payment.amount }] : []);
 
-      for (const allocation of rowsToReverse) {
+      // Refuse to void unless the allocation trail fully accounts for the payment
+      // amount. A handful of general (FIFO-allocated) payments recorded before
+      // migration 026 predate allocation tracking and have no rows here — silently
+      // treating that as "nothing to reverse" would delete the payment from AP
+      // totals without ever restoring the invoice balance(s) it paid down.
+      const allocatedTotal = Math.round(
+        allocations.reduce((sum, a) => sum + Number(a.amount), 0) * 100,
+      ) / 100;
+      const paymentAmount = Math.round(Number(payment.amount) * 100) / 100;
+      if (Math.abs(allocatedTotal - paymentAmount) > 0.01) {
+        throw Object.assign(
+          new Error(
+            'This payment predates allocation tracking and cannot be voided automatically — its allocation history is incomplete. Reconcile the affected supplier invoice balance(s) manually, then contact support before retrying.',
+          ),
+          { http: 409 },
+        );
+      }
+
+      for (const allocation of allocations) {
         const invoice = await trx('supplier_invoices').where({ id: allocation.invoice_id }).first();
         if (invoice) {
           const newBalance = Math.min(
@@ -166,7 +181,8 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('[supplierPayments:void] ERROR', err.message, err.stack);
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 

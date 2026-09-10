@@ -165,9 +165,18 @@ export async function allocateEmployeeDebt(
     if (remaining <= 0) break;
     const applied = money(Math.min(remaining, Number(debt.balance)));
     const balance = money(Number(debt.balance) - applied);
-    await db('staff_debts')
-      .where({ id: debt.id })
+    // Compare-and-swap on the balance just read: a concurrent allocation (e.g. a
+    // double-clicked payroll approve/void, or a shift-close recovery racing a
+    // payroll recovery for the same employee) that already moved this row makes
+    // the update affect 0 rows instead of silently double-deducting/restoring.
+    const updated = await db('staff_debts')
+      .where({ id: debt.id, balance: debt.balance })
       .update({ balance, status: balance === 0 ? 'cleared' : 'outstanding' });
+    if (updated !== 1) {
+      throw settlementError(
+        'This debt was changed by another operation. Refresh and try again.',
+      );
+    }
     await db(source.table).insert({
       ...source.fields,
       staff_debt_id: debt.id,

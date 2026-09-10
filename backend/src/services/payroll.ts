@@ -638,13 +638,18 @@ export async function approvePayrollRun(
       .where({ 'payroll_lines.run_id': runId, 'payroll_deductions.status': 'draft' })
       .select('payroll_deductions.*');
     for (const deduction of deductions) {
+      // Claim this draft deduction before acting on it: a concurrent approve call
+      // (double-click/retry) racing this one will find status is no longer 'draft'
+      // and fail here instead of silently re-applying the staff-debt deduction.
+      const claimed = await trx('payroll_deductions')
+        .where({ id: deduction.id, status: 'draft' })
+        .update({ status: 'approved', approved_at: trx.fn.now() });
+      if (claimed !== 1) {
+        throw settlementError('This payroll run is already being approved. Refresh and try again.');
+      }
       if (deduction.deduction_type === 'staff_debt') {
         await applyStaffDebtDeduction(deduction, trx);
       }
-      await trx('payroll_deductions').where({ id: deduction.id }).update({
-        status: 'approved',
-        approved_at: trx.fn.now(),
-      });
     }
     const runEarningIds = trx('payroll_line_earnings')
       .join('payroll_lines', 'payroll_line_earnings.payroll_line_id', 'payroll_lines.id')
@@ -705,16 +710,29 @@ export async function voidPayrollRun(
       );
     const restoredByEmployee = new Map<number, number>();
     for (const allocation of allocations) {
+      // Claim this allocation before restoring it: a concurrent void call (double-
+      // click/retry) racing this one will find it's no longer unreversed and fail
+      // here instead of silently restoring the same debt twice.
+      const claimed = await trx('payroll_debt_allocations')
+        .where({ id: allocation.id })
+        .whereNull('reversed_at')
+        .update({ reversed_at: trx.fn.now() });
+      if (claimed !== 1) {
+        throw settlementError('This payroll run is already being voided. Refresh and try again.');
+      }
       const debt = await trx('staff_debts').where({ id: allocation.staff_debt_id }).first();
       if (debt) {
-        await trx('staff_debts').where({ id: debt.id }).update({
-          balance: money(Number(debt.balance || 0) + Number(allocation.amount || 0)),
-          status: 'outstanding',
-        });
+        // Compare-and-swap on the balance just read, mirroring allocateEmployeeDebt.
+        const updated = await trx('staff_debts')
+          .where({ id: debt.id, balance: debt.balance })
+          .update({
+            balance: money(Number(debt.balance || 0) + Number(allocation.amount || 0)),
+            status: 'outstanding',
+          });
+        if (updated !== 1) {
+          throw settlementError('This debt was changed by another operation. Refresh and try again.');
+        }
       }
-      await trx('payroll_debt_allocations').where({ id: allocation.id }).update({
-        reversed_at: trx.fn.now(),
-      });
       const employeeId = Number(allocation.employee_id);
       restoredByEmployee.set(
         employeeId,

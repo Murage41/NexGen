@@ -30,7 +30,7 @@ function sumMoney(rows: any[], selector: (row: any) => any): number {
 }
 
 // ─── Daily Report ─────────────────────────────────────────────────────────────
-router.get('/daily', async (req, res) => {
+router.get('/daily', requireAdmin, async (req, res) => {
   try {
     const date = (req.query.date as string) || getKenyaDate();
 
@@ -45,6 +45,10 @@ router.get('/daily', async (req, res) => {
 
     const shiftDetails = [];
     let totalSales = 0;
+    // Closed-shift-only sales, used for gross/net profit so it lines up with COGS's
+    // scope — COGS only exists for closed shifts (FIFO batch_consumption is populated
+    // at shift close). total_sales/net_sales below stay the live (all-shift) figures.
+    let totalSalesClosed = 0;
     let totalPetrolLitres = 0;
     let totalDieselLitres = 0;
     let totalCash = 0;
@@ -148,6 +152,7 @@ router.get('/daily', async (req, res) => {
         .reduce((s: number, c: any) => s + Number(c.litres || 0), 0);
 
       totalSales += shiftSales;
+      if (shift.status === 'closed') totalSalesClosed += shiftSales;
       totalPetrolLitres += petrolLitres;
       totalDieselLitres += dieselLitres;
       totalCash += cash;
@@ -344,7 +349,9 @@ router.get('/daily', async (req, res) => {
       .first();
     const invoicePriceAdjustments = roundMoney(Number((invoiceRevenueRow as any)?.total || 0));
     const netSales = roundMoney(totalSales + invoicePriceAdjustments);
-    const grossProfit = netSales - cogs;
+    // Profit uses closed-shift-only net sales — see totalSalesClosed comment above.
+    const netSalesClosed = roundMoney(totalSalesClosed + invoicePriceAdjustments);
+    const grossProfit = netSalesClosed - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
 
     res.json({
@@ -419,19 +426,30 @@ function readings_revenue_per_litre(shiftDetails: any[], fuelType: string): numb
   return totalLitres > 0 ? totalRev / totalLitres : 0;
 }
 
+// Last calendar day of a 'YYYY-MM' month string, e.g. '2026-02' -> '2026-02-28'.
+// Phase 12 fix: the previous `month + '-31'` string-concat approach silently
+// overflowed into the next month for any month shorter than 31 days (SQLite's
+// datetime() doesn't validate day-of-month), corrupting opening/closing stock
+// valuation on 10 of 12 calendar months. Date's month overflow (day 0 of the
+// following month) also correctly rolls a December end-date into January.
+function lastDayOfMonth(monthStr: string): string {
+  const [y, m] = monthStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
 // ─── Monthly Report ────────────────────────────────────────────────────────────
-router.get('/monthly', async (req, res) => {
+router.get('/monthly', requireAdmin, async (req, res) => {
   try {
     const month = (req.query.month as string) || getKenyaMonth();
     const startDate = month + '-01';
-    const endDate = month + '-31';
+    const endDate = lastDayOfMonth(month);
 
     // Previous month for opening stock
     const [year, mon] = month.split('-').map(Number);
     const prevMonth = mon === 1
       ? `${year - 1}-12`
       : `${year}-${String(mon - 1).padStart(2, '0')}`;
-    const prevEndDate = prevMonth + '-31';
+    const prevEndDate = lastDayOfMonth(prevMonth);
 
     // FIFO cost for the month
     const fifoCosts = await getFIFOCostByFuelType(startDate, endDate);
@@ -447,7 +465,20 @@ router.get('/monthly', async (req, res) => {
       .sum('pump_readings.amount_sold as total_sales')
       .groupBy('pumps.fuel_type');
 
+    // Closed-shift-only sales, used for gross/net profit so it lines up with COGS's
+    // scope — COGS only exists for closed shifts (FIFO batch_consumption is populated
+    // at shift close). total_sales/net_sales in the response stay the all-shift figures.
+    const fuelSalesClosed = await db('pump_readings')
+      .join('shifts', 'pump_readings.shift_id', 'shifts.id')
+      .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+      .where('shifts.shift_date', '>=', startDate)
+      .where('shifts.shift_date', '<=', endDate)
+      .where('shifts.status', 'closed')
+      .sum('pump_readings.amount_sold as total_sales')
+      .first();
+
     const totalSales = fuelSales.reduce((s: number, r: any) => s + (Number(r.total_sales) || 0), 0);
+    const totalSalesClosed = Number((fuelSalesClosed as any)?.total_sales) || 0;
     const totalLitres = fuelSales.reduce((s: number, r: any) => s + (Number(r.total_litres) || 0), 0);
     const invoiceRevenueRow = await db('invoice_accounting_events')
       .whereBetween('posting_date', [startDate, endDate])
@@ -455,6 +486,7 @@ router.get('/monthly', async (req, res) => {
       .first();
     const invoicePriceAdjustments = roundMoney(Number((invoiceRevenueRow as any)?.total || 0));
     const netSales = roundMoney(totalSales + invoicePriceAdjustments);
+    const netSalesClosed = roundMoney(totalSalesClosed + invoicePriceAdjustments);
 
     // Cost per litre from FIFO
     const avgCosts: Record<string, number> = {};
@@ -720,7 +752,8 @@ router.get('/monthly', async (req, res) => {
     const payrollCashPaid = await getPayrollCashPaid(startDate, endDate);
     totalWagesPaid = await getTotalPayrollCashOutflow(startDate, endDate);
     const totalExpenses = (Number((generalExpenses as any)?.total) || 0) + (Number((shiftExpenses as any)?.total) || 0);
-    const grossProfit = netSales - cogs;
+    // Profit uses closed-shift-only net sales — see netSalesClosed comment above.
+    const grossProfit = netSalesClosed - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
 
     res.json({
@@ -778,7 +811,7 @@ router.get('/monthly', async (req, res) => {
 });
 
 // ─── Stock Reconciliation Report ──────────────────────────────────────────────
-router.get('/stock-reconciliation', async (req, res) => {
+router.get('/stock-reconciliation', requireAdmin, async (req, res) => {
   try {
     const date = (req.query.date as string) || getKenyaDate();
 
@@ -861,7 +894,7 @@ router.get('/stock-reconciliation', async (req, res) => {
 });
 
 // ─── Debtor Aging Report ──────────────────────────────────────────────────────
-router.get('/debtor-aging', async (_req, res) => {
+router.get('/debtor-aging', requireAdmin, async (_req, res) => {
   try {
     const asOfDate = getKenyaDate();
     const data = await getCombinedDebtorAging(db, asOfDate);
@@ -875,7 +908,7 @@ router.get('/debtor-aging', async (_req, res) => {
 });
 
 // ─── Cash Flow Summary ────────────────────────────────────────────────────────
-router.get('/cash-flow', async (req, res) => {
+router.get('/cash-flow', requireAdmin, async (req, res) => {
   try {
     const from = (req.query.from as string) || getKenyaMonth() + '-01';
     const to = (req.query.to as string) || getKenyaDate();
@@ -993,7 +1026,7 @@ router.get('/cash-flow', async (req, res) => {
 });
 
 // GET stock reconciliation broken down by shift
-router.get('/stock-reconciliation-by-shift', async (req, res) => {
+router.get('/stock-reconciliation-by-shift', requireAdmin, async (req, res) => {
   try {
     const date = (req.query.date as string) || getKenyaDate();
 

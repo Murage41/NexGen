@@ -12,7 +12,7 @@ import { decorateShiftStaleness, listStaleOpenShifts } from '../services/shiftOp
 
 const router = Router();
 
-router.get('/', async (_req, res) => {
+router.get('/', async (req: any, res) => {
   try {
     const today = getKenyaDate();
     const monthStart = today.slice(0, 7) + '-01';
@@ -21,22 +21,31 @@ router.get('/', async (_req, res) => {
     const todayShifts = await db('shifts')
       .where('shift_date', today);
     const shiftIds = todayShifts.map((s: any) => s.id);
+    // Closed-only subset: COGS (FIFO batch_consumption) is only ever computed at shift
+    // close, so any profit/margin figure must be based on closed-shift sales too, or an
+    // open shift's uncosted revenue silently overstates profit all day (production
+    // readiness audit, Phase 11, 2026-09-08). Live "sales so far today" display fields
+    // below intentionally still include the open shift — only profit math is restricted.
+    const closedShiftIds = todayShifts.filter((s: any) => s.status === 'closed').map((s: any) => s.id);
 
     // Today's sales from pump readings
     let todayLitresPetrol = 0;
     let todayLitresDiesel = 0;
     let todaySales = 0;
+    let todaySalesClosed = 0;
 
     if (shiftIds.length > 0) {
       const readings = await db('pump_readings')
         .join('pumps', 'pump_readings.pump_id', 'pumps.id')
         .whereIn('pump_readings.shift_id', shiftIds)
-        .select('pump_readings.litres_sold', 'pump_readings.amount_sold', 'pumps.fuel_type');
+        .select('pump_readings.litres_sold', 'pump_readings.amount_sold', 'pumps.fuel_type', 'pump_readings.shift_id');
 
+      const closedShiftIdSet = new Set(closedShiftIds);
       for (const r of readings) {
         if (r.fuel_type === 'petrol') todayLitresPetrol += Number(r.litres_sold) || 0;
         else todayLitresDiesel += Number(r.litres_sold) || 0;
         todaySales += Number(r.amount_sold) || 0;
+        if (closedShiftIdSet.has(r.shift_id)) todaySalesClosed += Number(r.amount_sold) || 0;
       }
     }
 
@@ -141,9 +150,13 @@ router.get('/', async (_req, res) => {
       .first();
     const todayInvoicePriceAdjustments = Number((todayInvoiceRevenueRow as any)?.total || 0);
     const todayNetSales = todaySales + todayInvoicePriceAdjustments;
-    const todayGrossProfit = todayNetSales - todayCogs;
+    // Profit/margin use closed-shift-only sales so they line up with COGS's scope —
+    // see closedShiftIds comment above. today_net_sales itself stays the live (all-shift)
+    // figure for the "sales so far today" display.
+    const todayNetSalesClosed = todaySalesClosed + todayInvoicePriceAdjustments;
+    const todayGrossProfit = todayNetSalesClosed - todayCogs;
     const todayNetProfit = todayGrossProfit - todayWages - todayExpenses;
-    const todayGrossMargin = todayNetSales > 0 ? (todayGrossProfit / todayNetSales) * 100 : 0;
+    const todayGrossMargin = todayNetSalesClosed > 0 ? (todayGrossProfit / todayNetSalesClosed) * 100 : 0;
 
     // Today's variance must match shift detail. Shift-linked debt receipts
     // are included inside entered cash/M-Pesa totals, not added on top.
@@ -163,11 +176,13 @@ router.get('/', async (_req, res) => {
     const mtdShifts = await db('shifts')
       .where('shift_date', '>=', monthStart)
       .where('shift_date', '<=', today)
-      .select('id');
+      .select('id', 'status');
     const mtdShiftIds = mtdShifts.map((s: any) => s.id);
+    const mtdClosedShiftIds = mtdShifts.filter((s: any) => s.status === 'closed').map((s: any) => s.id);
 
     let mtdSales = 0;
     let mtdLitres = 0;
+    let mtdSalesClosed = 0;
     if (mtdShiftIds.length > 0) {
       const mtdResult = await db('pump_readings')
         .whereIn('shift_id', mtdShiftIds)
@@ -176,6 +191,13 @@ router.get('/', async (_req, res) => {
         .first();
       mtdSales = Number((mtdResult as any)?.sales) || 0;
       mtdLitres = Number((mtdResult as any)?.litres) || 0;
+    }
+    if (mtdClosedShiftIds.length > 0) {
+      const mtdClosedResult = await db('pump_readings')
+        .whereIn('shift_id', mtdClosedShiftIds)
+        .sum('amount_sold as sales')
+        .first();
+      mtdSalesClosed = Number((mtdClosedResult as any)?.sales) || 0;
     }
 
     // MTD wages — use stored wage_paid for closed shifts, daily_wage preview for open
@@ -211,7 +233,9 @@ router.get('/', async (_req, res) => {
       .first();
     const mtdInvoicePriceAdjustments = Number((mtdInvoiceRevenueRow as any)?.total || 0);
     const mtdNetSales = mtdSales + mtdInvoicePriceAdjustments;
-    const mtdNetProfit = mtdNetSales - mtdCogs - mtdWages - mtdExpenses;
+    // Closed-only basis for profit — see closedShiftIds comment above (today's section).
+    const mtdNetSalesClosed = mtdSalesClosed + mtdInvoicePriceAdjustments;
+    const mtdNetProfit = mtdNetSalesClosed - mtdCogs - mtdWages - mtdExpenses;
 
     // ── Phase 1A: MTD M-Pesa fees ──
     let mtdMpesaFees = 0;
@@ -408,72 +432,88 @@ router.get('/', async (_req, res) => {
       driftSummary = { ok: true, dip_drift_count: 0, account_drift_count: 0, checked_at: new Date().toISOString() };
     }
 
-    res.json({
-      success: true,
-      data: {
-        // Today
-        today_sales: todaySales,
-        today_net_sales: todayNetSales,
-        today_invoice_price_adjustments: todayInvoicePriceAdjustments,
-        today_litres_petrol: todayLitresPetrol,
-        today_litres_diesel: todayLitresDiesel,
-        today_variance: todayVariance,
-        today_expected_total: todayExpectedTotal,
-        today_accounted: todayTotalAccounted,
-        today_cogs: todayCogs,
-        today_gross_profit: todayGrossProfit,
-        today_gross_margin: todayGrossMargin,
-        today_net_profit: todayNetProfit,
-        today_expenses: todayExpenses,
-        today_wages: todayWages,
-        today_wages_paid: todayWagesPaid,
-        today_collections: {
-          cash: todayCash,
-          mpesa: todayMpesa,
-          mpesa_fee: todayMpesaFee,
-          mpesa_net: todayMpesaNet,
-          credits: todayCreditsOnAccount,
-          invoice_retail: todayInvoiceRetail,
-          credit_receipts: todayCreditReceipts,
-          credit_receipts_cash: todayCreditReceiptsCash,
-          credit_receipts_mpesa: todayCreditReceiptsMpesa,
-          sales_cash: todayCash - todayCreditReceiptsCash,
-          sales_mpesa: todayMpesa - todayCreditReceiptsMpesa,
-          expected_cash: todayCash,
-          expected_mpesa: todayMpesa,
-          expected_total_received: todayCash + todayMpesa,
-        },
-        // Month-to-date
-        mtd_sales: mtdSales,
-        mtd_net_sales: mtdNetSales,
-        mtd_invoice_price_adjustments: mtdInvoicePriceAdjustments,
-        mtd_litres: mtdLitres,
-        mtd_expenses: mtdExpenses,
-        mtd_wages: mtdWages,
-        mtd_wages_paid: mtdWagesPaid,
-        mtd_net_profit: mtdNetProfit,
-        mtd_mpesa_fees: mtdMpesaFees,
-        mtd_mpesa_gross: mtdMpesaGross,
-        // Business health
-        total_outstanding_credits: totalOutstandingCredits,
-        total_outstanding_money_credits: receivables.money_receivables,
-        total_outstanding_invoice_receivables: receivables.invoice_receivables,
-        total_outstanding_staff_debts: totalOutstandingStaffDebts,
-        tank_stock_summary: tankStockSummary,
-        margin_per_litre: marginPerLitre,
-        // Supplier payables (AP)
-        total_supplier_payables: totalSupplierPayables,
-        // Phase 1 quick wins
-        epra_alerts: epraAlerts,
-        stock_health: stockHealth,
-        // Existing
-        current_shift: currentShiftWithAge,
-        stale_open_shifts: staleOpenShifts,
-        weekly_sales: weeklySales,
-        // Phase 11: reconciliation health
-        drift_check: driftSummary,
+    const fullData = {
+      // Today
+      today_sales: todaySales,
+      today_net_sales: todayNetSales,
+      today_invoice_price_adjustments: todayInvoicePriceAdjustments,
+      today_litres_petrol: todayLitresPetrol,
+      today_litres_diesel: todayLitresDiesel,
+      today_variance: todayVariance,
+      today_expected_total: todayExpectedTotal,
+      today_accounted: todayTotalAccounted,
+      today_cogs: todayCogs,
+      today_gross_profit: todayGrossProfit,
+      today_gross_margin: todayGrossMargin,
+      today_net_profit: todayNetProfit,
+      today_expenses: todayExpenses,
+      today_wages: todayWages,
+      today_wages_paid: todayWagesPaid,
+      today_collections: {
+        cash: todayCash,
+        mpesa: todayMpesa,
+        mpesa_fee: todayMpesaFee,
+        mpesa_net: todayMpesaNet,
+        credits: todayCreditsOnAccount,
+        invoice_retail: todayInvoiceRetail,
+        credit_receipts: todayCreditReceipts,
+        credit_receipts_cash: todayCreditReceiptsCash,
+        credit_receipts_mpesa: todayCreditReceiptsMpesa,
+        sales_cash: todayCash - todayCreditReceiptsCash,
+        sales_mpesa: todayMpesa - todayCreditReceiptsMpesa,
+        expected_cash: todayCash,
+        expected_mpesa: todayMpesa,
+        expected_total_received: todayCash + todayMpesa,
       },
-    });
+      // Month-to-date
+      mtd_sales: mtdSales,
+      mtd_net_sales: mtdNetSales,
+      mtd_invoice_price_adjustments: mtdInvoicePriceAdjustments,
+      mtd_litres: mtdLitres,
+      mtd_expenses: mtdExpenses,
+      mtd_wages: mtdWages,
+      mtd_wages_paid: mtdWagesPaid,
+      mtd_net_profit: mtdNetProfit,
+      mtd_mpesa_fees: mtdMpesaFees,
+      mtd_mpesa_gross: mtdMpesaGross,
+      // Business health
+      total_outstanding_credits: totalOutstandingCredits,
+      total_outstanding_money_credits: receivables.money_receivables,
+      total_outstanding_invoice_receivables: receivables.invoice_receivables,
+      total_outstanding_staff_debts: totalOutstandingStaffDebts,
+      tank_stock_summary: tankStockSummary,
+      margin_per_litre: marginPerLitre,
+      // Supplier payables (AP)
+      total_supplier_payables: totalSupplierPayables,
+      // Phase 1 quick wins
+      epra_alerts: epraAlerts,
+      stock_health: stockHealth,
+      // Existing
+      current_shift: currentShiftWithAge,
+      stale_open_shifts: staleOpenShifts,
+      weekly_sales: weeklySales,
+      // Phase 11: reconciliation health
+      drift_check: driftSummary,
+    };
+
+    // Employee-access rollout (Tier 1): this endpoint is shared by both roles
+    // (mobile's home screen calls it regardless of role), but it carries full
+    // business P&L. Non-admin callers get the operational subset only —
+    // mobile's Dashboard.tsx never reads the stripped fields, so this is a
+    // pure narrowing with no UI regression, not a redesign of the response.
+    const isAdmin = req.employee?.role === 'admin';
+    const data = isAdmin ? fullData : {
+      today_sales: fullData.today_sales,
+      today_litres_petrol: fullData.today_litres_petrol,
+      today_litres_diesel: fullData.today_litres_diesel,
+      today_variance: fullData.today_variance,
+      today_collections: fullData.today_collections,
+      current_shift: fullData.current_shift,
+      stale_open_shifts: fullData.stale_open_shifts,
+      weekly_sales: fullData.weekly_sales,
+    };
+
+    res.json({ success: true, data });
   } catch (err: any) {
     console.error('[dashboard:get] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });
