@@ -1999,17 +1999,12 @@ router.post('/:id/recovery-preview', requireAdmin, async (req, res) => {
     const data = await db.transaction(async trx => {
       const shift = await trx('shifts').where({ id: req.params.id, status: 'open' }).first();
       if (!shift) throw new Error('Open shift not found.');
-      const cash = Number(req.body.wage_paid);
-      if (!Number.isFinite(cash) || cash < 0) throw new Error('Enter the actual non-negative cash wage payment.');
       const readings = await trx('pump_readings').join('pumps', 'pump_readings.pump_id', 'pumps.id').where('pump_readings.shift_id', shift.id).where('pumps.active', true);
-      const collections = await trx('shift_collections').where({ shift_id: shift.id }).first();
-      const expenses = await trx('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
-      const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
-      const creditReceipts = await trx('credit_payments').where({ shift_id: shift.id, status: 'posted' }).whereNull('deleted_at');
-      const payrollPayments = await trx('payroll_payments').where({ shift_id: shift.id, status: 'posted' });
-      const invoiceConsumption = await trx('invoice_consumption').where({ shift_id: shift.id }).whereNull('deleted_at');
-      const { variance } = computeShiftAccountability({ readings, collections, expenses, shiftCredits, creditReceipts, payrollPayments, invoiceConsumption, employee_wage: cash });
-      return shiftRecoveryPreview(shift, readings, cash, variance, trx);
+      // Recovery is always a repayment now (see shiftSettlement.ts) - it no
+      // longer depends on wage_paid or this shift's variance, so it's no
+      // longer computed here. wage_paid may still be sent by older clients;
+      // it's simply unused.
+      return shiftRecoveryPreview(shift, readings, trx);
     });
     res.json({ success: true, data });
   } catch (e: any) { res.status(e.httpStatus || 409).json({ success: false, error: e.message }); }
@@ -2059,6 +2054,14 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         .join('pumps', 'pump_readings.pump_id', 'pumps.id')
         .where('pump_readings.shift_id', shift.id)
         .where('pumps.active', true);
+
+      // Debt recovery is always a personal repayment, never wage withholding
+      // (see shiftSettlement.ts) - it deliberately has zero effect on this
+      // shift's own accountability/variance below, so its position relative to
+      // the creditReceipts fetch doesn't matter for correctness. It must run
+      // while the shift is still 'open' (status flips further down).
+      await postShiftRecovery(shift, readings, req.body.recovery_decision, trx, req.employee?.id > 0 ? req.employee.id : null);
+
       const collections = await trx('shift_collections').where({ shift_id: shift.id }).first();
       const expenses = await trx('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
       const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
@@ -2127,7 +2130,24 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         throw err;
       }
 
-      await postShiftRecovery(shift, readings, employee_wage, variance, req.body.recovery_decision, String(varianceReason || ''), trx, req.employee?.id > 0 ? req.employee.id : null);
+      // A genuine shortfall on this shift (after any repayment above is already
+      // correctly reflected in variance) becomes standing staff debt, exactly as
+      // before - this is unchanged and independent of the repayment recorded
+      // above, which only ever recovers *pre-existing* debt, never this same
+      // shift's own shortfall in the same transaction.
+      if (variance < -0.005) {
+        const shortfall = roundMoney(-variance);
+        await trx('staff_debts').insert({
+          employee_id: shift.employee_id,
+          shift_id: shift.id,
+          original_deficit: shortfall,
+          deducted_from_wage: 0,
+          carried_forward: shortfall,
+          balance: shortfall,
+          status: 'outstanding',
+          recovery_status: 'confirmed',
+        });
+      }
 
       // --- Litre accountability: computed book stock + FIFO costing ---
       const allTanks = await trx('tanks').select('id');
@@ -2261,6 +2281,9 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         end_time: closeTime,
         notes: notes || null,
         wage_paid: employee_wage,
+        // Always the full amount entered - recovery (if any) no longer reduces
+        // this, per the repayment-only redesign in shiftSettlement.ts.
+        direct_wage_cash_amount: employee_wage,
       });
 
       // Now recompute tank cache — the shift is closed so its sales are included

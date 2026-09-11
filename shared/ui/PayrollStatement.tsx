@@ -69,8 +69,7 @@ export function RecoveryEditor({
       </p>
       {preview.available === 0 && (
         <p className="text-sm text-amber-800">
-          No unpaid compensation is available to withhold. Cash already paid
-          cannot also repay debt.
+          No further recovery is available against this period right now.
         </p>
       )}
       <div className="space-y-1 text-sm">

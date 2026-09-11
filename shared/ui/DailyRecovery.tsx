@@ -27,7 +27,7 @@ export function DailyRecovery({
             if (live) {
               const data = r.data.data;
               setPreview(data);
-              onReady(data.pay_schedule !== 'daily' || data.recoverable <= 0);
+              onReady(data.recoverable <= 0);
             }
           })
           .catch((e: any) => {
@@ -52,13 +52,6 @@ export function DailyRecovery({
     );
   if (!preview)
     return <p className="text-sm p-3">Checking compensation and debt…</p>;
-  if (preview.pay_schedule !== 'daily')
-    return (
-      <p className="text-sm p-3">
-        Shortages remain on the employee account for recovery at payroll
-        approval.
-      </p>
-    );
   return (
     <RecoveryEditor
       key={`${preview.version}:${refresh}`}
