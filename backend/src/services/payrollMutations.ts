@@ -46,7 +46,7 @@ export async function savePayrollRecovery(
       employee_id: line.employee_id,
       deduction_type: 'staff_debt',
       amount,
-      authorization_reference: decision.authorization_reference.trim(),
+      authorization_reference: String(decision.authorization_reference || '').trim(),
       notes: decision.reason || null,
       status: 'draft',
       created_by_employee_id: actorId,

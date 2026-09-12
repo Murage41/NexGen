@@ -58,14 +58,18 @@ export function RecoveryEditor({
     <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3 print:hidden">
       <p className="font-semibold text-gray-900">Review debt recovery</p>
       <p className="text-sm">
-        Outstanding {kes(preview.outstanding)} ·{' '}
-        {preview.gross != null ? 'recovery cap for this shift' : 'available unpaid compensation'}{' '}
-        {kes(preview.available)}
+        Outstanding {kes(preview.outstanding)}
+        {preview.shortage > 0 && (
+          <span className="text-gray-600">
+            {' '}— including {kes(preview.shortage)} short on this shift
+          </span>
+        )}
       </p>
       <p className="text-sm text-gray-600">
-        Recover confirmed shortages oldest first. Proposed:{' '}
-        {kes(preview.proposed)}. Recovery limit: {preview.limit_percent}% of{' '}
-        {preview.gross != null ? "this shift's earnings" : 'available compensation'}.
+        Settles oldest debt first. Proposed: {kes(preview.proposed)}.
+        {preview.limit_percent < 100
+          ? ` Capped at ${preview.limit_percent}% of ${preview.gross != null ? 'what is owed' : 'available compensation'}.`
+          : ''}
       </p>
       {preview.available === 0 && (
         <p className="text-sm text-amber-800">
@@ -117,9 +121,9 @@ export function RecoveryEditor({
       </label>
       {preview.gross != null && (
         <p className="text-sm text-gray-600">
-          This shift's earnings: {kes(preview.gross)}, paid in full. Recovery
-          here is against pre-existing debt only — it does not reduce this
-          shift's wage or affect its own variance.
+          This shift's earnings: {kes(preview.gross)}, paid in full. Anything
+          recovered here is cash handed back separately — it never reduces the
+          wage or changes this shift's variance.
         </p>
       )}
       <p className="text-sm">

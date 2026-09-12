@@ -40,7 +40,14 @@ export async function employeeDebtSummary(employeeId: number, db: Connection) {
   );
   return {
     debts,
-    outstanding: money(debts.reduce((s, d) => s + Number(d.balance || 0), 0)),
+    // Canonical definition of "what this employee owes", used by the credit
+    // account mirror and every recovery flow. Must stay identical to the
+    // Employees page query (routes/employees.ts) so the two never disagree.
+    outstanding: money(
+      debts
+        .filter((d) => d.status === 'outstanding')
+        .reduce((s, d) => s + Number(d.balance || 0), 0),
+    ),
     recoverable: money(
       eligible.reduce((s, d) => s + Number(d.balance || 0), 0),
     ),

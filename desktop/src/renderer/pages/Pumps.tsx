@@ -2,13 +2,25 @@ import { useState, useEffect } from 'react';
 import { getPumps, createPump, updatePump, deletePump, getTanks } from '../services/api';
 import { Plus, Pencil, Trash2, Fuel, X } from 'lucide-react';
 
+// A pump meter wraps to zero once it passes its capacity. Operators can read the
+// number of whole digits off the pump face far more reliably than they can state
+// a capacity, so the form asks for digits and converts: 6 digits -> 1,000,000.
+const capacityToDigits = (capacity: any) => {
+  const value = Number(capacity);
+  if (!Number.isFinite(value) || value <= 0) return 6;
+  return Math.max(4, Math.min(9, Math.round(Math.log10(value))));
+};
+const digitsToCapacity = (digits: any) => 10 ** Math.max(4, Math.min(9, Number(digits) || 6));
+const formatRollover = (digits: any) =>
+  digitsToCapacity(digits).toLocaleString('en-KE');
+
 export default function Pumps() {
   const [pumps, setPumps] = useState<any[]>([]);
   const [tanks, setTanks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [form, setForm] = useState({ label: '', nozzle_label: '', fuel_type: 'petrol', tank_id: '', initial_litres: '', initial_amount: '' });
+  const [form, setForm] = useState({ label: '', nozzle_label: '', fuel_type: 'petrol', tank_id: '', initial_litres: '', initial_amount: '', meter_digits_litres: '6', meter_digits_amount: '6' });
   const [formError, setFormError] = useState('');
   const [listError, setListError] = useState('');
 
@@ -30,7 +42,7 @@ export default function Pumps() {
 
   function openCreate() {
     setEditing(null);
-    setForm({ label: '', nozzle_label: '', fuel_type: 'petrol', tank_id: '', initial_litres: '', initial_amount: '' });
+    setForm({ label: '', nozzle_label: '', fuel_type: 'petrol', tank_id: '', initial_litres: '', initial_amount: '', meter_digits_litres: '6', meter_digits_amount: '6' });
     setFormError('');
     setShowModal(true);
   }
@@ -44,6 +56,8 @@ export default function Pumps() {
       tank_id: String(pump.tank_id || ''),
       initial_litres: pump.initial_litres ? String(pump.initial_litres) : '',
       initial_amount: pump.initial_amount ? String(pump.initial_amount) : '',
+      meter_digits_litres: String(capacityToDigits(pump.meter_capacity_litres)),
+      meter_digits_amount: String(capacityToDigits(pump.meter_capacity_amount)),
     });
     setFormError('');
     setShowModal(true);
@@ -58,6 +72,8 @@ export default function Pumps() {
       tank_id: form.tank_id ? parseInt(form.tank_id) : null,
       initial_litres: form.initial_litres ? parseFloat(form.initial_litres) : 0,
       initial_amount: form.initial_amount ? parseFloat(form.initial_amount) : 0,
+      meter_capacity_litres: digitsToCapacity(form.meter_digits_litres),
+      meter_capacity_amount: digitsToCapacity(form.meter_digits_amount),
     };
     try {
       if (editing) {
@@ -191,6 +207,43 @@ export default function Pumps() {
                   </div>
                 </div>
               </div>
+              <div className="border-t border-gray-200 pt-4 mt-2">
+                <p className="text-sm font-medium text-gray-700 mb-2">Meter Rollover</p>
+                <p className="text-xs text-gray-400 mb-3">
+                  How many whole digits the pump shows before the decimal point. When the
+                  display passes this it wraps back to zero, and NexGen has to add the wrap
+                  back on. Count the digits on the pump face — they can differ between the
+                  litre and shilling counters on the same pump.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Litre display digits</label>
+                    <input
+                      type="number"
+                      min="4"
+                      max="9"
+                      step="1"
+                      value={form.meter_digits_litres}
+                      onChange={e => setForm({ ...form, meter_digits_litres: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg p-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Wraps to zero at {formatRollover(form.meter_digits_litres)} L</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">KES display digits</label>
+                    <input
+                      type="number"
+                      min="4"
+                      max="9"
+                      step="1"
+                      value={form.meter_digits_amount}
+                      onChange={e => setForm({ ...form, meter_digits_amount: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg p-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Wraps to zero at KES {formatRollover(form.meter_digits_amount)}</p>
+                  </div>
+                </div>
+              </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                   Cancel
@@ -214,6 +267,7 @@ export default function Pumps() {
               <th className="text-left p-3 font-medium text-gray-600">Nozzle</th>
               <th className="text-left p-3 font-medium text-gray-600">Fuel Type</th>
               <th className="text-left p-3 font-medium text-gray-600">Tank</th>
+              <th className="text-left p-3 font-medium text-gray-600">Rolls over at</th>
               <th className="text-left p-3 font-medium text-gray-600">Actions</th>
             </tr>
           </thead>
@@ -231,6 +285,11 @@ export default function Pumps() {
                   </span>
                 </td>
                 <td className="p-3 text-gray-600">{pump.tank_label || '-'}</td>
+                <td className="p-3 text-gray-600 text-xs">
+                  {Number(pump.meter_capacity_litres || 0).toLocaleString('en-KE')} L
+                  {' · '}
+                  KES {Number(pump.meter_capacity_amount || 0).toLocaleString('en-KE')}
+                </td>
                 <td className="p-3">
                   <div className="flex items-center gap-2">
                     <button onClick={() => openEdit(pump)} className="text-blue-600 hover:text-blue-800" title="Edit">
@@ -245,7 +304,7 @@ export default function Pumps() {
             ))}
             {pumps.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-gray-400">No pumps configured yet.</td>
+                <td colSpan={7} className="p-8 text-center text-gray-400">No pumps configured yet.</td>
               </tr>
             )}
           </tbody>

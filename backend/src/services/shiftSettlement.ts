@@ -6,6 +6,7 @@ import {
 } from './compensation';
 import {
   money,
+  employeeDebtSummary,
   recoveryPreview,
   validateRecoveryDecision,
   allocateEmployeeDebt,
@@ -35,10 +36,19 @@ import {
 // variance a second time, and when the corrupted variance went negative it
 // triggered creation of a brand-new staff debt for a shortfall that never
 // existed. See docs/RECOVERY-MECHANISM-CORRECTION.md for the full writeup.
+//
+// A recovery confirmed at close settles BOTH pre-existing debt and this shift's
+// own shortfall (2026-09-12): the shortfall is written as standing debt first,
+// then the repayment is allocated across everything owed, oldest first. This
+// matches how the owner actually operates - the attendant hands over one amount
+// covering what he already owed plus tonight. The shortfall is still derived
+// from a variance the repayment cannot influence (no shift_id on the receipt),
+// which is what keeps the 103/105 double-count from returning.
 
 export async function shiftRecoveryPreview(
   shift: any,
   readings: any[],
+  variance: number,
   db: Knex | Knex.Transaction,
 ) {
   const plan = shift.compensation_plan_id
@@ -55,36 +65,87 @@ export async function shiftRecoveryPreview(
       0,
     ),
   );
-  // "available" caps recovery against this shift's own earned activity, as an
-  // existing per-employee pacing policy (recovery_limit_percent) - it is not a
-  // wage-withholding capacity check, since wage is never touched here.
-  const preview = await recoveryPreview(Number(shift.employee_id), gross, db, {
+
+  // This shift's own shortfall, offered for settlement alongside older debt.
+  // It is not a staff_debts row yet - postShiftRecovery writes it at close.
+  const shortage = money(Math.max(0, -Number(variance || 0)));
+
+  // The recovery cap is a pacing policy (recovery_limit_percent) applied to
+  // what is owed, NOT to this shift's earnings. Earnings were the right basis
+  // under the old wage-withholding model, where recovery came out of unpaid
+  // wage; they are the wrong basis for a cash repayment, which is limited only
+  // by the debt itself - an attendant can hand over more than he earned tonight.
+  const { outstanding } = await employeeDebtSummary(Number(shift.employee_id), db);
+  const cap = money(outstanding + shortage);
+
+  // variance is part of the hashed context, so a preview taken before close and
+  // the recheck at close only agree while the shift's figures are unchanged.
+  const preview = await recoveryPreview(Number(shift.employee_id), cap, db, {
     shift: shift.id,
     gross,
+    variance: money(variance),
   });
+  const recoverable = money(preview.recoverable + shortage);
   const proposed = money(
-    Math.min(preview.recoverable, (preview.available * preview.limit_percent) / 100),
+    Math.min(recoverable, (cap * preview.limit_percent) / 100),
   );
   return {
     ...preview,
     proposed,
+    recoverable,
+    outstanding: money(preview.outstanding + shortage),
+    shortage,
     gross,
     pay_schedule: plan.pay_schedule,
+    debts: [
+      ...preview.debts,
+      ...(shortage > 0
+        ? [
+            {
+              id: 'current',
+              shift_id: shift.id,
+              balance: shortage,
+              recovery_status: 'confirmed',
+              status: 'outstanding',
+            },
+          ]
+        : []),
+    ],
   };
 }
 
 export async function postShiftRecovery(
   shift: any,
   readings: any[],
+  variance: number,
   decision: any,
   db: Knex.Transaction,
   actorId: number | null = null,
 ) {
-  const preview = await shiftRecoveryPreview(shift, readings, db);
+  const preview = await shiftRecoveryPreview(shift, readings, variance, db);
   let recovery = 0;
   if (preview.recoverable > 0 || decision) {
     recovery = validateRecoveryDecision(preview, decision);
   }
+
+  // Write this shift's shortfall as standing debt BEFORE allocating, so a
+  // repayment confirmed at this close can settle it in the same operation
+  // instead of leaving the attendant owing it the moment he has just paid.
+  // This is also what keeps the credit-account mirror correct: the final
+  // syncEmployeeDebt below now runs after every staff_debts write.
+  if (preview.shortage > 0) {
+    await db('staff_debts').insert({
+      employee_id: shift.employee_id,
+      shift_id: shift.id,
+      original_deficit: preview.shortage,
+      deducted_from_wage: 0,
+      carried_forward: preview.shortage,
+      balance: preview.shortage,
+      status: 'outstanding',
+      recovery_status: 'confirmed',
+    });
+  }
+
   if (recovery > 0) {
     // Ensure the employee's credit_accounts mirror exists (same pattern as the
     // standalone "Collect Payment" receipt flow in employeePay.ts).
