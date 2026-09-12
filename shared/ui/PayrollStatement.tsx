@@ -53,19 +53,19 @@ export function RecoveryEditor({
     amount !== '' &&
     Number(amount) >= 0 &&
     Number(amount) <= preview.proposed &&
-    (Number(amount) === 0 || reference.trim()) &&
     (Number(amount) >= preview.proposed || reason.trim().length >= 3);
   return (
     <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3 print:hidden">
       <p className="font-semibold text-gray-900">Review debt recovery</p>
       <p className="text-sm">
-        Outstanding {kes(preview.outstanding)} · available unpaid compensation{' '}
+        Outstanding {kes(preview.outstanding)} ·{' '}
+        {preview.gross != null ? 'recovery cap for this shift' : 'available unpaid compensation'}{' '}
         {kes(preview.available)}
       </p>
       <p className="text-sm text-gray-600">
         Recover confirmed shortages oldest first. Proposed:{' '}
-        {kes(preview.proposed)}. Recovery limit: {preview.limit_percent}% of
-        available compensation.
+        {kes(preview.proposed)}. Recovery limit: {preview.limit_percent}% of{' '}
+        {preview.gross != null ? "this shift's earnings" : 'available compensation'}.
       </p>
       {preview.available === 0 && (
         <p className="text-sm text-amber-800">
@@ -99,12 +99,12 @@ export function RecoveryEditor({
         />
       </label>
       <label className="block text-sm">
-        Authorization reference
+        Authorization reference (optional)
         <input
           className={field}
           value={reference}
           onChange={(e) => { setReference(e.target.value); onDirty?.(); }}
-          placeholder="Required for a deduction"
+          placeholder="e.g. a note or approval reference"
         />
       </label>
       <label className="block text-sm">
@@ -116,11 +116,10 @@ export function RecoveryEditor({
         />
       </label>
       {preview.gross != null && (
-        <p className="text-sm">
-          Earned {kes(preview.gross)} · cash actually paid{' '}
-          {kes(preview.actual_cash)} · existing deductions{' '}
-          {kes(preview.existing_deductions)} · unpaid after this recovery{' '}
-          {kes(Math.max(0, preview.available - Number(amount || 0)))}
+        <p className="text-sm text-gray-600">
+          This shift's earnings: {kes(preview.gross)}, paid in full. Recovery
+          here is against pre-existing debt only — it does not reduce this
+          shift's wage or affect its own variance.
         </p>
       )}
       <p className="text-sm">

@@ -236,7 +236,7 @@ export default function ShiftDetail() {
     + directDrawerPayment
     + totalPayrollPayments;
   const closeVariance = Math.round((closeTotalAccounted - expectedShiftTotal) * 100) / 100;
-  const requiresVarianceReason = Math.abs(closeVariance) >= 0.01;
+  const requiresVarianceReason = Math.abs(closeVariance) >= 50;
   const closeReviewComplete = closeReview.readings
     && closeReview.collections
     && closeReview.entries
@@ -791,6 +791,9 @@ export default function ShiftDetail() {
                 <input type="number" step="0.01" min="0" value={wagePaid}
                   onChange={e => setWagePaid(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg p-3 text-base" />
+                <p className="text-xs text-gray-400 mt-1">
+                  Enter the full wage — any debt recovery below is handled separately and won't reduce this.
+                </p>
               </div>
             ) : (
               <div className="mb-4 border-y border-gray-200 py-3 flex items-center justify-between">

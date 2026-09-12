@@ -367,6 +367,7 @@ export default function TankStock() {
       ? NEGATIVE_ADJUSTMENT_REASONS
       : [];
   const adjustmentProjectedStock = selectedAdjustmentDip ? Number(selectedAdjustmentDip.measured_litres || 0) : null;
+  const adjustmentNotesRequired = adjustmentForm.reason === 'other_gain' || adjustmentForm.reason === 'other_loss';
 
   if (loading) return <div className="text-gray-500">Loading...</div>;
 
@@ -1012,14 +1013,16 @@ export default function TankStock() {
                 </div>
               )}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Reason Details *</label>
-                <textarea rows={3} required value={adjustmentForm.notes}
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reason Details {adjustmentNotesRequired ? '*' : '(optional)'}
+                </label>
+                <textarea rows={3} required={adjustmentNotesRequired} value={adjustmentForm.notes}
                   onChange={e => setAdjustmentForm({ ...adjustmentForm, notes: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg p-2 text-sm" placeholder="Physical dip result, incident reference, approval note..." />
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setAdjustmentModal({ open: false })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                <button type="submit" disabled={saving || !adjustmentForm.reference_dip_id || !adjustmentForm.reason || Math.abs(adjustmentChange) < 0.01} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                <button type="submit" disabled={saving || !adjustmentForm.reference_dip_id || !adjustmentForm.reason || Math.abs(adjustmentChange) < 0.01 || (adjustmentNotesRequired && adjustmentForm.notes.trim().length < 3)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
                   {saving ? 'Posting...' : 'Post Adjustment'}
                 </button>
               </div>

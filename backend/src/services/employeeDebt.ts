@@ -127,11 +127,9 @@ export function validateRecoveryDecision(preview: any, decision: any) {
     throw settlementError(
       `Recovery cannot exceed KES ${preview.proposed.toFixed(2)}.`,
     );
-  if (amount > 0 && !String(decision.authorization_reference || '').trim())
-    throw settlementError(
-      'Enter an authorization reference for this recovery.',
-      400,
-    );
+  // authorization_reference is optional free text (e.g. "per owner's WhatsApp
+  // msg 9/7") - real audit value already comes from req.employee.id being
+  // recorded as approved_by_employee_id, so this is never required.
   if (
     amount < preview.proposed &&
     String(decision.reason || '').trim().length < 3

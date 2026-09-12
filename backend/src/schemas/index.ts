@@ -289,10 +289,16 @@ export const createTankStockAdjustmentSchema = z.object({
     .refine((n) => Number.isFinite(n) && n !== 0, 'litres_change cannot be zero')
     .optional(),
   reason: z.enum(TANK_ADJUSTMENT_REASONS),
-  notes: z.string().min(3, 'notes/reason details are required'),
+  notes: z.string().optional(),
   adjustment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'adjustment_date must be YYYY-MM-DD format').optional(),
   reference_dip_id: z.number({ error: 'reference_dip_id is required' }).int().positive(),
   cost_per_litre: z.number().min(0, 'cost_per_litre cannot be negative').nullish().optional(),
+}).superRefine((data, ctx) => {
+  // The reason enum is usually self-explanatory; only "other_*" needs free text.
+  const isOther = data.reason === 'other_gain' || data.reason === 'other_loss';
+  if (isOther && String(data.notes || '').trim().length < 3) {
+    ctx.addIssue({ code: 'custom', path: ['notes'], message: 'notes/reason details are required for "Other"' });
+  }
 });
 
 // --- Suppliers ---

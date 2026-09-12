@@ -144,7 +144,7 @@ export default function TankDips() {
   }
 
   async function handleAdjust() {
-    if (!adjustDip || !adjustForm.reason || !adjustForm.notes.trim()) return;
+    if (!adjustDip || !adjustForm.reason || (adjustNotesRequired && !adjustForm.notes.trim())) return;
     setSubmitting(true);
     setError('');
     setWarnings([]);
@@ -206,6 +206,7 @@ export default function TankDips() {
     : adjustChange < 0
       ? NEGATIVE_ADJUSTMENT_REASONS
       : [];
+  const adjustNotesRequired = adjustForm.reason === 'other_gain' || adjustForm.reason === 'other_loss';
 
   return (
     <div className="pb-6">
@@ -489,7 +490,9 @@ export default function TankDips() {
                 </div>
               )}
               <div>
-                <label className="text-sm text-gray-600 mb-1 block">Approval Notes</label>
+                <label className="text-sm text-gray-600 mb-1 block">
+                  Approval Notes {adjustNotesRequired ? '' : '(optional)'}
+                </label>
                 <textarea
                   rows={3}
                   className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -500,7 +503,7 @@ export default function TankDips() {
               </div>
               <button
                 onClick={handleAdjust}
-                disabled={submitting || !adjustForm.reason || !adjustForm.notes.trim() || Math.abs(adjustChange) < 0.01}
+                disabled={submitting || !adjustForm.reason || (adjustNotesRequired && !adjustForm.notes.trim()) || Math.abs(adjustChange) < 0.01}
                 className="w-full bg-blue-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50"
               >
                 {submitting ? 'Posting...' : 'Post Adjustment'}
