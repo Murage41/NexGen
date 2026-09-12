@@ -2,14 +2,26 @@ import { useState, Fragment } from 'react';
 import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
   getStockReconciliationByShift, getDebtorAging, getCashFlow,
+  exportMonthlyReport, exportStockReconciliation,
 } from '../services/api';
 import {
   BarChart3, Calendar, TrendingUp, TrendingDown, Minus,
-  Droplets, AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle,
+  Droplets, AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle, Download,
 } from 'lucide-react';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow';
+
+function downloadBlob(response: any, fallbackFilename: string) {
+  const disposition = String(response.headers['content-disposition'] || '');
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || fallbackFilename;
+  const url = URL.createObjectURL(response.data);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState<Tab>('daily');
@@ -22,12 +34,16 @@ export default function Reports() {
   // Monthly
   const [monthlyMonth, setMonthlyMonth] = useState(getKenyaMonth());
   const [monthlyData, setMonthlyData] = useState<any>(null);
+  const [exportingMonthly, setExportingMonthly] = useState(false);
+  const [monthlyExportError, setMonthlyExportError] = useState('');
 
   // Stock Reconciliation
   const [stockDate, setStockDate] = useState(getKenyaDate());
   const [stockData, setStockData] = useState<any>(null);
   const [stockByShift, setStockByShift] = useState<any>(null);
   const [expandedTank, setExpandedTank] = useState<number | null>(null);
+  const [exportingStock, setExportingStock] = useState(false);
+  const [stockExportError, setStockExportError] = useState('');
 
   // Debtor Aging
   const [debtorData, setDebtorData] = useState<any>(null);
@@ -48,6 +64,30 @@ export default function Reports() {
     try { const res = await getMonthlyReport(monthlyMonth); setMonthlyData(res.data.data); }
     catch { setMonthlyData(null); }
     finally { setLoading(false); }
+  }
+  async function handleExportMonthly() {
+    setExportingMonthly(true);
+    setMonthlyExportError('');
+    try {
+      const res = await exportMonthlyReport(monthlyMonth);
+      downloadBlob(res, `nexgen-monthly-pl-${monthlyMonth}.csv`);
+    } catch (err: any) {
+      setMonthlyExportError(err.response?.data?.error || 'Unable to export the monthly report.');
+    } finally {
+      setExportingMonthly(false);
+    }
+  }
+  async function handleExportStock() {
+    setExportingStock(true);
+    setStockExportError('');
+    try {
+      const res = await exportStockReconciliation(stockDate.slice(0, 7));
+      downloadBlob(res, `nexgen-stock-reconciliation-${stockDate.slice(0, 7)}.csv`);
+    } catch (err: any) {
+      setStockExportError(err.response?.data?.error || 'Unable to export stock reconciliation.');
+    } finally {
+      setExportingStock(false);
+    }
   }
   async function loadStockReport() {
     setLoading(true);
@@ -398,7 +438,12 @@ export default function Reports() {
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm">
               {loading ? 'Loading...' : 'Generate Report'}
             </button>
+            <button onClick={handleExportMonthly} disabled={exportingMonthly}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 text-sm">
+              <Download size={16} /> {exportingMonthly ? 'Exporting...' : 'Export CSV'}
+            </button>
           </div>
+          {monthlyExportError && <p className="text-sm text-red-700 -mt-4 mb-4">{monthlyExportError}</p>}
 
           {monthlyData && (
             <div className="space-y-6">
@@ -683,7 +728,13 @@ export default function Reports() {
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm">
               {loading ? 'Loading...' : 'Generate Report'}
             </button>
+            <button onClick={handleExportStock} disabled={exportingStock}
+              title={`Exports every day in ${stockDate.slice(0, 7)}, not just the selected date`}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 text-sm">
+              <Download size={16} /> {exportingStock ? 'Exporting...' : `Export Month CSV`}
+            </button>
           </div>
+          {stockExportError && <p className="text-sm text-red-700 -mt-4 mb-4">{stockExportError}</p>}
 
           {stockData && (
             <div className="bg-white rounded-lg shadow overflow-hidden">

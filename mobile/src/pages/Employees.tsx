@@ -83,6 +83,9 @@ export default function Employees() {
   const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
   const [profile, setProfile] = useState(blankProfile());
   const [plan, setPlan] = useState(blankPlan());
+  const [profileError, setProfileError] = useState('');
+  const [planError, setPlanError] = useState('');
+  const [listError, setListError] = useState('');
 
   useEffect(() => { loadEmployees(); }, []);
 
@@ -101,6 +104,7 @@ export default function Employees() {
     setEditing(null);
     setProfile(blankProfile());
     setPlan(blankPlan());
+    setProfileError('');
     setProfileSheet(true);
   }
 
@@ -115,6 +119,7 @@ export default function Employees() {
       pin: '',
       role: employee.role || 'attendant',
     });
+    setProfileError('');
     setProfileSheet(true);
   }
 
@@ -135,6 +140,7 @@ export default function Employees() {
         }))
         : [blankComponent()],
     });
+    setPlanError('');
     setPlanSheet(true);
   }
 
@@ -168,7 +174,7 @@ export default function Employees() {
       setProfileSheet(false);
       await loadEmployees();
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to save employee');
+      setProfileError(error.response?.data?.error || 'Failed to save employee');
     } finally {
       setSaving(false);
     }
@@ -182,7 +188,7 @@ export default function Employees() {
       setPlanSheet(false);
       await loadEmployees();
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to save compensation plan');
+      setPlanError(error.response?.data?.error || 'Failed to save compensation plan');
     } finally {
       setSaving(false);
     }
@@ -190,11 +196,12 @@ export default function Employees() {
 
   async function deactivate(employee: any) {
     if (!confirm(`Deactivate ${employee.name}? Historical records will remain available.`)) return;
+    setListError('');
     try {
       await deleteEmployee(employee.id);
       await loadEmployees();
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to deactivate employee');
+      setListError(error.response?.data?.error || 'Failed to deactivate employee');
     }
   }
 
@@ -214,6 +221,7 @@ export default function Employees() {
       <PageHeader title="Employees" back right={
         <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl" title="Add employee"><Plus size={20} /></button>
       } />
+      {listError && <p className="text-sm text-red-600 mb-3">{listError}</p>}
 
       {employees.length === 0 ? (
         <div className="text-center mt-20">
@@ -279,6 +287,7 @@ export default function Employees() {
                 <CompactPlanEditor plan={plan} setPlan={setPlan} updateComponent={updateComponent} />
               </>
             )}
+            {profileError && <p className="text-sm text-red-600">{profileError}</p>}
             <button onClick={saveProfile} disabled={saving || !profile.name.trim() || (!editing && profile.pin.length !== 4)}
               className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium disabled:opacity-50">
               {saving ? 'Saving...' : editing ? 'Update Employee' : 'Create Employee'}
@@ -290,6 +299,7 @@ export default function Employees() {
       {planSheet && selectedEmployee && (
         <Sheet title={`Compensation - ${selectedEmployee.name}`} onClose={() => setPlanSheet(false)}>
           <CompactPlanEditor plan={plan} setPlan={setPlan} updateComponent={updateComponent} />
+          {planError && <p className="text-sm text-red-600 mt-2">{planError}</p>}
           <button onClick={savePlan} disabled={saving}
             className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium disabled:opacity-50 mt-4">
             {saving ? 'Saving...' : 'Activate New Plan'}

@@ -73,7 +73,9 @@ export default function Shifts() {
   const [cancelPreview, setCancelPreview] = useState<any | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
+  const [cancelModalError, setCancelModalError] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [newShiftError, setNewShiftError] = useState('');
   const [staleShiftHours, setStaleShiftHours] = useState(30);
   const navigate = useNavigate();
   const listContext = searchParams.toString();
@@ -194,12 +196,13 @@ export default function Shifts() {
       setSelectedEmployee('');
       navigate(shiftPath(Number(response.data.data.id)));
     } catch (openError: any) {
-      alert(openError.response?.data?.error || 'Failed to open shift');
+      setNewShiftError(openError.response?.data?.error || 'Failed to open shift');
     }
   }
 
   async function handleExport() {
     setExporting(true);
+    setError('');
     try {
       const response = await exportShifts({
         ...(fromDate ? { from: fromDate } : {}),
@@ -216,7 +219,7 @@ export default function Shifts() {
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (exportError: any) {
-      alert(exportError.response?.data?.error || 'Unable to export shifts.');
+      setError(exportError.response?.data?.error || 'Unable to export shifts.');
     } finally {
       setExporting(false);
     }
@@ -226,11 +229,12 @@ export default function Shifts() {
     setCancelTarget(shift);
     setCancelPreview(null);
     setCancelReason('');
+    setCancelModalError('');
     try {
       const response = await previewShiftCancellation(Number(shift.id));
       setCancelPreview(response.data.data);
     } catch (cancelError: any) {
-      alert(cancelError.response?.data?.error || 'Unable to prepare shift cancellation');
+      setError(cancelError.response?.data?.error || 'Unable to prepare shift cancellation');
       setCancelTarget(null);
     }
   }
@@ -238,6 +242,7 @@ export default function Shifts() {
   async function confirmCancellation() {
     if (!cancelTarget || cancelReason.trim().length < 3) return;
     setCancelling(true);
+    setCancelModalError('');
     try {
       await cancelShift(Number(cancelTarget.id), cancelReason.trim());
       clearShiftDraft(Number(cancelTarget.id));
@@ -249,7 +254,7 @@ export default function Shifts() {
           setPagination((current) => ({ ...current, ...data }));
         });
     } catch (cancelError: any) {
-      alert(cancelError.response?.data?.error || 'Failed to cancel shift');
+      setCancelModalError(cancelError.response?.data?.error || 'Failed to cancel shift');
     } finally {
       setCancelling(false);
     }
@@ -280,7 +285,7 @@ export default function Shifts() {
             <Download size={17} /> {exporting ? 'Exporting...' : 'Export CSV'}
           </button>
           <button
-            onClick={() => setShowNew(true)}
+            onClick={() => { setNewShiftError(''); setShowNew(true); }}
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
           >
             <Plus size={18} /> Open New Shift
@@ -328,6 +333,7 @@ export default function Shifts() {
             {employees.length === 0 && (
               <p className="text-sm text-red-500 mb-4">No employees found. Add employees first.</p>
             )}
+            {newShiftError && <p className="text-sm text-red-600 mb-4">{newShiftError}</p>}
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setShowNew(false)}
@@ -375,6 +381,7 @@ export default function Shifts() {
                 placeholder="Why was this shift cancelled?"
               />
             </label>
+            {cancelModalError && <p className="text-sm text-red-600 mt-2">{cancelModalError}</p>}
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setCancelTarget(null)} disabled={cancelling} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">
                 Keep Shift

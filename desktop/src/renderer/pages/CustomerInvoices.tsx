@@ -112,6 +112,9 @@ export default function CustomerInvoices() {
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [editPrice, setEditPrice] = useState('');
   const [refreshingDraft, setRefreshingDraft] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [refreshMessage, setRefreshMessage] = useState('');
+  const [adjustmentError, setAdjustmentError] = useState('');
   const [showAdjustment, setShowAdjustment] = useState(false);
   const [submittingAdjustment, setSubmittingAdjustment] = useState(false);
   const [adjustmentForm, setAdjustmentForm] = useState({
@@ -337,38 +340,42 @@ export default function CustomerInvoices() {
   }
 
   async function openDetail(inv: { id: number }) {
+    setDetailError('');
     try {
       const res = await getCustomerInvoice(inv.id);
       setDetail(res.data.data);
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
+      setError(err?.response?.data?.error || err?.message);
     }
   }
 
   async function handleIssue(id: number) {
     if (!confirm('Issue this invoice? It will be locked and added to the customer balance.')) return;
+    setDetailError('');
     try {
       await issueCustomerInvoice(id);
       setDetail(null);
       await loadInvoices();
       await loadMonitor();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
+      setDetailError(err?.response?.data?.error || err?.message);
     }
   }
 
   async function handleRefreshDraft(id: number) {
     try {
       setRefreshingDraft(true);
+      setDetailError('');
+      setRefreshMessage('');
       const result = await refreshCustomerInvoiceDraft(id);
       const refreshed = await getCustomerInvoice(id);
       setDetail(refreshed.data.data);
       await loadInvoices();
       await loadMonitor();
       const added = Number(result.data.data?.added_entries || 0);
-      alert(added > 0 ? `${added} new consumption entr${added === 1 ? 'y was' : 'ies were'} added.` : 'Draft is already up to date.');
+      setRefreshMessage(added > 0 ? `${added} new consumption entr${added === 1 ? 'y was' : 'ies were'} added.` : 'Draft is already up to date.');
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
+      setDetailError(err?.response?.data?.error || err?.message);
     } finally {
       setRefreshingDraft(false);
     }
@@ -388,13 +395,14 @@ export default function CustomerInvoices() {
 
   async function handleDeleteDraft(id: number) {
     if (!confirm('Delete this draft? This cannot be undone.')) return;
+    setDetailError('');
     try {
       await deleteCustomerInvoiceDraft(id);
       setDetail(null);
       await loadInvoices();
       await loadMonitor();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
+      setDetailError(err?.response?.data?.error || err?.message);
     }
   }
 
@@ -409,6 +417,7 @@ export default function CustomerInvoices() {
       unit_price: '',
       reason: '',
     });
+    setAdjustmentError('');
     setShowAdjustment(true);
   }
 
@@ -435,7 +444,7 @@ export default function CustomerInvoices() {
       await loadInvoices();
       await loadMonitor();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
+      setAdjustmentError(err?.response?.data?.error || err?.message);
     } finally {
       setSubmittingAdjustment(false);
     }
@@ -486,10 +495,11 @@ export default function CustomerInvoices() {
   }
 
   async function saveLinePrice(invoiceId: number, lineId: number) {
+    setDetailError('');
     try {
       const priceNum = Number(editPrice);
       if (!Number.isFinite(priceNum) || priceNum <= 0) {
-        alert('Enter a valid price');
+        setDetailError('Enter a valid price');
         return;
       }
       await updateCustomerInvoiceLine(invoiceId, lineId, { agreed_price: priceNum });
@@ -501,7 +511,7 @@ export default function CustomerInvoices() {
       await loadInvoices();
       await loadMonitor();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message);
+      setDetailError(err?.response?.data?.error || err?.message);
     }
   }
 
@@ -1268,6 +1278,12 @@ export default function CustomerInvoices() {
               </div>
             </div>
             <div className="p-4 space-y-4">
+              {detailError && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{detailError}</div>
+              )}
+              {refreshMessage && (
+                <div className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">{refreshMessage}</div>
+              )}
               {detail.status === 'draft' && detail.reservation_status === 'legacy_unreserved' && (
                 <div className="flex items-start gap-2 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
@@ -1602,6 +1618,9 @@ export default function CustomerInvoices() {
               </button>
             </div>
             <div className="p-4 space-y-3">
+              {adjustmentError && (
+                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{adjustmentError}</div>
+              )}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Note type</label>
                 <div className="grid grid-cols-2 border border-gray-300 rounded-lg overflow-hidden">

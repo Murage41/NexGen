@@ -9,6 +9,8 @@ export default function Pumps() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ label: '', nozzle_label: '', fuel_type: 'petrol', tank_id: '', initial_litres: '', initial_amount: '' });
+  const [formError, setFormError] = useState('');
+  const [listError, setListError] = useState('');
 
   useEffect(() => {
     loadData();
@@ -29,6 +31,7 @@ export default function Pumps() {
   function openCreate() {
     setEditing(null);
     setForm({ label: '', nozzle_label: '', fuel_type: 'petrol', tank_id: '', initial_litres: '', initial_amount: '' });
+    setFormError('');
     setShowModal(true);
   }
 
@@ -42,6 +45,7 @@ export default function Pumps() {
       initial_litres: pump.initial_litres ? String(pump.initial_litres) : '',
       initial_amount: pump.initial_amount ? String(pump.initial_amount) : '',
     });
+    setFormError('');
     setShowModal(true);
   }
 
@@ -65,18 +69,19 @@ export default function Pumps() {
       loadData();
     } catch (err: any) {
       console.error('Failed to save pump:', err);
-      alert(err.response?.data?.error || 'Failed to save pump');
+      setFormError(err.response?.data?.error || 'Failed to save pump');
     }
   }
 
   async function handleDelete(id: number) {
     if (!confirm('Are you sure you want to delete this pump?')) return;
+    setListError('');
     try {
       await deletePump(id);
       loadData();
     } catch (err: any) {
       console.error('Failed to delete pump:', err);
-      alert(err.response?.data?.error || 'Failed to delete pump');
+      setListError(err.response?.data?.error || 'Failed to delete pump');
     }
   }
 
@@ -95,6 +100,7 @@ export default function Pumps() {
           <Plus size={18} /> Add Pump
         </button>
       </div>
+      {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
       {/* Modal */}
       {showModal && (
@@ -106,6 +112,7 @@ export default function Pumps() {
                 <X size={20} />
               </button>
             </div>
+            {formError && <p className="text-sm text-red-600 mb-3">{formError}</p>}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Pump Label *</label>

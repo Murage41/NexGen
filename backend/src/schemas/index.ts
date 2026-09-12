@@ -219,27 +219,11 @@ export const createShiftExpenseSchema = z.object({
 });
 
 // --- Credits ---
-export const createCreditSchema = z.object({
-  customer_name: z.string().min(1, 'customer_name is required'),
-  customer_phone: optionalText(),
-  amount: z.number({ error: 'amount is required' }).positive('amount must be greater than 0'),
-  shift_id: z.number().int().positive().nullish().optional(),
-  description: optionalText(),
-});
-
 export const createShiftCreditSchema = z.object({
   customer_name: z.string().min(1, 'customer_name is required'),
   customer_phone: optionalText(),
   amount: z.number({ error: 'amount is required' }).positive('amount must be greater than 0'),
   description: optionalText(),
-});
-
-export const creditPaymentSchema = z.object({
-  amount: z.number({ error: 'amount is required' }).positive('amount must be greater than 0'),
-  payment_method: optionalText(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD format').optional(),
-  payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'payment_date must be YYYY-MM-DD format').optional(),
-  notes: optionalText(),
 });
 
 // --- Tank Dips ---

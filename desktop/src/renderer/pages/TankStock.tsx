@@ -5,8 +5,10 @@ import {
   uploadFuelDeliveryInvoiceDocument, getFuelDeliveryInvoiceDocument,
   getTankDips, createTankDip, updateTankDip, deleteTankDip,
   getCurrentShift, getTankLedger, getSuppliers, getTankAdjustments, createTankAdjustment,
+  getTankDipTrends,
 } from '../services/api';
 import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen, SlidersHorizontal, FileText } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getKenyaDate } from '../utils/timezone';
 
 const today = () => getKenyaDate();
@@ -82,10 +84,12 @@ export default function TankStock() {
   const [suppliersList, setSuppliersList] = useState<any[]>([]);
   const [hasOpenShift, setHasOpenShift] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips' | 'adjustments' | 'ledger'>('tanks');
+  const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips' | 'adjustments' | 'ledger' | 'trends'>('tanks');
   const [ledgerData, setLedgerData] = useState<any[]>([]);
   const [ledgerTankId, setLedgerTankId] = useState<string>('');
   const [adjustmentTankId, setAdjustmentTankId] = useState<string>('');
+  const [trendsData, setTrendsData] = useState<any[]>([]);
+  const [trendsLoaded, setTrendsLoaded] = useState(false);
 
   // Modal state
   const [tankModal, setTankModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
@@ -369,6 +373,16 @@ export default function TankStock() {
   const adjustmentProjectedStock = selectedAdjustmentDip ? Number(selectedAdjustmentDip.measured_litres || 0) : null;
   const adjustmentNotesRequired = adjustmentForm.reason === 'other_gain' || adjustmentForm.reason === 'other_loss';
 
+  const TREND_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#0ea5e9'];
+  const trendMonths = Array.from(new Set(trendsData.flatMap((t: any) => t.series.map((s: any) => s.month)))).sort();
+  const trendChartData = trendMonths.map((month) => {
+    const row: any = { month };
+    for (const tank of trendsData) {
+      row[tank.tank_label] = tank.series.find((s: any) => s.month === month)?.cumulative_variance_pct ?? null;
+    }
+    return row;
+  });
+
   if (loading) return <div className="text-gray-500">Loading...</div>;
 
   return (
@@ -441,10 +455,16 @@ export default function TankStock() {
       {/* Tabs + Actions */}
       <div className="flex items-center justify-between border-b mb-4">
         <div className="flex gap-1">
-          {(['tanks', 'deliveries', 'dips', 'adjustments', 'ledger'] as const).map(tab => (
+          {(['tanks', 'deliveries', 'dips', 'adjustments', 'ledger', 'trends'] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => {
+                setActiveTab(tab);
+                if (tab === 'trends' && !trendsLoaded) {
+                  setTrendsLoaded(true);
+                  getTankDipTrends(6).then(res => setTrendsData(res.data.data || [])).catch(() => setTrendsData([]));
+                }
+              }}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition capitalize ${activeTab === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               {tab === 'dips' ? 'Tank Dips' : tab === 'ledger' ? 'Stock Ledger' : tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -740,6 +760,36 @@ export default function TankStock() {
               {ledgerData.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-gray-400">{ledgerTankId ? 'No ledger entries yet.' : 'Select a tank to view its stock ledger.'}</td></tr>}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Trends Tab */}
+      {activeTab === 'trends' && (
+        <div className="bg-white rounded-lg shadow p-4">
+          <h2 className="text-lg font-semibold text-gray-700 mb-1">Monthly Cumulative Variance</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            Each tank's dip variance, accumulated month to month, as a percentage of throughput. A
+            steady drift in one direction (not just noise around zero) is worth investigating —
+            meter drift, a leak, or a delivery-measurement issue.
+          </p>
+          {trendChartData.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">No dip history yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={trendChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" tickFormatter={(m: string) => new Date(`${m}-01`).toLocaleDateString('en-KE', { month: 'short', year: '2-digit' })} />
+                <YAxis tickFormatter={(v: number) => `${v}%`} />
+                <Tooltip
+                  formatter={(value: number) => [value == null ? '—' : `${value}%`, 'Cumulative variance']}
+                  labelFormatter={(m: string) => new Date(`${m}-01`).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })} />
+                <Legend />
+                {trendsData.map((tank: any, i: number) => (
+                  <Line key={tank.tank_id} type="monotone" dataKey={tank.tank_label} stroke={TREND_COLORS[i % TREND_COLORS.length]} connectNulls dot={{ r: 3 }} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </div>
       )}
 

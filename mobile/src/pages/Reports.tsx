@@ -1,16 +1,28 @@
 import { useState } from 'react';
 import {
   BarChart3, Calendar, TrendingUp, TrendingDown, Droplets,
-  AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle,
+  AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle, Download,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
   getStockReconciliationByShift, getDebtorAging, getCashFlow,
+  exportMonthlyReport, exportStockReconciliation,
 } from '../services/api';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow';
+
+function downloadBlob(response: any, fallbackFilename: string) {
+  const disposition = String(response.headers['content-disposition'] || '');
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || fallbackFilename;
+  const url = URL.createObjectURL(response.data);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export default function Reports() {
   const [tab, setTab] = useState<Tab>('daily');
@@ -20,6 +32,8 @@ export default function Reports() {
   const [stockByShift, setStockByShift] = useState<any>(null);
   const [expandedMobileTank, setExpandedMobileTank] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   const kes = (n: number) => `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   const litres = (n: number) => `${Number(n || 0).toFixed(1)} L`;
@@ -48,6 +62,20 @@ export default function Reports() {
       setReport(res?.data?.data || res?.data);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
+  }
+
+  async function handleExport() {
+    setExporting(true);
+    setExportError('');
+    try {
+      const exportMonth = tab === 'monthly' ? month : date.slice(0, 7);
+      const res = tab === 'monthly' ? await exportMonthlyReport(exportMonth) : await exportStockReconciliation(exportMonth);
+      downloadBlob(res, `nexgen-${tab === 'monthly' ? 'monthly-pl' : 'stock-reconciliation'}-${exportMonth}.csv`);
+    } catch (err: any) {
+      setExportError(err.response?.data?.error || 'Unable to export.');
+    } finally {
+      setExporting(false);
+    }
   }
 
   function handleTabChange(newTab: Tab) {
@@ -145,6 +173,13 @@ export default function Reports() {
               {loading ? '...' : 'Go'}
             </button>
           </div>
+          {(tab === 'monthly' || tab === 'stock') && (
+            <button onClick={handleExport} disabled={exporting}
+              className="w-full mt-3 flex items-center justify-center gap-2 bg-gray-100 text-gray-700 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50">
+              <Download size={16} /> {exporting ? 'Exporting...' : tab === 'stock' ? `Export ${date.slice(0, 7)} CSV` : 'Export CSV'}
+            </button>
+          )}
+          {exportError && <p className="text-xs text-red-600 mt-2">{exportError}</p>}
         </div>
       )}
 

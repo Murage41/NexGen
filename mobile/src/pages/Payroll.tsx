@@ -56,6 +56,9 @@ export default function Payroll() {
   const [preview, setPreview] = useState<any>(null);
   const [previewError, setPreviewError] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [calculateError, setCalculateError] = useState('');
+  const [paymentError, setPaymentError] = useState('');
+  const [detailError, setDetailError] = useState('');
   const [runForm, setRunForm] = useState({
     name: `${initialPeriod.start} monthly payroll`,
     pay_schedule: 'monthly',
@@ -160,12 +163,13 @@ export default function Payroll() {
 
   async function calculate() {
     setBusy(true);
+    setCalculateError('');
     try {
       const response = await calculatePayrollRun(runForm);
       setCalculateSheet(false);
       await load(response.data.data.id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to calculate payroll');
+      setCalculateError(error.response?.data?.error || 'Failed to calculate payroll');
     } finally {
       setBusy(false);
     }
@@ -174,11 +178,12 @@ export default function Payroll() {
   async function approve() {
     if (!run || !confirm(`Approve ${run.name}?`)) return;
     setBusy(true);
+    setDetailError('');
     try {
       await approvePayrollRun(run.id);
       await load(run.id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to approve payroll');
+      setDetailError(error.response?.data?.error || 'Failed to approve payroll');
     } finally {
       setBusy(false);
     }
@@ -194,6 +199,7 @@ export default function Payroll() {
       reference: '',
       from_shift: false,
     });
+    setPaymentError('');
     setPaymentSheet(true);
   }
 
@@ -211,7 +217,7 @@ export default function Payroll() {
       setPaymentSheet(false);
       await load(run.id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to record payment');
+      setPaymentError(error.response?.data?.error || 'Failed to record payment');
     } finally {
       setBusy(false);
     }
@@ -264,8 +270,9 @@ export default function Payroll() {
               </button>
             )}
           </div>
+          {detailError && <p className="text-sm text-red-600 mt-3">{detailError}</p>}
 
-{['approved', 'partially_paid', 'paid'].includes(run.status) && <button className="text-sm text-blue-700 underline p-2" disabled={busy} onClick={async () => { setBusy(true); try { const response = await createPayrollSupplement(run.id); setRun(response.data.data); } catch(e: any) { alert(e.response?.data?.error || 'No additional shifts are available.'); } finally { setBusy(false); } }}>Include late shifts in a supplemental payroll</button>}
+{['approved', 'partially_paid', 'paid'].includes(run.status) && <button className="text-sm text-blue-700 underline p-2" disabled={busy} onClick={async () => { setBusy(true); setDetailError(''); try { const response = await createPayrollSupplement(run.id); setRun(response.data.data); } catch(e: any) { setDetailError(e.response?.data?.error || 'No additional shifts are available.'); } finally { setBusy(false); } }}>Include late shifts in a supplemental payroll</button>}
           <p className="text-xs uppercase font-semibold text-gray-400 mt-5 mb-2">Employees</p>
           <div className="space-y-3">
             {run.lines.map((payrollLine: any) => (
@@ -317,6 +324,7 @@ export default function Payroll() {
               <Input label="Period end" type="date" value={runForm.period_end} onChange={() => {}} readOnly />
             </div>
             <MobilePayrollPreview preview={preview} error={previewError} busy={previewBusy} />
+            {calculateError && <p className="text-sm text-red-600">{calculateError}</p>}
             <button onClick={calculate}
               disabled={busy || previewBusy || !preview || Boolean(previewError) || preview.employee_count === 0}
               className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium disabled:opacity-50">
@@ -347,6 +355,7 @@ export default function Payroll() {
                 })} />
               <span className="text-sm text-gray-700">Pay from open shift {currentShift ? `#${currentShift.id}` : ''}</span>
             </label>
+            {paymentError && <p className="text-sm text-red-600">{paymentError}</p>}
             <button onClick={savePayment} disabled={busy} className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium disabled:opacity-50">
               {busy ? 'Saving...' : 'Record Payment'}
             </button>

@@ -155,14 +155,6 @@ export const deleteExpense = (id: number) => api.delete(`/expenses/${id}`);
 export const getExpenseCategories = () => api.get('/expenses/categories');
 export const getExpenseSummary = (params?: any) => api.get('/expenses/summary', { params });
 
-// ============ Credits ============
-export const getCredits = (params?: any) => api.get('/credits', { params });
-export const getCredit = (id: number) => api.get(`/credits/${id}`);
-export const createCredit = (data: any) => api.post('/credits', data);
-export const addCreditPayment = (creditId: number, data: any) =>
-  api.post(`/credits/${creditId}/payments`, data);
-export const getCreditSummary = () => api.get('/credits/summary/by-customer');
-
 // ============ Credit Accounts ============
 export const getCreditAccounts = (params?: any) => api.get('/credit-accounts', { params });
 export const getCreditAccount = (id: number) => api.get(`/credit-accounts/${id}`);
@@ -244,12 +236,6 @@ export const createTankDip = (data: any) => api.post('/tank-dips', data);
 export const updateTankDip = (id: number, data: any) => api.put(`/tank-dips/${id}`, data);
 export const deleteTankDip = (id: number) => api.delete(`/tank-dips/${id}`);
 
-// ============ Invoices ============
-export const getInvoices = (params?: any) => api.get('/invoices', { params });
-export const getInvoice = (id: number) => api.get(`/invoices/${id}`);
-export const createInvoice = (data: any) => api.post('/invoices', data);
-export const updateInvoice = (id: number, data: any) => api.put(`/invoices/${id}`, data);
-
 // ============ Dashboard ============
 export const getDashboard = () => api.get('/dashboard');
 
@@ -257,6 +243,7 @@ export const getDashboard = () => api.get('/dashboard');
 export const getOperationalSettings = () => api.get('/operations/settings');
 export const updateOperationalSettings = (data: { stale_shift_hours: number }) => api.put('/operations/settings', data);
 export const runOperationalIntegrity = () => api.get('/operations/integrity');
+export const getStaleShifts = () => api.get('/operations/stale-shifts');
 export const backupDatabase = () => api.post('/health/backup');
 
 // ============ Reports ============
@@ -266,6 +253,17 @@ export const getStockReconciliation = (date?: string) => api.get('/reports/stock
 export const getStockReconciliationByShift = (date?: string) => api.get('/reports/stock-reconciliation-by-shift', { params: { date } });
 export const getDebtorAging = () => api.get('/reports/debtor-aging');
 export const getCashFlow = (params?: { from?: string; to?: string }) => api.get('/reports/cash-flow', { params });
+export const exportMonthlyReport = (month: string) => api.get('/reports/monthly/export.csv', { params: { month }, responseType: 'blob' });
+export const exportStockReconciliation = (month: string) => api.get('/reports/stock-reconciliation/export.csv', { params: { month }, responseType: 'blob' });
+
+// ============ M-Pesa Fee Config ============
+export const getMpesaFeeConfigs = () => api.get('/mpesa-config');
+export const getCurrentMpesaFeeConfig = () => api.get('/mpesa-config/current');
+export const createMpesaFeeConfig = (data: { fee_type: 'percentage' | 'fixed'; fee_value: number; effective_date: string; notes?: string }) =>
+  api.post('/mpesa-config', data);
+
+// ============ Tank Dip Trends ============
+export const getTankDipTrends = (months?: number) => api.get('/tank-dips/trends', { params: { months } });
 
 // ============ Suppliers ============
 export const getSuppliers = () => api.get('/suppliers');

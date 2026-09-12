@@ -77,6 +77,10 @@ export default function Payroll() {
   const [preview, setPreview] = useState<any>(null);
   const [previewError, setPreviewError] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [calculateError, setCalculateError] = useState('');
+  const [deductionError, setDeductionError] = useState('');
+  const [paymentError, setPaymentError] = useState('');
+  const [detailError, setDetailError] = useState('');
   const [runForm, setRunForm] = useState({
     name: `${currentMonth()} payroll`,
     pay_schedule: 'monthly',
@@ -192,13 +196,14 @@ export default function Payroll() {
   async function calculate(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
+    setCalculateError('');
     try {
       const response = await calculatePayrollRun(runForm);
       const id = response.data.data.id;
       setShowCalculate(false);
       await loadRuns(id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to calculate payroll');
+      setCalculateError(error.response?.data?.error || 'Failed to calculate payroll');
     } finally {
       setBusy(false);
     }
@@ -207,11 +212,12 @@ export default function Payroll() {
   async function approve() {
     if (!selectedRun || !confirm(`Approve ${selectedRun.name}? Earnings and deductions will be locked.`)) return;
     setBusy(true);
+    setDetailError('');
     try {
       await approvePayrollRun(selectedRun.id);
       await loadRuns(selectedRun.id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to approve payroll');
+      setDetailError(error.response?.data?.error || 'Failed to approve payroll');
     } finally {
       setBusy(false);
     }
@@ -226,6 +232,7 @@ export default function Payroll() {
       authorization_reference: '',
       notes: '',
     });
+    setDeductionError('');
     setShowDeduction(true);
   }
 
@@ -241,7 +248,7 @@ export default function Payroll() {
       setShowDeduction(false);
       await loadRun(selectedRun.id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to add deduction');
+      setDeductionError(error.response?.data?.error || 'Failed to add deduction');
     } finally {
       setBusy(false);
     }
@@ -249,11 +256,12 @@ export default function Payroll() {
 
   async function removeDeduction(deduction: any) {
     if (!selectedRun || !confirm('Remove this draft deduction?')) return;
+    setDetailError('');
     try {
       await deletePayrollDeduction(selectedRun.id, deduction.id);
       await loadRun(selectedRun.id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to remove deduction');
+      setDetailError(error.response?.data?.error || 'Failed to remove deduction');
     }
   }
 
@@ -268,6 +276,7 @@ export default function Payroll() {
       notes: '',
       from_shift: false,
     });
+    setPaymentError('');
     setShowPayment(true);
   }
 
@@ -287,7 +296,7 @@ export default function Payroll() {
       setShowPayment(false);
       await loadRuns(selectedRun.id);
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to record payroll payment');
+      setPaymentError(error.response?.data?.error || 'Failed to record payroll payment');
     } finally {
       setBusy(false);
     }
@@ -370,7 +379,7 @@ export default function Payroll() {
                     <BadgeCheck size={17} /> Approve
                   </button>
                 )}
-                {['approved', 'partially_paid', 'paid'].includes(selectedRun.status) && (<button disabled={busy || selectedRun.status === 'calculated'} className="text-xs text-blue-700 underline px-2" onClick={async () => { setBusy(true); try { const response = await createPayrollSupplement(selectedRun.id); setSelectedRun(response.data.data); } catch(e: any) { alert(e.response?.data?.error || 'No additional shifts are available.'); } finally { setBusy(false); } }}>Supplemental shifts</button>)}
+                {['approved', 'partially_paid', 'paid'].includes(selectedRun.status) && (<button disabled={busy || selectedRun.status === 'calculated'} className="text-xs text-blue-700 underline px-2" onClick={async () => { setBusy(true); setDetailError(''); try { const response = await createPayrollSupplement(selectedRun.id); setSelectedRun(response.data.data); } catch(e: any) { setDetailError(e.response?.data?.error || 'No additional shifts are available.'); } finally { setBusy(false); } }}>Supplemental shifts</button>)}
                 {!['void', 'paid'].includes(selectedRun.status) && (
                   <button onClick={voidRun} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Void payroll run">
                     <Trash2 size={18} />
@@ -378,6 +387,7 @@ export default function Payroll() {
                 )}
               </div>
             </div>
+            {detailError && <p className="text-sm text-red-600 mb-3">{detailError}</p>}
 
             <div className="grid grid-cols-4 gap-4 px-5 py-4 bg-gray-50 border-b border-gray-200">
               <Metric label="Gross earnings" value={kes(selectedRun.gross_total)} />
@@ -464,6 +474,7 @@ export default function Payroll() {
               <Field label="Period end"><input readOnly type="date" className="input bg-gray-50" value={runForm.period_end} /></Field>
             </div>
             <PayrollPreview preview={preview} error={previewError} busy={previewBusy} />
+            {calculateError && <p className="text-sm text-red-600">{calculateError}</p>}
             <Actions
               busy={busy}
               disabled={previewBusy || !preview || Boolean(previewError) || preview.employee_count === 0}
@@ -485,6 +496,7 @@ export default function Payroll() {
             <Field label="Amount (KES)"><input required min="0.01" step="0.01" type="number" className="input" value={deductionForm.amount} onChange={(event) => setDeductionForm({ ...deductionForm, amount: event.target.value })} /></Field>
             <Field label="Authorization reference"><input className="input" required={deductionForm.deduction_type === 'staff_debt'} value={deductionForm.authorization_reference} onChange={(event) => setDeductionForm({ ...deductionForm, authorization_reference: event.target.value })} /></Field>
             <Field label="Notes"><textarea className="input" rows={2} value={deductionForm.notes} onChange={(event) => setDeductionForm({ ...deductionForm, notes: event.target.value })} /></Field>
+            {deductionError && <p className="text-sm text-red-600">{deductionError}</p>}
             <Actions busy={busy} onCancel={() => setShowDeduction(false)} label="Add Deduction" />
           </form>
         </Modal>
@@ -513,6 +525,7 @@ export default function Payroll() {
               <span className="text-sm text-gray-700">Pay from open shift drawer {currentShift ? `#${currentShift.id}` : '(no open shift)'}</span>
             </label>
             <Field label="Notes"><textarea className="input" rows={2} value={paymentForm.notes} onChange={(event) => setPaymentForm({ ...paymentForm, notes: event.target.value })} /></Field>
+            {paymentError && <p className="text-sm text-red-600">{paymentError}</p>}
             <Actions busy={busy} onCancel={() => setShowPayment(false)} label="Record Payment" />
           </form>
         </Modal>

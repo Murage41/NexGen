@@ -2,6 +2,7 @@ import { Router } from 'express';
 import db from '../database';
 import { computeBookStock, computeAllTankStocks, getFIFOCostByFuelType, reverseBatchConsumption, consumeBatchesFIFO, recomputeCache } from '../services/stockCalculator';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
+import { csvRow } from '../utils/csv';
 import { requireAdmin } from '../middleware/requireAdmin';
 import {
   getPayrollCashPaid,
@@ -438,9 +439,7 @@ function lastDayOfMonth(monthStr: string): string {
 }
 
 // ─── Monthly Report ────────────────────────────────────────────────────────────
-router.get('/monthly', requireAdmin, async (req, res) => {
-  try {
-    const month = (req.query.month as string) || getKenyaMonth();
+async function computeMonthlyReport(month: string) {
     const startDate = month + '-01';
     const endDate = lastDayOfMonth(month);
 
@@ -756,138 +755,211 @@ router.get('/monthly', requireAdmin, async (req, res) => {
     const grossProfit = netSalesClosed - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
 
-    res.json({
-      success: true,
-      data: {
-        month,
-        // Fuel breakdown
-        fuel_sales: fuelSales,
-        total_sales: netSales,
-        retail_sales: totalSales,
-        invoice_price_adjustments: invoicePriceAdjustments,
-        total_litres: totalLitres,
-        margin_per_litre: marginPerLitre,
-        // Collections
-        total_cash: Number((collections as any)?.total_cash) || 0,
-        total_mpesa: Number((collections as any)?.total_mpesa) || 0,
-        total_credits: Number((collections as any)?.total_credits) || 0,
-        total_invoice_retail: totalInvoiceRetail,
-        // Costs
-        total_wages_paid: totalWagesPaid,
-        total_payroll_expense: payrollExpense,
-        total_payroll_cash_paid: payrollCashPaid,
-        total_expenses: totalExpenses,
-        expense_categories: expenseCategories,
-        // COGS breakdown
-        cogs,
-        opening_stock_value: openingStockValue,
-        purchases,
-        closing_stock_value: closingStockValue,
-        avg_cost_per_litre: avgCosts,
-        // P&L
-        gross_profit: grossProfit,
-        net_profit: netProfit,
-        // Receivables
-        opening_receivables: openingReceivables.total_receivables,
-        opening_money_receivables: openingReceivables.money_receivables,
-        opening_invoice_receivables: openingReceivables.invoice_receivables,
-        closing_receivables: closingReceivables.total_receivables,
-        closing_money_receivables: closingReceivables.money_receivables,
-        closing_invoice_receivables: closingReceivables.invoice_receivables,
-        credit_payments_received: receivableActivity.total_payments_received,
-        money_credit_payments_received: receivableActivity.money_payments_received,
-        invoice_payments_received: receivableActivity.invoice_payments_received,
-        money_credits_issued: receivableActivity.money_credits_issued,
-        invoice_receivables_issued: receivableActivity.invoice_receivables_issued,
-        invoice_receivable_adjustments: receivableActivity.invoice_adjustments,
-        unrecovered_losses: unrecoveredLosses,
-        // Breakdown
-        daily_breakdown: dailyBreakdown,
-      },
-    });
+    return {
+      month,
+      // Fuel breakdown
+      fuel_sales: fuelSales,
+      total_sales: netSales,
+      retail_sales: totalSales,
+      invoice_price_adjustments: invoicePriceAdjustments,
+      total_litres: totalLitres,
+      margin_per_litre: marginPerLitre,
+      // Collections
+      total_cash: Number((collections as any)?.total_cash) || 0,
+      total_mpesa: Number((collections as any)?.total_mpesa) || 0,
+      total_credits: Number((collections as any)?.total_credits) || 0,
+      total_invoice_retail: totalInvoiceRetail,
+      // Costs
+      total_wages_paid: totalWagesPaid,
+      total_payroll_expense: payrollExpense,
+      total_payroll_cash_paid: payrollCashPaid,
+      total_expenses: totalExpenses,
+      expense_categories: expenseCategories,
+      // COGS breakdown
+      cogs,
+      opening_stock_value: openingStockValue,
+      purchases,
+      closing_stock_value: closingStockValue,
+      avg_cost_per_litre: avgCosts,
+      // P&L
+      gross_profit: grossProfit,
+      net_profit: netProfit,
+      // Receivables
+      opening_receivables: openingReceivables.total_receivables,
+      opening_money_receivables: openingReceivables.money_receivables,
+      opening_invoice_receivables: openingReceivables.invoice_receivables,
+      closing_receivables: closingReceivables.total_receivables,
+      closing_money_receivables: closingReceivables.money_receivables,
+      closing_invoice_receivables: closingReceivables.invoice_receivables,
+      credit_payments_received: receivableActivity.total_payments_received,
+      money_credit_payments_received: receivableActivity.money_payments_received,
+      invoice_payments_received: receivableActivity.invoice_payments_received,
+      money_credits_issued: receivableActivity.money_credits_issued,
+      invoice_receivables_issued: receivableActivity.invoice_receivables_issued,
+      invoice_receivable_adjustments: receivableActivity.invoice_adjustments,
+      unrecovered_losses: unrecoveredLosses,
+      // Breakdown
+      daily_breakdown: dailyBreakdown,
+    };
+}
+
+router.get('/monthly', requireAdmin, async (req, res) => {
+  try {
+    const month = (req.query.month as string) || getKenyaMonth();
+    const data = await computeMonthlyReport(month);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/monthly/export.csv', requireAdmin, async (req, res) => {
+  try {
+    const month = (req.query.month as string) || getKenyaMonth();
+    const data = await computeMonthlyReport(month);
+
+    const lines: string[] = [];
+    lines.push(csvRow(['Monthly P&L Summary', month]));
+    lines.push(csvRow(['Net sales', data.total_sales]));
+    lines.push(csvRow(['Total litres', data.total_litres]));
+    lines.push(csvRow(['COGS', data.cogs]));
+    lines.push(csvRow(['Gross profit', data.gross_profit]));
+    lines.push(csvRow(['Payroll expense', data.total_payroll_expense]));
+    lines.push(csvRow(['Other expenses', data.total_expenses]));
+    lines.push(csvRow(['Net profit', data.net_profit]));
+    lines.push(csvRow(['Opening receivables', data.opening_receivables]));
+    lines.push(csvRow(['Closing receivables', data.closing_receivables]));
+    lines.push(csvRow(['Unrecovered losses', data.unrecovered_losses]));
+    lines.push('');
+    lines.push(csvRow(['Date', 'Net Sales', 'Retail Sales', 'Invoice Adjustments', 'Petrol (L)', 'Diesel (L)', 'COGS', 'Expenses', 'Wages', 'Gross Profit', 'Net']));
+    for (const day of data.daily_breakdown as any[]) {
+      lines.push(csvRow([
+        day.date, day.sales, day.retail_sales, day.invoice_price_adjustments,
+        day.petrol_litres, day.diesel_litres, day.cogs, day.expenses, day.wages,
+        day.gross_profit, day.net,
+      ]));
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="nexgen-monthly-pl-${month}.csv"`);
+    res.send(`﻿${lines.join('\r\n')}`);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // ─── Stock Reconciliation Report ──────────────────────────────────────────────
+async function computeStockReconciliation(date: string) {
+  // Previous date for opening stock
+  const prevDate = new Date(date + 'T12:00:00');
+  prevDate.setDate(prevDate.getDate() - 1);
+  // Phase 8 fix: use Kenya timezone (was UTC — wrong after 9 PM EAT)
+  const prevDateStr = prevDate.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+
+  const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'capacity_litres');
+
+  // Get shifts for the date
+  const dayShifts = await db('shifts')
+    .where('shift_date', date)
+    .select('id');
+  const shiftIds = dayShifts.map((s: any) => s.id);
+
+  const reconciliation = [];
+
+  for (const tank of tanks) {
+    // Computed opening stock (as of previous day)
+    const openingStock = await computeBookStock(tank.id, prevDateStr);
+
+    // Deliveries on this date
+    const delResult = await db('fuel_deliveries')
+      .where({ tank_id: tank.id, date })
+      .whereNull('deleted_at')
+      .sum('litres as total')
+      .first();
+    const deliveries = Number((delResult as any)?.total) || 0;
+
+    // Sales from pumps linked to this tank
+    let sales = 0;
+    if (shiftIds.length > 0) {
+      const salesResult = await db('pump_readings')
+        .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+        .whereIn('pump_readings.shift_id', shiftIds)
+        .where('pumps.tank_id', tank.id)
+        .sum('pump_readings.litres_sold as total')
+        .first();
+      sales = Number((salesResult as any)?.total) || 0;
+    }
+
+    // Closing book stock = opening + deliveries - sales
+    const closingBookStock = openingStock + deliveries - sales;
+
+    // Dip reading for this date
+    const dip = await db('tank_dips')
+      .where({ tank_id: tank.id, dip_date: date })
+      .whereNull('deleted_at')
+      .orderBy('timestamp', 'desc')
+      .first();
+    const dipReading = dip ? Number(dip.measured_litres) : null;
+
+    // Phase 2 fix: sign = measured − book (positive = surplus, negative = loss)
+    const variance = dipReading !== null ? dipReading - closingBookStock : null;
+    const variancePct = dipReading !== null && closingBookStock > 0
+      ? (variance! / closingBookStock) * 100 : null;
+
+    reconciliation.push({
+      tank_id: tank.id,
+      label: tank.label,
+      fuel_type: tank.fuel_type,
+      capacity: Number(tank.capacity_litres),
+      opening_stock: openingStock,
+      deliveries,
+      sales,
+      closing_book_stock: closingBookStock,
+      dip_reading: dipReading,
+      variance,
+      variance_pct: variancePct,
+      variance_alert: variancePct !== null && Math.abs(variancePct) > 0.5,
+    });
+  }
+
+  return reconciliation;
+}
+
 router.get('/stock-reconciliation', requireAdmin, async (req, res) => {
   try {
     const date = (req.query.date as string) || getKenyaDate();
+    const reconciliation = await computeStockReconciliation(date);
+    res.json({ success: true, data: { date, tanks: reconciliation } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-    // Previous date for opening stock
-    const prevDate = new Date(date + 'T12:00:00');
-    prevDate.setDate(prevDate.getDate() - 1);
-    // Phase 8 fix: use Kenya timezone (was UTC — wrong after 9 PM EAT)
-    const prevDateStr = prevDate.toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+router.get('/stock-reconciliation/export.csv', requireAdmin, async (req, res) => {
+  try {
+    const month = (req.query.month as string) || getKenyaMonth();
+    const today = getKenyaDate();
+    const lastDate = lastDayOfMonth(month);
+    // Don't walk past today for the current month — a future date has no data yet.
+    const endDate = month === today.slice(0, 7) ? today : lastDate;
 
-    const tanks = await db('tanks').select('id', 'label', 'fuel_type', 'capacity_litres');
+    const lines: string[] = [];
+    lines.push(csvRow(['Date', 'Tank', 'Fuel Type', 'Opening Stock (L)', 'Deliveries (L)', 'Sales (L)', 'Closing Book Stock (L)', 'Dip Reading (L)', 'Variance (L)', 'Variance %']));
 
-    // Get shifts for the date
-    const dayShifts = await db('shifts')
-      .where('shift_date', date)
-      .select('id');
-    const shiftIds = dayShifts.map((s: any) => s.id);
-
-    const reconciliation = [];
-
-    for (const tank of tanks) {
-      // Computed opening stock (as of previous day)
-      const openingStock = await computeBookStock(tank.id, prevDateStr);
-
-      // Deliveries on this date
-      const delResult = await db('fuel_deliveries')
-        .where({ tank_id: tank.id, date })
-        .whereNull('deleted_at')
-        .sum('litres as total')
-        .first();
-      const deliveries = Number((delResult as any)?.total) || 0;
-
-      // Sales from pumps linked to this tank
-      let sales = 0;
-      if (shiftIds.length > 0) {
-        const salesResult = await db('pump_readings')
-          .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-          .whereIn('pump_readings.shift_id', shiftIds)
-          .where('pumps.tank_id', tank.id)
-          .sum('pump_readings.litres_sold as total')
-          .first();
-        sales = Number((salesResult as any)?.total) || 0;
+    for (let d = month + '-01'; d <= endDate; d = new Date(new Date(d + 'T12:00:00').getTime() + 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })) {
+      const reconciliation = await computeStockReconciliation(d);
+      for (const tank of reconciliation) {
+        lines.push(csvRow([
+          d, tank.label, tank.fuel_type, tank.opening_stock, tank.deliveries, tank.sales,
+          tank.closing_book_stock, tank.dip_reading, tank.variance,
+          tank.variance_pct === null ? '' : Number(tank.variance_pct.toFixed(2)),
+        ]));
       }
-
-      // Closing book stock = opening + deliveries - sales
-      const closingBookStock = openingStock + deliveries - sales;
-
-      // Dip reading for this date
-      const dip = await db('tank_dips')
-        .where({ tank_id: tank.id, dip_date: date })
-        .whereNull('deleted_at')
-        .orderBy('timestamp', 'desc')
-        .first();
-      const dipReading = dip ? Number(dip.measured_litres) : null;
-
-      // Phase 2 fix: sign = measured − book (positive = surplus, negative = loss)
-      const variance = dipReading !== null ? dipReading - closingBookStock : null;
-      const variancePct = dipReading !== null && closingBookStock > 0
-        ? (variance! / closingBookStock) * 100 : null;
-
-      reconciliation.push({
-        tank_id: tank.id,
-        label: tank.label,
-        fuel_type: tank.fuel_type,
-        capacity: Number(tank.capacity_litres),
-        opening_stock: openingStock,
-        deliveries,
-        sales,
-        closing_book_stock: closingBookStock,
-        dip_reading: dipReading,
-        variance,
-        variance_pct: variancePct,
-        variance_alert: variancePct !== null && Math.abs(variancePct) > 0.5,
-      });
     }
 
-    res.json({ success: true, data: { date, tanks: reconciliation } });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="nexgen-stock-reconciliation-${month}.csv"`);
+    res.send(`﻿${lines.join('\r\n')}`);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

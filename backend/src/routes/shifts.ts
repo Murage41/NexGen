@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import db from '../database';
+import { csvCell } from '../utils/csv';
 import { shiftRecoveryPreview, postShiftRecovery } from '../services/shiftSettlement';
 import { validate } from '../middleware/validate';
 import {
@@ -59,16 +60,6 @@ function staleShiftWrite(section: 'readings' | 'collections', currentRevision: n
       currentRevision,
     },
   );
-}
-
-function csvCell(value: unknown) {
-  if (value === null || value === undefined) return '';
-  let text = String(value);
-  if (
-    typeof value === 'string'
-    && (/^[=+@]/.test(text) || (/^-/.test(text) && !/^-\d+(\.\d+)?$/.test(text)))
-  ) text = `'${text}`;
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function toSqliteDateTime(value: string): string {

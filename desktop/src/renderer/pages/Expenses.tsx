@@ -20,6 +20,8 @@ export default function Expenses() {
   const [dateTo, setDateTo] = useState(getKenyaDate());
   const [categoryFilter, setCategoryFilter] = useState('');
   const [categories, setCategories] = useState<string[]>(PREDEFINED_CATEGORIES);
+  const [formError, setFormError] = useState('');
+  const [listError, setListError] = useState('');
 
   useEffect(() => {
     loadData();
@@ -64,6 +66,7 @@ export default function Expenses() {
   function openCreate() {
     setEditing(null);
     setForm({ category: '', description: '', amount: '', date: getKenyaDate() });
+    setFormError('');
     setShowModal(true);
   }
 
@@ -76,6 +79,7 @@ export default function Expenses() {
       amount: String(exp.amount),
       date: exp.date ? exp.date.split('T')[0] : '',
     });
+    setFormError('');
     setShowModal(true);
   }
 
@@ -97,19 +101,20 @@ export default function Expenses() {
       loadData();
     } catch (err: any) {
       console.error('Failed to save expense:', err);
-      alert(err.response?.data?.error || 'Failed to save expense');
+      setFormError(err.response?.data?.error || 'Failed to save expense');
     }
   }
 
   async function handleDelete(exp: any) {
     if (exp.source !== 'general') return;
     if (!confirm('Are you sure you want to delete this expense?')) return;
+    setListError('');
     try {
       await deleteExpense(exp.id);
       loadData();
     } catch (err: any) {
       console.error('Failed to delete expense:', err);
-      alert(err.response?.data?.error || 'Failed to delete expense');
+      setListError(err.response?.data?.error || 'Failed to delete expense');
     }
   }
 
@@ -127,6 +132,7 @@ export default function Expenses() {
           <Plus size={18} /> Add Expense
         </button>
       </div>
+      {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
       {/* Summary Cards */}
       {summary && (
@@ -230,6 +236,7 @@ export default function Expenses() {
                 <X size={20} />
               </button>
             </div>
+            {formError && <p className="text-sm text-red-600 mb-3">{formError}</p>}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>

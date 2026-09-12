@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react';
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import {
   LayoutDashboard, Gauge, Users, Fuel, DollarSign,
   CreditCard, Receipt, BarChart3, Settings, Droplets, Truck, FileSpreadsheet,
   WalletCards,
 } from 'lucide-react';
+import { getStaleShifts } from './services/api';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
 import ShiftDetail from './pages/ShiftDetail';
@@ -11,9 +13,7 @@ import Pumps from './pages/Pumps';
 import Employees from './pages/Employees';
 import FuelPricing from './pages/FuelPricing';
 import Expenses from './pages/Expenses';
-import Credits from './pages/Credits';
 import CreditAccounts from './pages/CreditAccounts';
-import Invoices from './pages/Invoices';
 import CustomerInvoices from './pages/CustomerInvoices';
 import TankStock from './pages/TankStock';
 import Reports from './pages/Reports';
@@ -32,17 +32,28 @@ const navItems = [
   { to: '/expenses', icon: Receipt, label: 'Expenses' },
   { to: '/credit-accounts', icon: CreditCard, label: 'Credit Accounts' },
   { to: '/customer-invoices', icon: FileSpreadsheet, label: 'Customer Invoices' },
-  // /invoices route still exists for legacy use but hidden from sidebar —
-  // Customer Invoices supersedes it for invoice-mode customers, and money-mode
-  // AR is now managed via Credit Accounts.
   { to: '/suppliers', icon: Truck, label: 'Suppliers' },
   { to: '/tank-stock', icon: Droplets, label: 'Tank & Stock' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
+const STALE_SHIFT_POLL_MS = 2 * 60 * 1000;
+
 export default function App() {
   const location = useLocation();
+  const [staleShiftCount, setStaleShiftCount] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    const check = () =>
+      getStaleShifts()
+        .then((res) => { if (live) setStaleShiftCount(res.data.data.count); })
+        .catch(() => {});
+    check();
+    const timer = setInterval(check, STALE_SHIFT_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -67,7 +78,15 @@ export default function App() {
               }
             >
               <Icon size={18} />
-              {label}
+              <span className="flex-1">{label}</span>
+              {to === '/shifts' && staleShiftCount > 0 && (
+                <span
+                  title={`${staleShiftCount} open shift${staleShiftCount === 1 ? '' : 's'} past the stale-shift warning threshold`}
+                  className="rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-semibold leading-none text-gray-900"
+                >
+                  {staleShiftCount}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -91,7 +110,7 @@ export default function App() {
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/credit-accounts" element={<CreditAccounts />} />
             <Route path="/credits" element={<Navigate to="/credit-accounts" replace />} />
-            <Route path="/invoices" element={<Invoices />} />
+            <Route path="/invoices" element={<Navigate to="/customer-invoices" replace />} />
             <Route path="/customer-invoices" element={<CustomerInvoices />} />
             <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/tank-stock" element={<TankStock />} />

@@ -18,6 +18,8 @@ export default function Credits() {
   const [paymentAccount, setPaymentAccount] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', payment_method: 'cash', notes: '' });
+  const [paymentError, setPaymentError] = useState('');
+  const [detailError, setDetailError] = useState('');
 
   const fmt = (n: number) => `KES ${Number(n).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
@@ -49,6 +51,7 @@ export default function Credits() {
   function openAccountPayment(account: any) {
     setPaymentAccount(account);
     setPaymentForm({ amount: '', payment_method: 'cash', notes: '' });
+    setPaymentError('');
     setShowPayment(true);
   }
 
@@ -73,7 +76,7 @@ export default function Credits() {
       loadAccounts();
     } catch (err: any) {
       console.error(err);
-      alert(err.response?.data?.error || 'Failed to record payment');
+      setPaymentError(err.response?.data?.error || 'Failed to record payment');
     } finally {
       setSubmitting(false);
     }
@@ -81,12 +84,13 @@ export default function Credits() {
 
   async function handleRemoveAccount(account: any) {
     if (!confirm(`Remove account "${account.name}"? This cannot be undone.`)) return;
+    setDetailError('');
     try {
       await deleteCreditAccount(account.id);
       setSelectedAccount(null);
       loadAccounts();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to remove account');
+      setDetailError(err.response?.data?.error || 'Failed to remove account');
     }
   }
 
@@ -133,6 +137,7 @@ export default function Credits() {
               {fmt(acct.outstanding_balance)}
             </p>
           </div>
+          {detailError && <p className="text-sm text-red-600 text-center mb-2">{detailError}</p>}
           <div className="flex gap-2 mt-2">
             {isAdmin && isCustomer && Number(acct.outstanding_balance) > 0 && (
               <button
@@ -295,6 +300,7 @@ export default function Credits() {
                     onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}
                   />
                 </div>
+                {paymentError && <p className="text-sm text-red-600">{paymentError}</p>}
                 <button
                   onClick={handlePayment}
                   disabled={submitting || !paymentForm.amount}

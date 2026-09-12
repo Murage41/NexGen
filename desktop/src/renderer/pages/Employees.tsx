@@ -102,6 +102,9 @@ export default function Employees() {
   const [profile, setProfile] = useState(emptyProfile());
   const [plan, setPlan] = useState(emptyPlan());
   const [planHistory, setPlanHistory] = useState<any[]>([]);
+  const [profileError, setProfileError] = useState('');
+  const [planError, setPlanError] = useState('');
+  const [listError, setListError] = useState('');
 
   useEffect(() => { loadEmployees(); }, []);
 
@@ -120,6 +123,7 @@ export default function Employees() {
     setEditing(null);
     setProfile(emptyProfile());
     setPlan(emptyPlan());
+    setProfileError('');
     setProfileModal(true);
   }
 
@@ -136,6 +140,7 @@ export default function Employees() {
       role: employee.role || 'attendant',
       active: Boolean(employee.active),
     });
+    setProfileError('');
     setProfileModal(true);
   }
 
@@ -165,6 +170,7 @@ export default function Employees() {
     } catch {
       setPlanHistory([]);
     }
+    setPlanError('');
     setPlanModal(true);
   }
 
@@ -203,7 +209,7 @@ export default function Employees() {
       setProfileModal(false);
       await loadEmployees();
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to save employee');
+      setProfileError(error.response?.data?.error || 'Failed to save employee');
     } finally {
       setSaving(false);
     }
@@ -218,7 +224,7 @@ export default function Employees() {
       setPlanModal(false);
       await loadEmployees();
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to save compensation plan');
+      setPlanError(error.response?.data?.error || 'Failed to save compensation plan');
     } finally {
       setSaving(false);
     }
@@ -226,11 +232,12 @@ export default function Employees() {
 
   async function deactivate(employee: any) {
     if (!confirm(`Deactivate ${employee.name}? Historical shifts and payroll records will remain available.`)) return;
+    setListError('');
     try {
       await deleteEmployee(employee.id);
       await loadEmployees();
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to deactivate employee');
+      setListError(error.response?.data?.error || 'Failed to deactivate employee');
     }
   }
 
@@ -265,6 +272,7 @@ export default function Employees() {
           <Plus size={18} /> Add Employee
         </button>
       </div>
+      {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
       <div className="grid grid-cols-4 gap-5 border-y border-gray-200 py-4 mb-5">
         <Metric label="Active employees" value={String(totals.active)} />
@@ -334,6 +342,7 @@ export default function Employees() {
 
       {profileModal && (
         <Modal title={editing ? 'Edit Employee' : 'Add Employee'} onClose={() => setProfileModal(false)} wide={!editing}>
+          {profileError && <p className="text-sm text-red-600 mb-3">{profileError}</p>}
           <form onSubmit={saveProfile}>
             <div className={`grid gap-6 ${editing ? 'grid-cols-1' : 'grid-cols-2'}`}>
               <section>
@@ -392,6 +401,7 @@ export default function Employees() {
 
       {planModal && selectedEmployee && (
         <Modal title={`Compensation - ${selectedEmployee.name}`} onClose={() => setPlanModal(false)} wide>
+          {planError && <p className="text-sm text-red-600 mb-3">{planError}</p>}
           <form onSubmit={saveCompensation}>
             <div className="grid grid-cols-[1fr_300px] gap-6">
               <section>

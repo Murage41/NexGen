@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Settings2, Users, Fuel, Database, DollarSign, Save, HardDrive, ChevronRight, Gauge, ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
-import { backupDatabase, getCurrentShift, getActivePumps, getOperationalSettings, runOperationalIntegrity, setOpeningReadings, updateOperationalSettings } from '../services/api';
+import { backupDatabase, getCurrentShift, getActivePumps, getOperationalSettings, runOperationalIntegrity, setOpeningReadings, updateOperationalSettings, getMpesaFeeConfigs, getCurrentMpesaFeeConfig, createMpesaFeeConfig } from '../services/api';
+import { getKenyaDate } from '../utils/timezone';
 
 const numVal = (v: number | string | null | undefined) => {
   if (v === null || v === undefined || v === '' || Number(v) === 0) return '';
@@ -24,10 +25,23 @@ export default function Settings() {
   const [readingsSaved, setReadingsSaved] = useState(false);
   const [staleShiftHours, setStaleShiftHours] = useState('30');
   const [operationsSaved, setOperationsSaved] = useState(false);
+  const [operationsError, setOperationsError] = useState('');
   const [integrityReport, setIntegrityReport] = useState<any>(null);
   const [checkingIntegrity, setCheckingIntegrity] = useState(false);
+  const [integrityError, setIntegrityError] = useState('');
   const [backupMessage, setBackupMessage] = useState('');
   const [backingUp, setBackingUp] = useState(false);
+  const [backupError, setBackupError] = useState('');
+  const [readingsError, setReadingsError] = useState('');
+
+  // M-Pesa fee configuration
+  const [mpesaCurrent, setMpesaCurrent] = useState<any>(null);
+  const [mpesaHistory, setMpesaHistory] = useState<any[]>([]);
+  const [mpesaForm, setMpesaForm] = useState({ fee_type: 'percentage', fee_value: '', effective_date: getKenyaDate(), notes: '' });
+  const [mpesaSaving, setMpesaSaving] = useState(false);
+  const [mpesaError, setMpesaError] = useState('');
+  const [mpesaSaved, setMpesaSaved] = useState(false);
+  const [showMpesaHistory, setShowMpesaHistory] = useState(false);
 
   useEffect(() => {
     const name = localStorage.getItem('station_name') || '';
@@ -38,7 +52,40 @@ export default function Settings() {
     getOperationalSettings()
       .then((response) => setStaleShiftHours(String(response.data.data.stale_shift_hours || 30)))
       .catch(() => undefined);
+    loadMpesaFeeConfig();
   }, []);
+
+  async function loadMpesaFeeConfig() {
+    try {
+      const [currentRes, historyRes] = await Promise.all([getCurrentMpesaFeeConfig(), getMpesaFeeConfigs()]);
+      setMpesaCurrent(currentRes.data.data);
+      setMpesaHistory(historyRes.data.data);
+    } catch (err) {
+      // Leave as-is; the section below shows its own state.
+    }
+  }
+
+  async function saveMpesaFeeConfig(e: React.FormEvent) {
+    e.preventDefault();
+    setMpesaError('');
+    setMpesaSaving(true);
+    try {
+      await createMpesaFeeConfig({
+        fee_type: mpesaForm.fee_type as 'percentage' | 'fixed',
+        fee_value: Number(mpesaForm.fee_value),
+        effective_date: mpesaForm.effective_date,
+        notes: mpesaForm.notes || undefined,
+      });
+      setMpesaForm({ fee_type: 'percentage', fee_value: '', effective_date: getKenyaDate(), notes: '' });
+      setMpesaSaved(true);
+      window.setTimeout(() => setMpesaSaved(false), 2500);
+      await loadMpesaFeeConfig();
+    } catch (err: any) {
+      setMpesaError(err.response?.data?.error || 'Unable to save the fee rate.');
+    } finally {
+      setMpesaSaving(false);
+    }
+  }
 
   async function loadOpenShift() {
     try {
@@ -70,6 +117,7 @@ export default function Settings() {
 
   async function saveOpeningReadings() {
     if (!currentShift) return;
+    setReadingsError('');
     try {
       setSavingReadings(true);
       const payload = readings.map(r => ({
@@ -82,8 +130,8 @@ export default function Settings() {
       setTimeout(() => setReadingsSaved(false), 3000);
       // Reload to get updated calculated values
       await loadOpenShift();
-    } catch (err) {
-      alert('Failed to save opening readings');
+    } catch (err: any) {
+      setReadingsError(err.response?.data?.error || 'Failed to save opening readings');
     } finally {
       setSavingReadings(false);
     }
@@ -97,6 +145,7 @@ export default function Settings() {
   }
 
   async function saveOperationalSettings() {
+    setOperationsError('');
     try {
       const hours = Number(staleShiftHours);
       const response = await updateOperationalSettings({ stale_shift_hours: hours });
@@ -104,18 +153,19 @@ export default function Settings() {
       setOperationsSaved(true);
       window.setTimeout(() => setOperationsSaved(false), 2500);
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Unable to save the warning threshold.');
+      setOperationsError(err.response?.data?.error || 'Unable to save the warning threshold.');
     }
   }
 
   async function handleIntegrityCheck() {
     setCheckingIntegrity(true);
+    setIntegrityError('');
     try {
       const response = await runOperationalIntegrity();
       setIntegrityReport(response.data.data);
     } catch (err: any) {
       if (err.response?.data?.data) setIntegrityReport(err.response.data.data);
-      else alert(err.response?.data?.error || 'Unable to complete the system check.');
+      else setIntegrityError(err.response?.data?.error || 'Unable to complete the system check.');
     } finally {
       setCheckingIntegrity(false);
     }
@@ -124,11 +174,12 @@ export default function Settings() {
   async function handleBackup() {
     setBackingUp(true);
     setBackupMessage('');
+    setBackupError('');
     try {
       const response = await backupDatabase();
       setBackupMessage(`Backup created: ${response.data.file}`);
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Unable to create the backup.');
+      setBackupError(err.response?.data?.error || 'Unable to create the backup.');
     } finally {
       setBackingUp(false);
     }
@@ -223,6 +274,7 @@ export default function Settings() {
               <span className="text-green-600 text-sm font-medium">✓ Opening readings saved!</span>
             )}
           </div>
+          {readingsError && <p className="text-sm text-red-600 mt-2">{readingsError}</p>}
         </div>
       )}
 
@@ -298,6 +350,7 @@ export default function Settings() {
             </div>
             <p className="text-xs text-gray-500 mt-2">Open shifts older than this are highlighted for review.</p>
             {operationsSaved && <p className="text-xs text-green-700 mt-1">Threshold saved.</p>}
+            {operationsError && <p className="text-xs text-red-600 mt-1">{operationsError}</p>}
           </div>
 
           <div>
@@ -315,6 +368,7 @@ export default function Settings() {
                 </span>
               </div>
             )}
+            {integrityError && <p className="text-xs text-red-600 mt-2">{integrityError}</p>}
           </div>
 
           <div>
@@ -328,8 +382,91 @@ export default function Settings() {
             </button>
             <p className="text-xs text-gray-500 mt-2">Creates a consistent local copy in the server backup folder.</p>
             {backupMessage && <p className="text-xs text-green-700 mt-1 break-all">{backupMessage}</p>}
+            {backupError && <p className="text-xs text-red-600 mt-1">{backupError}</p>}
           </div>
         </div>
+      </div>
+
+      {/* M-Pesa Fee Configuration */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-700 mb-4">M-Pesa Fee Configuration</h2>
+        <p className="text-sm text-gray-600 mb-4">
+          The fee rate applied to M-Pesa collections when computing net receipts. Effective-dated: a
+          new rate applies from its date forward and does not change past shifts.
+        </p>
+        {mpesaCurrent ? (
+          <p className="text-sm mb-4">
+            Current rate: <span className="font-semibold">
+              {mpesaCurrent.fee_type === 'percentage' ? `${Number(mpesaCurrent.fee_value)}%` : `KES ${Number(mpesaCurrent.fee_value).toFixed(2)} flat`}
+            </span>{' '}
+            <span className="text-gray-500">(effective {mpesaCurrent.effective_date})</span>
+          </p>
+        ) : (
+          <p className="text-sm text-gray-500 mb-4">No fee rate configured yet.</p>
+        )}
+        <form onSubmit={saveMpesaFeeConfig} className="grid grid-cols-4 gap-3 items-end">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Type</label>
+            <select value={mpesaForm.fee_type} onChange={(e) => setMpesaForm({ ...mpesaForm, fee_type: e.target.value })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm">
+              <option value="percentage">Percentage</option>
+              <option value="fixed">Fixed (KES per transaction)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              {mpesaForm.fee_type === 'percentage' ? 'Rate (%)' : 'Amount (KES)'}
+            </label>
+            <input type="number" min="0" max={mpesaForm.fee_type === 'percentage' ? 100 : undefined} step="0.01" required
+              value={mpesaForm.fee_value} onChange={(e) => setMpesaForm({ ...mpesaForm, fee_value: e.target.value })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Effective From</label>
+            <input type="date" required value={mpesaForm.effective_date}
+              onChange={(e) => setMpesaForm({ ...mpesaForm, effective_date: e.target.value })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
+          </div>
+          <button type="submit" disabled={mpesaSaving || !mpesaForm.fee_value}
+            className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md disabled:opacity-50">
+            <Save size={16} /> {mpesaSaving ? 'Saving...' : 'Save Rate'}
+          </button>
+          <div className="col-span-4">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Notes (optional)</label>
+            <input type="text" value={mpesaForm.notes} onChange={(e) => setMpesaForm({ ...mpesaForm, notes: e.target.value })}
+              placeholder="e.g. Safaricom Lipa na M-Pesa rate change notice"
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm" />
+          </div>
+        </form>
+        {mpesaError && <p className="text-xs text-red-700 mt-2">{mpesaError}</p>}
+        {mpesaSaved && <p className="text-xs text-green-700 mt-2">Fee rate saved.</p>}
+        {mpesaHistory.length > 1 && (
+          <div className="mt-4">
+            <button type="button" onClick={() => setShowMpesaHistory((v) => !v)} className="text-sm text-blue-600 hover:underline">
+              {showMpesaHistory ? 'Hide' : 'Show'} rate history ({mpesaHistory.length})
+            </button>
+            {showMpesaHistory && (
+              <table className="w-full text-sm mt-2">
+                <thead>
+                  <tr className="text-left text-gray-500 border-b">
+                    <th className="py-1 pr-4">Effective</th>
+                    <th className="py-1 pr-4">Rate</th>
+                    <th className="py-1">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {mpesaHistory.map((row) => (
+                    <tr key={row.id} className="border-b last:border-0">
+                      <td className="py-1 pr-4">{row.effective_date}</td>
+                      <td className="py-1 pr-4">{row.fee_type === 'percentage' ? `${Number(row.fee_value)}%` : `KES ${Number(row.fee_value).toFixed(2)} flat`}</td>
+                      <td className="py-1 text-gray-500">{row.notes || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

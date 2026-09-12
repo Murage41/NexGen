@@ -66,6 +66,9 @@ export default function ShiftRecord() {
   const [collectionSavedAt, setCollectionSavedAt] = useState<Date | null>(null);
   const [readingError, setReadingError] = useState('');
   const [collectionError, setCollectionError] = useState('');
+  const [expenseError, setExpenseError] = useState('');
+  const [creditError, setCreditError] = useState('');
+  const [receiptError, setReceiptError] = useState('');
   const readingRevision = useRef(0);
   const collectionRevision = useRef(0);
   const serverReadingRevision = useRef(0);
@@ -105,7 +108,7 @@ export default function ShiftRecord() {
 
   useEffect(() => {
     if (!collectionsDirty || shiftStatus !== 'open' || collectionSync !== 'dirty') return;
-    const timer = window.setTimeout(() => { void saveCollections(false); }, 1200);
+    const timer = window.setTimeout(() => { void saveCollections(); }, 1200);
     return () => window.clearTimeout(timer);
   }, [collections, collectionsDirty, collectionSync, shiftStatus]);
 
@@ -314,12 +317,11 @@ export default function ShiftRecord() {
       const msg = data?.error || err?.message || 'Failed to save readings';
       setReadingError(msg);
       setReadingSync('error');
-      if (interactive) alert(msg);
       console.error('[ShiftRecord:saveReadings]', err);
     }
   }
 
-  async function saveCollections(interactive = true) {
+  async function saveCollections() {
     const revision = collectionRevision.current;
     setCollectionSync('saving');
     setCollectionError('');
@@ -350,7 +352,6 @@ export default function ShiftRecord() {
       const msg = data?.error || err?.message || 'Failed to save collections';
       setCollectionError(msg);
       setCollectionSync('error');
-      if (interactive) alert(msg);
       console.error(err);
     }
   }
@@ -386,6 +387,7 @@ export default function ShiftRecord() {
   async function handleAddExpense() {
     if (!newExp.category || !newExp.amount) return;
     const payload = { category: newExp.category, description: newExp.description, amount: parseFloat(newExp.amount) };
+    setExpenseError('');
     try {
       await addShiftExpense(
         parseInt(id!),
@@ -396,17 +398,23 @@ export default function ShiftRecord() {
       setNewExp({ category: '', description: '', amount: '' });
       await loadShift();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message || 'Failed to add expense');
+      setExpenseError(err?.response?.data?.error || err?.message || 'Failed to add expense');
     }
   }
 
   async function handleDeleteExpense(expId: number) {
-    await deleteShiftExpense(parseInt(id!), expId);
-    await loadShift();
+    setExpenseError('');
+    try {
+      await deleteShiftExpense(parseInt(id!), expId);
+      await loadShift();
+    } catch (err: any) {
+      setExpenseError(err?.response?.data?.error || err?.message || 'Failed to delete expense');
+    }
   }
 
   async function handleAddCredit() {
     if (!newCredit.customer_name || !newCredit.amount) return;
+    setCreditError('');
     try {
       const payload: any = {
         customer_name: newCredit.customer_name,
@@ -425,14 +433,14 @@ export default function ShiftRecord() {
       setIsNewCustomer(false);
       await loadShift();
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || 'Failed to add credit';
-      alert(msg);
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to add credit');
     }
   }
 
   async function handleAddCreditReceipt() {
     const amount = parseFloat(newReceipt.amount);
     if (!newReceipt.account_id || !Number.isFinite(amount) || amount <= 0) return;
+    setReceiptError('');
     try {
       const payload = {
         account_id: parseInt(newReceipt.account_id),
@@ -454,10 +462,9 @@ export default function ShiftRecord() {
         await loadShift();
         await loadCreditAccounts();
       }
-      const msg = err?.code === 'ECONNABORTED'
+      setReceiptError(err?.code === 'ECONNABORTED'
         ? 'Payment request timed out. The shift has been refreshed; check the debt payments list before trying again.'
-        : err?.response?.data?.error || err?.message || 'Failed to record payment';
-      alert(msg);
+        : err?.response?.data?.error || err?.message || 'Failed to record payment');
     }
   }
 
@@ -466,8 +473,9 @@ export default function ShiftRecord() {
   async function handleAddInvoice() {
     if (!newCredit.account_id || !newInvoice.litres) return;
     const litresNum = parseFloat(newInvoice.litres);
+    setCreditError('');
     if (!Number.isFinite(litresNum) || litresNum <= 0) {
-      alert('Litres must be a positive number');
+      setCreditError('Litres must be a positive number');
       return;
     }
     const matchingSources = readings.filter((reading) => reading.fuel_type === newInvoice.fuel_type);
@@ -477,14 +485,14 @@ export default function ShiftRecord() {
         ? Number(matchingSources[0].pump_id)
         : null;
     if (matchingSources.length === 0) {
-      alert('No pump or nozzle is available for this fuel on the shift.');
+      setCreditError('No pump or nozzle is available for this fuel on the shift.');
       return;
     }
     if (
       !selectedPumpId
       || !matchingSources.some((source) => Number(source.pump_id) === selectedPumpId)
     ) {
-      alert('Select the pump or nozzle that supplied these litres.');
+      setCreditError('Select the pump or nozzle that supplied these litres.');
       return;
     }
     try {
@@ -507,18 +515,17 @@ export default function ShiftRecord() {
       setIsNewCustomer(false);
       await loadShift();
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || 'Failed to record consumption';
-      alert(msg);
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to record consumption');
     }
   }
 
   async function handleDeleteInvoice(entryId: number) {
+    setCreditError('');
     try {
       await deleteInvoiceConsumption(parseInt(id!), entryId);
       await loadShift();
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || 'Failed to delete entry';
-      alert(msg);
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to delete entry');
     }
   }
 
@@ -546,8 +553,13 @@ export default function ShiftRecord() {
   const invoiceSources = readings.filter((reading) => reading.fuel_type === newInvoice.fuel_type);
 
   async function handleDeleteCredit(creditId: number) {
-    await deleteShiftCredit(parseInt(id!), creditId);
-    await loadShift();
+    setCreditError('');
+    try {
+      await deleteShiftCredit(parseInt(id!), creditId);
+      await loadShift();
+    } catch (err: any) {
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to delete credit');
+    }
   }
 
   function updateReading(index: number, field: string, value: string) {
@@ -956,6 +968,7 @@ export default function ShiftRecord() {
                   className="w-full border border-gray-300 rounded-lg p-3 text-sm"
                 />
 
+                {receiptError && <p className="text-sm text-red-600">{receiptError}</p>}
                 <button
                   onClick={handleAddCreditReceipt}
                   disabled={!newReceipt.account_id || !newReceipt.amount || receiptAmount > selectedReceiptBalance}
@@ -1102,6 +1115,7 @@ export default function ShiftRecord() {
                 </button>
               </>
             )}
+            {creditError && <p className="text-sm text-red-600 mt-2">{creditError}</p>}
           </div>
         </div>
       )}
@@ -1139,6 +1153,7 @@ export default function ShiftRecord() {
               className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50">
               <Plus size={16} /> Add Expense
             </button>
+            {expenseError && <p className="text-sm text-red-600 mt-2">{expenseError}</p>}
           </div>
         </div>
       )}

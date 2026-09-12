@@ -187,12 +187,6 @@ export const deleteExpense = (id: number) => api.delete(`/expenses/${id}`);
 export const getExpenseCategories = () => api.get('/expenses/categories');
 export const getExpenseSummary = (params?: any) => api.get('/expenses/summary', { params });
 
-// Credits
-export const getCredits = (params?: any) => api.get('/credits', { params });
-export const getCredit = (id: number) => api.get(`/credits/${id}`);
-export const createCredit = (data: any) => api.post('/credits', data);
-export const addCreditPayment = (creditId: number, data: any) => api.post(`/credits/${creditId}/payments`, data);
-
 // Credit Accounts
 export const getCreditAccounts = (params?: any) => api.get('/credit-accounts', { params });
 export const getCreditAccount = (id: number) => api.get(`/credit-accounts/${id}`);
@@ -234,6 +228,11 @@ export const getStockReconciliation = (date?: string) => api.get('/reports/stock
 export const getStockReconciliationByShift = (date?: string) => api.get('/reports/stock-reconciliation-by-shift', { params: { date } });
 export const getDebtorAging = () => api.get('/reports/debtor-aging');
 export const getCashFlow = (params?: { from?: string; to?: string }) => api.get('/reports/cash-flow', { params });
+export const exportMonthlyReport = (month: string) => api.get('/reports/monthly/export.csv', { params: { month }, responseType: 'blob' });
+export const exportStockReconciliation = (month: string) => api.get('/reports/stock-reconciliation/export.csv', { params: { month }, responseType: 'blob' });
+
+// Operations
+export const getStaleShifts = () => api.get('/operations/stale-shifts');
 
 // Suppliers
 export const getSuppliers = () => api.get('/suppliers');

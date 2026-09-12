@@ -27,6 +27,8 @@ export default function CreditAccounts() {
     id: null, name: '', phone: '', billing_mode: 'money', payment_terms_days: '0',
   });
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
   useEffect(() => {
     loadAccounts();
@@ -72,6 +74,7 @@ export default function CreditAccounts() {
       payment_date: getKenyaDate(),
       notes: '',
     });
+    setPaymentError(null);
     setShowPaymentModal(true);
   }
 
@@ -100,12 +103,13 @@ export default function CreditAccounts() {
       }
     } catch (err: any) {
       console.error('Failed to add payment:', err);
-      alert(err.response?.data?.error || 'Failed to record payment');
+      setPaymentError(err.response?.data?.error || 'Failed to record payment');
     }
   }
 
   async function handleDelete(account: any) {
     if (!confirm(`Remove credit account for "${account.name}"? This cannot be undone.`)) return;
+    setListError(null);
     try {
       await deleteCreditAccount(account.id);
       if (expandedId === account.id) {
@@ -115,7 +119,7 @@ export default function CreditAccounts() {
       await loadAccounts();
     } catch (err: any) {
       console.error('Failed to delete account:', err);
-      alert(err.response?.data?.error || 'Failed to remove account');
+      setListError(err.response?.data?.error || 'Failed to remove account');
     }
   }
 
@@ -212,6 +216,7 @@ export default function CreditAccounts() {
       <p className="text-sm text-gray-500 mb-6">
         Money-mode customers and employees. Invoice-mode customers (Diwafa, Mugendi Kamuwongo) are managed from the Customer Invoices page.
       </p>
+      {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
@@ -450,6 +455,7 @@ export default function CreditAccounts() {
               {paymentTarget.phone ? ` (${paymentTarget.phone})` : ''}
               {' — '}Balance: <span className="font-medium text-red-600">{formatKES(parseFloat(paymentTarget.outstanding_balance) || 0)}</span>
             </p>
+            {paymentError && <p className="text-sm text-red-600 mb-3">{paymentError}</p>}
             <form onSubmit={handlePayment} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount (KES) *</label>

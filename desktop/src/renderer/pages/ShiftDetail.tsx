@@ -115,6 +115,12 @@ export default function ShiftDetail() {
   const [collectingReceipt, setCollectingReceipt] = useState(false);
   const [readingError, setReadingError] = useState('');
   const [expenseCategories, setExpenseCategories] = useState<string[]>(PREDEFINED_EXPENSE_CATEGORIES);
+  const [creditError, setCreditError] = useState('');
+  const [expenseError, setExpenseError] = useState('');
+  const [closeError, setCloseError] = useState('');
+  const [closeWarnings, setCloseWarnings] = useState<string[]>([]);
+  const [receiptError, setReceiptError] = useState('');
+  const [reviewError, setReviewError] = useState('');
   // Current per-fuel-type prices, used to surface KES/L anomalies on the readings table.
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
@@ -159,7 +165,7 @@ export default function ShiftDetail() {
 
   useEffect(() => {
     if (!collectionsDirty || shift?.status !== 'open' || collectionSync !== 'dirty') return;
-    const timer = window.setTimeout(() => { void handleSaveCollections(false); }, 1200);
+    const timer = window.setTimeout(() => { void handleSaveCollections(); }, 1200);
     return () => window.clearTimeout(timer);
   }, [collections, collectionsDirty, collectionSync, shift?.status]);
 
@@ -379,7 +385,7 @@ export default function ShiftDetail() {
     }
   }
 
-  async function handleSaveCollections(interactive = true) {
+  async function handleSaveCollections() {
     const revision = collectionRevision.current;
     setCollectionSync('saving');
     setCollectionError('');
@@ -412,7 +418,6 @@ export default function ShiftDetail() {
       }
       setCollectionError(data?.error || err?.message || 'Failed to sync collections');
       setCollectionSync('error');
-      if (interactive) alert(err?.response?.data?.error || err?.message || 'Failed to sync collections');
     }
   }
 
@@ -450,6 +455,7 @@ export default function ShiftDetail() {
       category: newExpense.category, description: newExpense.description,
       amount: parseFloat(newExpense.amount),
     };
+    setExpenseError('');
     try {
       await addShiftExpense(
         parseInt(id!),
@@ -460,13 +466,18 @@ export default function ShiftDetail() {
       setNewExpense({ category: '', description: '', amount: '' });
       await loadShift();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message || 'Failed to add expense');
+      setExpenseError(err?.response?.data?.error || err?.message || 'Failed to add expense');
     }
   }
 
   async function handleDeleteExpense(expenseId: number) {
-    await deleteShiftExpense(parseInt(id!), expenseId);
-    await loadShift();
+    setExpenseError('');
+    try {
+      await deleteShiftExpense(parseInt(id!), expenseId);
+      await loadShift();
+    } catch (err: any) {
+      setExpenseError(err?.response?.data?.error || err?.message || 'Failed to delete expense');
+    }
   }
 
   async function handleAddCredit() {
@@ -479,6 +490,7 @@ export default function ShiftDetail() {
     if (creditMode === 'new' && newCredit.customer_phone) {
       payload.customer_phone = newCredit.customer_phone;
     }
+    setCreditError('');
     try {
       await addShiftCredit(
         parseInt(id!),
@@ -492,7 +504,7 @@ export default function ShiftDetail() {
       setSelectedBillingMode(null);
       await loadShift();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message || 'Failed to add credit');
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to add credit');
     }
   }
 
@@ -500,8 +512,9 @@ export default function ShiftDetail() {
   async function handleAddInvoice() {
     if (!newCredit.account_id || !newInvoice.litres) return;
     const litresNum = parseFloat(newInvoice.litres);
+    setCreditError('');
     if (!Number.isFinite(litresNum) || litresNum <= 0) {
-      alert('Litres must be a positive number');
+      setCreditError('Litres must be a positive number');
       return;
     }
     const matchingSources = readings.filter((reading: any) => reading.fuel_type === newInvoice.fuel_type);
@@ -511,7 +524,7 @@ export default function ShiftDetail() {
         ? Number(matchingSources[0].pump_id)
         : null;
     if (matchingSources.length > 1 && !selectedPumpId) {
-      alert('Select the pump/nozzle that supplied these litres.');
+      setCreditError('Select the pump/nozzle that supplied these litres.');
       return;
     }
     try {
@@ -533,32 +546,39 @@ export default function ShiftDetail() {
       setSelectedBillingMode(null);
       await loadShift();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message || 'Failed to record consumption');
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to record consumption');
     }
   }
 
   async function handleDeleteInvoice(entryId: number) {
+    setCreditError('');
     try {
       await deleteInvoiceConsumption(parseInt(id!), entryId);
       await loadShift();
     } catch (err: any) {
-      alert(err?.response?.data?.error || err?.message || 'Failed to delete entry');
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to delete entry');
     }
   }
 
   async function handleDeleteCredit(creditId: number) {
-    await deleteShiftCredit(parseInt(id!), creditId);
-    await loadShift();
+    setCreditError('');
+    try {
+      await deleteShiftCredit(parseInt(id!), creditId);
+      await loadShift();
+    } catch (err: any) {
+      setCreditError(err?.response?.data?.error || err?.message || 'Failed to delete credit');
+    }
   }
 
   async function handleCloseShift() {
-    if (!recoveryReady) { alert('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
+    setCloseError('');
+    if (!recoveryReady) { setCloseError('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
     if (!closeReviewComplete) {
-      alert('Complete the reconciliation review and record a variance reason when required.');
+      setCloseError('Complete the reconciliation review and record a variance reason when required.');
       return;
     }
     if (readingsDirty || collectionsDirty || readingSync === 'saving' || collectionSync === 'saving' || readingSync === 'error' || collectionSync === 'error' || readingSync === 'review' || collectionSync === 'review') {
-      alert('Pump readings and collections must finish syncing before this shift can close. Use Sync Now on any section needing attention.');
+      setCloseError('Pump readings and collections must finish syncing before this shift can close. Use Sync Now on any section needing attention.');
       return;
     }
     try {
@@ -576,16 +596,17 @@ export default function ShiftDetail() {
       clearShiftDraft(id!);
       setShowCloseModal(false);
       if (res.data?.warnings?.length) {
-        alert('Shift closed with warnings:\n\n' + res.data.warnings.join('\n'));
+        setCloseWarnings(res.data.warnings);
       }
       await loadShift();
-    } catch (err: any) { alert(err.response?.data?.error || 'Failed to close shift'); }
+    } catch (err: any) { setCloseError(err.response?.data?.error || 'Failed to close shift'); }
   }
 
   async function handleCollectReceipt() {
     const amount = parseFloat(receiptForm.amount);
     if (!receiptForm.account_id || !amount || amount <= 0) return;
     setCollectingReceipt(true);
+    setReceiptError('');
     try {
       const payload = {
         account_id: parseInt(receiptForm.account_id),
@@ -607,7 +628,7 @@ export default function ShiftDetail() {
       if (err?.code === 'ECONNABORTED') {
         await loadShift();
       }
-      alert(err?.code === 'ECONNABORTED'
+      setReceiptError(err?.code === 'ECONNABORTED'
         ? 'Payment request timed out. The shift has been refreshed; check the debt payments list before trying again.'
         : err.response?.data?.error || 'Failed to record payment');
     } finally {
@@ -648,11 +669,14 @@ export default function ShiftDetail() {
   function openCloseReview() {
     setCloseReview({ readings: false, collections: false, entries: false });
     setVarianceReason('');
+    setCloseError('');
+    setCloseWarnings([]);
     setShowCloseModal(true);
   }
 
   async function saveShiftReview(status: 'reviewed' | 'flagged', reviewNote?: string) {
     setReviewSaving(true);
+    setReviewError('');
     try {
       await updateShiftReview(parseInt(id!), {
         review_status: status,
@@ -662,7 +686,7 @@ export default function ShiftDetail() {
       setReviewNotes('');
       await loadShift();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Unable to update the shift review.');
+      setReviewError(err.response?.data?.error || 'Unable to update the shift review.');
     } finally {
       setReviewSaving(false);
     }
@@ -670,6 +694,7 @@ export default function ShiftDetail() {
 
   function openReviewAction(status: 'reviewed' | 'flagged') {
     setReviewNotes('');
+    setReviewError('');
     setReviewAction(status);
   }
 
@@ -756,6 +781,15 @@ export default function ShiftDetail() {
           </button>
         </div>
       </div>
+
+      {closeWarnings.length > 0 && (
+        <div className="mb-4 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <p className="font-semibold mb-1">Shift closed with warnings:</p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {closeWarnings.map((warning, i) => <li key={i}>{warning}</li>)}
+          </ul>
+        </div>
+      )}
 
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -1475,6 +1509,7 @@ export default function ShiftDetail() {
                 Invoice-mode customer — record litres only. Retail amount is computed automatically and rolled into a monthly invoice.
               </p>
             )}
+            {creditError && <p className="text-sm text-red-600">{creditError}</p>}
           </div>
         )}
       </div>
@@ -1591,6 +1626,7 @@ export default function ShiftDetail() {
             </button>
           </div>
         )}
+        {expenseError && <p className="text-sm text-red-600 mt-2">{expenseError}</p>}
       </div>
 
       {/* Debt Collections */}
@@ -1598,7 +1634,7 @@ export default function ShiftDetail() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Debt Collections</h2>
           {isOpen && (
-            <button onClick={() => setShowReceiptModal(true)}
+            <button onClick={() => { setReceiptError(''); setShowReceiptModal(true); }}
               className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700">
               <Plus size={14} /> Collect Payment
             </button>
@@ -1669,6 +1705,7 @@ export default function ShiftDetail() {
               {reviewAction === 'flagged' ? 'Flag reason' : 'Resolution note'}
               <textarea value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} rows={4} className="mt-1 w-full border border-gray-300 rounded-md p-2" />
             </label>
+            {reviewError && <p className="text-sm text-red-600 mt-2">{reviewError}</p>}
             <div className="flex justify-end gap-2 mt-4">
               <button type="button" onClick={() => setReviewAction(null)} disabled={reviewSaving} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md">Cancel</button>
               <button type="button" onClick={() => saveShiftReview(reviewAction, reviewNotes)} disabled={reviewSaving || reviewNotes.trim().length < 3} className={`px-4 py-2 text-white rounded-md disabled:opacity-50 ${reviewAction === 'flagged' ? 'bg-red-600' : 'bg-green-600'}`}>
@@ -1748,6 +1785,7 @@ export default function ShiftDetail() {
               </div>
             )}
 
+            {closeError && <p className="text-sm text-red-600 mb-3">{closeError}</p>}
             <div className="flex gap-2 justify-end mt-4">
               <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                 Cancel
@@ -1833,6 +1871,7 @@ export default function ShiftDetail() {
                 className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
             </div>
 
+            {receiptError && <p className="text-sm text-red-600 mb-3">{receiptError}</p>}
             <div className="flex gap-2 justify-end">
               <button onClick={() => { setShowReceiptModal(false); setReceiptAccountSearch(''); setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' }); }}
                 className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>

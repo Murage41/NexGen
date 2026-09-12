@@ -33,6 +33,10 @@ export default function ShiftDetail() {
   const [neighbors, setNeighbors] = useState<{ previous: any | null; next: any | null }>({ previous: null, next: null });
   const [closeNotes, setCloseNotes] = useState('');
   const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState('');
+  const [closeWarnings, setCloseWarnings] = useState<string[]>([]);
+  const [reviewError, setReviewError] = useState('');
+  const [receiptError, setReceiptError] = useState('');
 
   // Debt repay state
   const [debts, setDebts] = useState<any[]>([]);
@@ -91,13 +95,14 @@ export default function ShiftDetail() {
   }
 
   async function handleClose() {
-    if (!recoveryReady) { alert('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
+    setCloseError('');
+    if (!recoveryReady) { setCloseError('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
     if (!closeReviewComplete) {
-      alert('Complete the reconciliation review and record a variance reason when required.');
+      setCloseError('Complete the reconciliation review and record a variance reason when required.');
       return;
     }
     if (hasPendingShiftDraft(id!)) {
-      alert('Readings or collections are still waiting to sync. Return to Record Shift and use Sync Now before closing.');
+      setCloseError('Readings or collections are still waiting to sync. Return to Record Shift and use Sync Now before closing.');
       return;
     }
     setClosing(true);
@@ -116,22 +121,25 @@ export default function ShiftDetail() {
       clearShiftDraft(id!);
       setShowCloseModal(false);
       if (res.data?.warnings?.length) {
-        alert('Shift closed with warnings:\n\n' + res.data.warnings.join('\n'));
+        setCloseWarnings(res.data.warnings);
       }
       await loadShift();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to close shift');
+      setCloseError(err.response?.data?.error || 'Failed to close shift');
     } finally { setClosing(false); }
   }
 
   function openCloseReview() {
     setCloseReview({ readings: false, collections: false, entries: false });
     setVarianceReason('');
+    setCloseError('');
+    setCloseWarnings([]);
     setShowCloseModal(true);
   }
 
   async function saveShiftReview(status: 'reviewed' | 'flagged', reviewNote?: string) {
     setReviewSaving(true);
+    setReviewError('');
     try {
       await updateShiftReview(parseInt(id!), {
         review_status: status,
@@ -141,7 +149,7 @@ export default function ShiftDetail() {
       setReviewNotes('');
       await loadShift();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Unable to update the shift review.');
+      setReviewError(err.response?.data?.error || 'Unable to update the shift review.');
     } finally {
       setReviewSaving(false);
     }
@@ -149,6 +157,7 @@ export default function ShiftDetail() {
 
   function openReviewAction(status: 'reviewed' | 'flagged') {
     setReviewNotes('');
+    setReviewError('');
     setReviewAction(status);
   }
 
@@ -156,6 +165,7 @@ export default function ShiftDetail() {
     const amount = parseFloat(receiptForm.amount);
     if (!receiptForm.account_id || !amount || amount <= 0) return;
     setCollectingReceipt(true);
+    setReceiptError('');
     try {
       const payload = {
         account_id: parseInt(receiptForm.account_id),
@@ -176,7 +186,7 @@ export default function ShiftDetail() {
       if (err?.code === 'ECONNABORTED') {
         await loadShift();
       }
-      alert(err?.code === 'ECONNABORTED'
+      setReceiptError(err?.code === 'ECONNABORTED'
         ? 'Payment request timed out. The shift has been refreshed; check the debt payments list before trying again.'
         : err.response?.data?.error || 'Failed to record payment');
     } finally {
@@ -245,6 +255,14 @@ export default function ShiftDetail() {
   return (
     <div className="pb-6">
       <PageHeader title={`Shift #${shift.id}`} back onBack={() => navigate(`/shifts${location.search}`)} />
+      {closeWarnings.length > 0 && (
+        <div className="mb-3 border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 rounded-lg">
+          <p className="font-semibold mb-1">Shift closed with warnings:</p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {closeWarnings.map((warning, i) => <li key={i}>{warning}</li>)}
+          </ul>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2 mb-3">
         <button type="button" onClick={() => neighbors.previous && navigate(`/shifts/${neighbors.previous.id}${location.search}`)} disabled={!neighbors.previous} className="flex items-center justify-center gap-1 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 disabled:opacity-40">
           <ChevronLeft size={16} /> Previous
@@ -688,7 +706,7 @@ export default function ShiftDetail() {
         <div className="flex items-center justify-between mb-2">
           <p className="font-semibold text-gray-700">Debt Collections</p>
           {isOpen && (
-            <button onClick={() => setShowReceiptModal(true)}
+            <button onClick={() => { setReceiptError(''); setShowReceiptModal(true); }}
               className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium">
               <Plus size={13} /> Collect
             </button>
@@ -752,6 +770,7 @@ export default function ShiftDetail() {
               {reviewAction === 'flagged' ? 'Flag reason' : 'Resolution note'}
               <textarea value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} rows={4} className="mt-1 w-full border border-gray-300 rounded-lg p-3" />
             </label>
+            {reviewError && <p className="text-sm text-red-600 mb-3">{reviewError}</p>}
             <button type="button" onClick={() => saveShiftReview(reviewAction, reviewNotes)} disabled={reviewSaving || reviewNotes.trim().length < 3} className={`w-full py-3 text-white font-semibold rounded-xl disabled:opacity-50 ${reviewAction === 'flagged' ? 'bg-red-600' : 'bg-green-600'}`}>
               {reviewSaving ? 'Saving...' : reviewAction === 'flagged' ? 'Flag Shift' : 'Mark Reviewed'}
             </button>
@@ -868,6 +887,7 @@ export default function ShiftDetail() {
                 className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
             </div>
 
+            {closeError && <p className="text-sm text-red-600 mb-3">{closeError}</p>}
             {/* Confirm */}
             <button onClick={handleClose} disabled={closing || !closeReviewComplete || !recoveryReady}
               className="w-full bg-red-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50">
@@ -930,6 +950,7 @@ export default function ShiftDetail() {
                 className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
             </div>
 
+            {receiptError && <p className="text-sm text-red-600 mb-3">{receiptError}</p>}
             <button onClick={handleCollectReceipt}
               disabled={collectingReceipt || !receiptForm.account_id || !receiptForm.amount}
               className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50">
