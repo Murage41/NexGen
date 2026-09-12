@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodSchema, ZodError } from 'zod';
+import { redactSensitiveValues } from '../utils/redact';
 
 /**
  * Express middleware factory: validates req.body against a Zod schema.
@@ -10,7 +11,7 @@ export function validate(schema: ZodSchema) {
     const result = schema.safeParse(req.body);
     if (!result.success) {
       // Log incoming body + errors so server console shows exactly what failed
-      console.error('[validate] BODY:', JSON.stringify(req.body));
+      console.error('[validate] BODY:', JSON.stringify(redactSensitiveValues(req.body)));
       console.error('[validate] ERRORS:', JSON.stringify((result.error as ZodError).issues));
       const errors = (result.error as ZodError).issues.map((i) => ({
         field: i.path.join('.'),

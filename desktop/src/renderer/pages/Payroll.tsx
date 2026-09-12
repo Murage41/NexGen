@@ -1,7 +1,8 @@
 import { ReasonDialog } from '../../../../shared/ui/ReasonDialog';
 import { Link } from 'react-router-dom';
 import { PayrollStatement } from '../../../../shared/ui/PayrollStatement';
-import { savePayrollRecovery, createPayrollSupplement, createOperationKey } from '../services/api';
+import { ApproverFields, useApprover } from '../../../../shared/ui/ApproverConfirm';
+import { savePayrollRecovery, createPayrollSupplement, createOperationKey, desktopApproval } from '../services/api';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   BadgeCheck,
@@ -71,6 +72,7 @@ export default function Payroll() {
   const [reasonAction, setReasonAction] = useState<any>(null);
   const [paymentKey, setPaymentKey] = useState(() => createOperationKey('payroll-payment'));
   const [deductionKey, setDeductionKey] = useState(() => createOperationKey('payroll-deduction'));
+  const deductionApprover = useApprover(desktopApproval);
   const [showCalculate, setShowCalculate] = useState(false);
   const [showDeduction, setShowDeduction] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
@@ -90,7 +92,6 @@ export default function Payroll() {
   const [deductionForm, setDeductionForm] = useState({
     deduction_type: 'manual',
     amount: '',
-    authorization_reference: '',
     notes: '',
   });
   const [paymentForm, setPaymentForm] = useState({
@@ -229,9 +230,9 @@ export default function Payroll() {
     setDeductionForm({
       deduction_type: 'manual',
       amount: '',
-      authorization_reference: '',
       notes: '',
     });
+    deductionApprover.setPin('');
     setDeductionError('');
     setShowDeduction(true);
   }
@@ -241,9 +242,18 @@ export default function Payroll() {
     if (!selectedRun || !selectedLine) return;
     setBusy(true);
     try {
+      const amount = Number(deductionForm.amount);
+      // Verify the approver's PIN for exactly this deduction first; the server
+      // rejects the deduction unless the token matches line, type and amount.
+      const approved = await deductionApprover.confirm('deduction', {
+        payroll_line_id: selectedLine.id,
+        deduction_type: deductionForm.deduction_type,
+        amount,
+      });
       await addPayrollDeduction(selectedRun.id, selectedLine.id, {
         ...deductionForm,
-        amount: Number(deductionForm.amount),
+        amount,
+        approval_token: approved.approval_token,
       }, deductionKey);
       setShowDeduction(false);
       await loadRun(selectedRun.id);
@@ -435,7 +445,7 @@ export default function Payroll() {
                     {selectedLine?.id === line.id && (
                       <tr key={`${line.id}-details`} className="bg-gray-50 border-t border-gray-100">
                         <td colSpan={7} className="p-4">
-                          <PayrollStatement line={line} run={selectedRun} onRecovery={async (value: any, key: string) => { await savePayrollRecovery(selectedRun.id, line.id, value, key); const response = await getPayrollRun(selectedRun.id); setSelectedRun(response.data.data); }} />
+                          <PayrollStatement line={line} run={selectedRun} approval={desktopApproval} onRecovery={async (value: any, key: string) => { await savePayrollRecovery(selectedRun.id, line.id, value, key); const response = await getPayrollRun(selectedRun.id); setSelectedRun(response.data.data); }} />
                               <LineDetails line={line} run={selectedRun} removeDeduction={removeDeduction} reversePayment={reversePayment} />
                         </td>
                       </tr>
@@ -494,10 +504,10 @@ export default function Payroll() {
               </select>
             </Field>
             <Field label="Amount (KES)"><input required min="0.01" step="0.01" type="number" className="input" value={deductionForm.amount} onChange={(event) => setDeductionForm({ ...deductionForm, amount: event.target.value })} /></Field>
-            <Field label="Authorization reference"><input className="input" required={deductionForm.deduction_type === 'staff_debt'} value={deductionForm.authorization_reference} onChange={(event) => setDeductionForm({ ...deductionForm, authorization_reference: event.target.value })} /></Field>
+            <ApproverFields state={deductionApprover} inputClassName="input" labelClassName="block text-xs font-medium text-gray-600 mb-1" />
             <Field label="Notes"><textarea className="input" rows={2} value={deductionForm.notes} onChange={(event) => setDeductionForm({ ...deductionForm, notes: event.target.value })} /></Field>
             {deductionError && <p className="text-sm text-red-600">{deductionError}</p>}
-            <Actions busy={busy} onCancel={() => setShowDeduction(false)} label="Add Deduction" />
+            <Actions busy={busy} disabled={!deductionApprover.ready} onCancel={() => setShowDeduction(false)} label="Add Deduction" />
           </form>
         </Modal>
       )}

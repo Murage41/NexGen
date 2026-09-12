@@ -1,5 +1,5 @@
 import { DailyRecovery } from '../../../../shared/ui/DailyRecovery';
-import { previewShiftRecovery } from '../services/api';
+import { desktopApproval, previewShiftRecovery } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -100,7 +100,6 @@ export default function ShiftDetail() {
   const [recoveryReady, setRecoveryReady] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
-  const [varianceReason, setVarianceReason] = useState('');
   const [reviewAction, setReviewAction] = useState<'reviewed' | 'flagged' | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -586,7 +585,6 @@ export default function ShiftDetail() {
         notes,
         recovery_decision: recoveryDecision || undefined,
         wage_paid: parseFloat(wagePaid) || 0,
-        variance_reason: varianceReason.trim() || undefined,
         reconciliation: {
           readings_reviewed: true,
           collections_reviewed: true,
@@ -668,7 +666,6 @@ export default function ShiftDetail() {
 
   function openCloseReview() {
     setCloseReview({ readings: false, collections: false, entries: false });
-    setVarianceReason('');
     setCloseError('');
     setCloseWarnings([]);
     setShowCloseModal(true);
@@ -759,11 +756,9 @@ export default function ShiftDetail() {
     + directDrawerPayment
     + totalPayrollPayments;
   const variance = Math.round((totalAccounted - expectedShiftTotal) * 100) / 100;
-  const requiresVarianceReason = Math.abs(variance) >= 50;
   const closeReviewComplete = closeReview.readings
     && closeReview.collections
-    && closeReview.entries
-    && (!requiresVarianceReason || varianceReason.trim().length >= 3);
+    && closeReview.entries;
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
@@ -1754,7 +1749,7 @@ export default function ShiftDetail() {
               </div>
             )}
 
-            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} onReady={setRecoveryReady} revision={JSON.stringify([readings, collections, expenses, shiftCredits, invoiceConsumption, creditReceipts, totalPayrollPayments, readingSync, collectionSync])} />
+            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} approval={desktopApproval} onDecision={setRecoveryDecision} onReady={setRecoveryReady} revision={JSON.stringify([readings, collections, expenses, shiftCredits, invoiceConsumption, creditReceipts, totalPayrollPayments, readingSync, collectionSync])} />
 
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
@@ -1774,16 +1769,14 @@ export default function ShiftDetail() {
               </div>
             </div>
 
-            {requiresVarianceReason && (
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {variance < 0 ? 'Deficit' : 'Surplus'} reason
-                </label>
-                <textarea value={varianceReason} onChange={(event) => setVarianceReason(event.target.value)} rows={2}
-                  placeholder="Record the verified cause or follow-up action"
-                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
-              </div>
-            )}
+            {/* The same notes as on the page, editable here so a variance can be
+                explained at the moment it is seen, without leaving the review. */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+              <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2}
+                placeholder={variance !== 0 ? `Anything that explains the ${variance < 0 ? 'shortage' : 'surplus'}, or other notes on this shift` : 'Any notes about this shift'}
+                className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
+            </div>
 
             {closeError && <p className="text-sm text-red-600 mb-3">{closeError}</p>}
             <div className="flex gap-2 justify-end mt-4">

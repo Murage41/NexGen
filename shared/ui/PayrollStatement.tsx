@@ -1,5 +1,6 @@
 import { newOperationKey } from './operationKey';
 import { useRef, useState } from 'react';
+import { ApproverFields, useApprover } from './ApproverConfirm';
 import { Link } from 'react-router-dom';
 
 export const kes = (value: any) =>
@@ -12,6 +13,7 @@ export function RecoveryEditor({
   saved,
   onSave,
   onDirty,
+  approval,
   label = 'Save recovery decision',
   savedMessage = 'Recovery decision saved. It takes effect when compensation is approved.',
 }: any) {
@@ -20,10 +22,8 @@ export function RecoveryEditor({
       saved?.version === preview.version ? saved.amount : preview.proposed,
     ),
   );
-  const [reference, setReference] = useState(
-    saved?.authorization_reference || '',
-  );
-  const [reason, setReason] = useState(saved?.reason || '');
+  const approver = useApprover(approval);
+  const [confirmedBy, setConfirmedBy] = useState('');
   const [busy, setBusy] = useState(false);
   const operationKey = useRef(newOperationKey());
   const [error, setError] = useState('');
@@ -31,15 +31,21 @@ export function RecoveryEditor({
     setBusy(true);
     setError('');
     try {
+      const approved = await approver.confirm('recovery', {
+        version: preview.version,
+        amount: Number(amount),
+      });
       await onSave(
         {
           version: preview.version,
           amount: Number(amount),
-          authorization_reference: reference,
-          reason,
+          ...(approved.approval_token
+            ? { approval_token: approved.approval_token }
+            : {}),
         },
         operationKey.current,
       );
+      setConfirmedBy(approved.name || '');
       operationKey.current = newOperationKey();
     } catch (e: any) {
       setError(
@@ -53,7 +59,8 @@ export function RecoveryEditor({
     amount !== '' &&
     Number(amount) >= 0 &&
     Number(amount) <= preview.proposed &&
-    (Number(amount) >= preview.proposed || reason.trim().length >= 3);
+    approver.ready;
+  const approvedBy = saved?.approved_by_name || confirmedBy;
   return (
     <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3 print:hidden">
       <p className="font-semibold text-gray-900">Review debt recovery</p>
@@ -102,23 +109,11 @@ export function RecoveryEditor({
           onChange={(e) => { setAmount(e.target.value); onDirty?.(); }}
         />
       </label>
-      <label className="block text-sm">
-        Authorization reference (optional)
-        <input
-          className={field}
-          value={reference}
-          onChange={(e) => { setReference(e.target.value); onDirty?.(); }}
-          placeholder="e.g. a note or approval reference"
-        />
-      </label>
-      <label className="block text-sm">
-        Reason for reduced or deferred recovery
-        <textarea
-          className={field}
-          value={reason}
-          onChange={(e) => { setReason(e.target.value); onDirty?.(); }}
-        />
-      </label>
+      <ApproverFields
+        state={approver}
+        inputClassName={field}
+        onApproverChange={() => onDirty?.()}
+      />
       {preview.gross != null && (
         <p className="text-sm text-gray-600">
           This shift's earnings: {kes(preview.gross)}, paid in full. Anything
@@ -130,8 +125,11 @@ export function RecoveryEditor({
         Remaining debt:{' '}
         {kes(Math.max(0, preview.outstanding - Number(amount || 0)))}
       </p>
-      {saved?.version === preview.version && Number(amount) === Number(saved.amount) && reference === (saved.authorization_reference || '') && reason === (saved.reason || '') && (
-        <p className="text-sm text-green-800">{savedMessage}</p>
+      {saved?.version === preview.version && Number(amount) === Number(saved.amount) && (
+        <p className="text-sm text-green-800">
+          {savedMessage}
+          {approvedBy ? ` Approved by ${approvedBy}.` : ''}
+        </p>
       )}
       {error && (
         <p role="alert" className="text-sm text-red-700">
@@ -150,7 +148,7 @@ export function RecoveryEditor({
   );
 }
 
-export function PayrollStatement({ line, run, onRecovery }: any) {
+export function PayrollStatement({ line, run, onRecovery, approval }: any) {
   const provisional = run.status === 'calculated';
   return (
     <section className="space-y-4 text-gray-800">
@@ -249,6 +247,7 @@ export function PayrollStatement({ line, run, onRecovery }: any) {
           preview={line.recovery}
           saved={line.recovery_review}
           onSave={onRecovery}
+          approval={approval}
         />
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -273,6 +272,9 @@ export function PayrollStatement({ line, run, onRecovery }: any) {
           {line.recovery_review && (
             <p className="text-xs mt-2 text-gray-600">
               Recovery decision: {kes(line.recovery_review.amount)}.{' '}
+              {line.recovery_review.approved_by_name
+                ? `Approved by ${line.recovery_review.approved_by_name}. `
+                : ''}
               {line.recovery_review.reason}
             </p>
           )}

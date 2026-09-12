@@ -94,7 +94,6 @@ export const closeShift = (shiftId: number, data: {
   deduct_amount?: number | null;
   recovery_decision?: any;
   wage_paid: number;
-  variance_reason?: string;
   reconciliation: { readings_reviewed: true; collections_reviewed: true; entries_reviewed: true };
 }) => api.put(`/shifts/${shiftId}/close`, data);
 export const previewShiftCancellation = (shiftId: number) =>
@@ -304,5 +303,13 @@ export const reverseDebtReceipt = (id: number, reason: string) => financialPost(
 export const setRecoveryLimit = (id: number, percent: number) => api.put(`/payroll/employees/${id}/recovery-limit`, { percent });
 export const reviewEmployeeDebt = (id: number, data: any) => api.put(`/payroll/debts/${id}/review`, data);
 export const previewShiftRecovery = (id: number, wage_paid: number) => api.post(`/shifts/${id}/recovery-preview`, { wage_paid });
+
+// ============ Approvals ============
+// This terminal has no signed-in person, so a decision that needs an approver
+// names an administrator and confirms with their PIN (shared/ui/ApproverConfirm).
+// A module constant, so the approver list isn't refetched on every render.
+export const getApprovers = () => api.get('/auth/approvers');
+export const verifyApproverPin = (body: Record<string, unknown>) => api.post('/auth/verify-pin', body);
+export const desktopApproval = { listApprovers: getApprovers, verifyPin: verifyApproverPin };
 
 export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/${id}/supplement`);

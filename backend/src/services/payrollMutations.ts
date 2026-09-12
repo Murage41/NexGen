@@ -7,6 +7,7 @@ import {
 } from './employeeDebt';
 import { payrollRecoveryPreview } from './payrollDetails';
 import { refreshPayrollLine, refreshPayrollRun } from './payroll';
+import { approvalBindings, resolveApprover } from './approval';
 
 export async function editablePayrollLine(
   runId: number,
@@ -33,6 +34,12 @@ export async function savePayrollRecovery(
   const line = await editablePayrollLine(runId, lineId, db);
   const preview = await payrollRecoveryPreview(lineId, db);
   const amount = validateRecoveryDecision(preview, decision);
+  const approver = await resolveApprover(
+    actorId,
+    decision.approval_token,
+    approvalBindings.recovery(decision),
+    db,
+  );
   await db('payroll_deductions')
     .where({
       payroll_line_id: lineId,
@@ -46,21 +53,25 @@ export async function savePayrollRecovery(
       employee_id: line.employee_id,
       deduction_type: 'staff_debt',
       amount,
-      authorization_reference: String(decision.authorization_reference || '').trim(),
+      // A verified approver, not typed text. Rows written before this carry
+      // whatever was typed; payroll displays read both the same way.
+      authorization_reference: `Approved by ${approver.name}`,
       notes: decision.reason || null,
       status: 'draft',
-      created_by_employee_id: actorId,
+      created_by_employee_id: approver.id,
     });
   await db('payroll_lines')
     .where({ id: lineId })
     .update({
+      // Named fields only: the decision carries an approval token that must
+      // not be stored. approvePayrollRun re-validates version and amount.
       recovery_review: JSON.stringify({
         version: preview.version,
         amount,
         reason: decision.reason || '',
-        authorization_reference: decision.authorization_reference || '',
         outstanding_before: preview.outstanding,
-        reviewed_by: actorId,
+        reviewed_by: approver.id,
+        approved_by_name: approver.name,
         reviewed_at: new Date().toISOString(),
       }),
     });
@@ -96,13 +107,27 @@ export async function addPayrollDeduction(
       'Deduction exceeds remaining unpaid compensation.',
       400,
     );
+  // The token is a credential, not a column: keep it out of the insert.
+  const { approval_token: approvalToken, ...fields } = input;
+  const approver = await resolveApprover(
+    actorId,
+    approvalToken,
+    // Bind the amount exactly as submitted, the same value the PIN prompt saw.
+    approvalBindings.deduction({
+      payroll_line_id: lineId,
+      deduction_type: fields.deduction_type,
+      amount: input.amount,
+    }),
+    db,
+  );
   const [id] = await db('payroll_deductions').insert({
-    ...input,
+    ...fields,
     amount,
     payroll_line_id: lineId,
     employee_id: line.employee_id,
     status: 'draft',
-    created_by_employee_id: actorId,
+    authorization_reference: `Approved by ${approver.name}`,
+    created_by_employee_id: approver.id,
   });
   await db('payroll_lines')
     .where({ id: lineId })

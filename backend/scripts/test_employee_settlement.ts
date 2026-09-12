@@ -95,6 +95,15 @@ async function main() {
       db.transaction((trx) =>
         generateShiftEarnings(source, readings, '2026-09-01T06:00:00Z', trx),
       );
+    // Recovery decisions record a verified approver (services/approval.ts): a
+    // signed-in admin approves as themselves, so the fixture acts as one.
+    const [approverId] = await db('employees').insert({
+      name: 'Approving admin',
+      daily_wage: 0,
+      pin: 'test-only',
+      role: 'admin',
+      active: true,
+    });
     const review = async (runId: number, lineId: number, amount: number) => {
       const p = await payrollRecoveryPreview(lineId, db);
       await db.transaction((trx) =>
@@ -104,10 +113,9 @@ async function main() {
           {
             version: p.version,
             amount,
-            authorization_reference: 'TEST-AUTH',
             reason: 'Agreed instalment',
           },
-          null,
+          approverId,
           trx,
         ),
       );

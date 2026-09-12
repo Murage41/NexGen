@@ -134,17 +134,11 @@ export function validateRecoveryDecision(preview: any, decision: any) {
     throw settlementError(
       `Recovery cannot exceed KES ${preview.proposed.toFixed(2)}.`,
     );
-  // authorization_reference is optional free text (e.g. "per owner's WhatsApp
-  // msg 9/7") - real audit value already comes from req.employee.id being
-  // recorded as approved_by_employee_id, so this is never required.
-  if (
-    amount < preview.proposed &&
-    String(decision.reason || '').trim().length < 3
-  )
-    throw settlementError(
-      'Enter a reason for reducing or deferring recovery.',
-      400,
-    );
+  // Reducing or deferring recovery is routine judgement, not a reversal, so it
+  // needs no written reason. Accountability comes from the approver recorded by
+  // services/approval.ts at the operation that commits the decision - not here:
+  // payroll approval re-validates saved decisions long after their approval
+  // token has expired.
   return amount;
 }
 

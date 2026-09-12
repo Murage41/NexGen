@@ -26,7 +26,6 @@ export default function ShiftDetail() {
   const [recoveryReady, setRecoveryReady] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
-  const [varianceReason, setVarianceReason] = useState('');
   const [reviewAction, setReviewAction] = useState<'reviewed' | 'flagged' | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -111,7 +110,6 @@ export default function ShiftDetail() {
         notes: closeNotes || undefined,
         recovery_decision: recoveryDecision || undefined,
         wage_paid: parseFloat(wagePaid) || 0,
-        variance_reason: varianceReason.trim() || undefined,
         reconciliation: {
           readings_reviewed: true,
           collections_reviewed: true,
@@ -131,7 +129,6 @@ export default function ShiftDetail() {
 
   function openCloseReview() {
     setCloseReview({ readings: false, collections: false, entries: false });
-    setVarianceReason('');
     setCloseError('');
     setCloseWarnings([]);
     setShowCloseModal(true);
@@ -246,11 +243,9 @@ export default function ShiftDetail() {
     + directDrawerPayment
     + totalPayrollPayments;
   const closeVariance = Math.round((closeTotalAccounted - expectedShiftTotal) * 100) / 100;
-  const requiresVarianceReason = Math.abs(closeVariance) >= 50;
   const closeReviewComplete = closeReview.readings
     && closeReview.collections
-    && closeReview.entries
-    && (!requiresVarianceReason || varianceReason.trim().length >= 3);
+    && closeReview.entries;
 
   return (
     <div className="pb-6">
@@ -868,22 +863,11 @@ export default function ShiftDetail() {
               </div>
             </div>
 
-            {requiresVarianceReason && (
-              <div className="mb-4">
-                <label className="text-sm font-medium text-gray-700 mb-1 block">
-                  {closeVariance < 0 ? 'Deficit' : 'Surplus'} reason
-                </label>
-                <textarea value={varianceReason} onChange={(event) => setVarianceReason(event.target.value)} rows={2}
-                  placeholder="Record the verified cause or follow-up action"
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
-              </div>
-            )}
-
-            {/* Notes */}
+            {/* Notes - also where a variance is explained; no separate reason is required */}
             <div className="mb-4">
               <label className="text-sm text-gray-600 mb-1 block">Notes (optional)</label>
-              <input value={closeNotes} onChange={e => setCloseNotes(e.target.value)}
-                placeholder="e.g. Pump 2 had issues..."
+              <textarea value={closeNotes} onChange={e => setCloseNotes(e.target.value)} rows={2}
+                placeholder={closeVariance !== 0 ? `Anything that explains the ${closeVariance < 0 ? 'shortage' : 'surplus'}, or other notes` : 'e.g. Pump 2 had issues...'}
                 className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
             </div>
 

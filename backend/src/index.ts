@@ -8,6 +8,7 @@ import { recomputeAllDipsFromDate } from './services/stockCalculator';
 import { recomputeAllAccountBalances } from './services/accountBalance';
 import { detectDrift } from './services/driftDetector';
 import { assertAuthConfiguration, requireAdmin, requireAuth } from './middleware/requireAdmin';
+import { redactSensitiveValues } from './utils/redact';
 import employeesRouter from './routes/employees';
 import pumpsRouter from './routes/pumps';
 import tanksRouter from './routes/tanks';
@@ -40,17 +41,6 @@ const CONFIGURED_CORS_ORIGINS = new Set(
     .filter(Boolean),
 );
 
-const SENSITIVE_BODY_KEYS = [
-  'pin',
-  'password',
-  'token',
-  'authorization',
-  'secret',
-  'session_secret',
-  'desktop_key',
-  'x-desktop-key',
-];
-
 function isPrivateLanHost(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
@@ -69,20 +59,6 @@ function isAllowedDevOrigin(origin: string): boolean {
   } catch {
     return false;
   }
-}
-
-function redactSensitiveValues(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactSensitiveValues);
-  if (!value || typeof value !== 'object') return value;
-
-  const redacted: Record<string, unknown> = {};
-  for (const [key, nestedValue] of Object.entries(value)) {
-    const lowerKey = key.toLowerCase();
-    redacted[key] = SENSITIVE_BODY_KEYS.some((sensitiveKey) => lowerKey.includes(sensitiveKey))
-      ? '[REDACTED]'
-      : redactSensitiveValues(nestedValue);
-  }
-  return redacted;
 }
 
 const corsOptionsDelegate: CorsOptionsDelegate = (req, callback) => {

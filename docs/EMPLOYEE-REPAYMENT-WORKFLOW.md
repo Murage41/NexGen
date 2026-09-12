@@ -9,19 +9,24 @@ sales commission, litre commission and combinations.
 1. Check the readings, collections and expenses.
 2. Enter **cash actually paid** to the employee. This is money removed from the
    drawer, not the gross wage or the amount you intended to pay.
-3. Review the proposed recovery. It uses the compensation plan pinned to this
-   shift, existing deductions, older confirmed debt and any current shortage.
-4. Enter the authorized recovery amount and its authorization reference. A
-   reduction or deferral needs a reason. Confirm recovery, then close the shift.
+3. Review the proposed recovery. It covers the employee's older confirmed debt
+   and any shortage on this shift, oldest first, within their recovery limit.
+4. Enter the amount being repaid now. Reducing or deferring it needs no reason.
+   On the desktop, choose the approving administrator and enter their PIN; on
+   mobile, the signed-in administrator is the approver. Confirm recovery, then
+   close the shift. Explain a shortage or surplus in the shift notes if it helps;
+   no separate variance reason is required.
 
-The close records the shortage, the recovery allocations and actual wage
-payment together. Confirming a preview alone does not reduce debt. An existing
-deduction is preserved. Unpaid compensation remains available for payroll.
+The close records this shift's shortage and the repayment together, attributed
+to the approver. A repayment is cash the employee hands back separately: it
+never reduces the wage paid and never changes the shift's variance. Confirming
+a preview alone does not reduce debt. Unpaid compensation remains available for
+payroll.
 
-Example: a shift earns KES 800, the employee receives KES 500, and KES 300 is
-recovered from confirmed debt. Cash outflow is KES 500; compensation settled is
-KES 800. If KES 800 was actually paid, there is no wage left to withhold.
-Do not lower the recorded cash payment unless that is what actually happened.
+Example: an employee owes KES 300 from an earlier shift and is KES 120 short
+tonight, so the proposal is KES 420. If they hand back KES 250, the close
+records the KES 120 shortage, applies the KES 250 to the oldest debt first and
+leaves KES 170 owing. Their wage and tonight's variance are unchanged.
 
 ## Weekly, fortnightly and monthly payroll
 
@@ -30,8 +35,9 @@ Do not lower the recorded cash payment unless that is what actually happened.
 3. Check every included shift, the historical plan version and component amounts.
 4. Review debt recovery. The proposal pays confirmed debts oldest first and is
    limited by unpaid compensation, other deductions and the employee's recovery
-   limit. Record an authorization reference for a positive recovery, or a reason
-   for reducing/defering the proposal.
+   limit. Enter the amount to recover; reducing or deferring the proposal needs
+   no reason. On the desktop, choose the approving administrator and enter their
+   PIN, then save the decision.
 5. Approve payroll. This posts the approved debt offset; the remaining net wages
    can then be paid in one or more installments.
 
@@ -42,8 +48,8 @@ are recognized once.
 
 The recovery percentage is a configurable operational limit, initially 100% of
 available unpaid compensation. It does not establish authorization to deduct.
-Use the agreed reference and limit for the employee concerned. Pending and
-disputed debts are excluded from recovery until reviewed and confirmed.
+Use the agreed limit for the employee concerned. Pending and disputed debts are
+excluded from recovery until reviewed and confirmed.
 
 ## Separate repayments
 

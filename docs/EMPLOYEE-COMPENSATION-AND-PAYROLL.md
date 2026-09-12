@@ -110,7 +110,10 @@ Void an incorrect run before calculating a corrected replacement.
 
 Deductions are added while a run is calculated and still editable.
 
-- Staff debt deductions require an authorization reference.
+- Every deduction records the administrator who approved it. On the desktop,
+  choose the approver and enter their PIN; on mobile, the signed-in
+  administrator approves. Staff debt is taken through debt recovery, not as a
+  manual deduction.
 - Recovery is reviewed explicitly and cannot exceed compensation remaining
   after actual payments and other deductions.
 - A staff debt deduction cannot exceed the employee's outstanding staff debt.

@@ -78,7 +78,6 @@ export const closeShift = (shiftId: number, data: {
   deduct_amount?: number | null;
   recovery_decision?: any;
   wage_paid: number;
-  variance_reason?: string;
   reconciliation: { readings_reviewed: true; collections_reviewed: true; entries_reviewed: true };
 }) => api.put(`/shifts/${shiftId}/close`, data);
 export const previewShiftCancellation = (shiftId: number) =>

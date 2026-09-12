@@ -13,6 +13,7 @@ import {
   settlementError,
   syncEmployeeDebt,
 } from './employeeDebt';
+import { approvalBindings, resolveApprover, type Approver } from './approval';
 
 // Shift-close debt recovery is always a repayment, never wage withholding: the
 // employee is paid their full earnings (whatever is entered as wage_paid on
@@ -124,8 +125,18 @@ export async function postShiftRecovery(
 ) {
   const preview = await shiftRecoveryPreview(shift, readings, variance, db);
   let recovery = 0;
+  let approver: Approver | null = null;
   if (preview.recoverable > 0 || decision) {
     recovery = validateRecoveryDecision(preview, decision);
+    // Every recovery decision - including "recover nothing" - is attributed to
+    // a verified administrator. On the desktop this is the only attribution the
+    // shift gets, since the terminal itself carries no identity.
+    approver = await resolveApprover(
+      actorId,
+      decision.approval_token,
+      approvalBindings.recovery(decision),
+      db,
+    );
   }
 
   // Write this shift's shortfall as standing debt BEFORE allocating, so a
@@ -154,7 +165,6 @@ export async function postShiftRecovery(
       .where({ employee_id: shift.employee_id, type: 'employee' })
       .first();
     if (!account) throw settlementError('There is no employee debt to repay.');
-    const reference = String(decision.authorization_reference || '').trim();
     const [paymentId] = await db('credit_payments').insert({
       account_id: account.id,
       credit_id: null,
@@ -164,11 +174,9 @@ export async function postShiftRecovery(
       date: shift.shift_date,
       // Intentionally no shift_id - see the file-level comment above. This is
       // a personal repayment decided at close, not drawer cash for this shift.
-      notes: reference
-        ? `Shift #${shift.id} close recovery: ${reference}`
-        : `Shift #${shift.id} close recovery`,
+      notes: `Shift #${shift.id} close recovery, approved by ${approver!.name}`,
       status: 'posted',
-      created_by_employee_id: actorId,
+      created_by_employee_id: approver!.id,
     });
     await allocateEmployeeDebt(
       Number(shift.employee_id),
@@ -181,11 +189,19 @@ export async function postShiftRecovery(
   await db('shifts')
     .where({ id: shift.id })
     .update({
+      // Named fields only - never spread the decision: it carries the approval
+      // token, which stands in for a PIN and must not be stored.
       recovery_review: decision
         ? JSON.stringify({
-            ...decision,
+            version: decision.version,
+            amount: recovery,
+            ...(decision.reason ? { reason: decision.reason } : {}),
+            ...(decision.authorization_reference
+              ? { authorization_reference: decision.authorization_reference }
+              : {}),
             outstanding_before: preview.outstanding,
-            approved_by: actorId,
+            approved_by: approver?.id ?? null,
+            approved_by_name: approver?.name ?? null,
             approved_at: new Date().toISOString(),
           })
         : null,

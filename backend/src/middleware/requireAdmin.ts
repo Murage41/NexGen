@@ -87,6 +87,49 @@ export function verifyToken(token: string): { id: number; role: string; ts: numb
   }
 }
 
+// Approval tokens prove that a specific admin re-entered their PIN for one
+// specific decision (see services/approval.ts). They are signed under their own
+// domain, so a session token can never be presented as an approval or the
+// reverse, and they expire quickly because they stand in for a PIN.
+export const APPROVAL_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+function approvalSignature(payload: string): string {
+  return crypto.createHmac('sha256', getSessionSecret()).update(`approval.${payload}`).digest('hex');
+}
+
+export function generateApprovalToken(approverId: number, binding: string): string {
+  const payload = Buffer.from(JSON.stringify({ approver: approverId, binding, ts: Date.now() })).toString('base64');
+  return `${payload}.${approvalSignature(payload)}`;
+}
+
+export function verifyApprovalToken(token: unknown): { approver: number; binding: string; ts: number } | null {
+  try {
+    if (typeof token !== 'string') return null;
+    const dotIndex = token.lastIndexOf('.');
+    if (dotIndex === -1) return null;
+
+    const payload = token.slice(0, dotIndex);
+    const sig = token.slice(dotIndex + 1);
+    if (!timingSafeStringEqual(sig, approvalSignature(payload))) return null;
+
+    const decoded = JSON.parse(Buffer.from(payload, 'base64').toString());
+    if (
+      typeof decoded.approver !== 'number' ||
+      typeof decoded.binding !== 'string' ||
+      typeof decoded.ts !== 'number'
+    ) {
+      return null;
+    }
+
+    if (decoded.ts > Date.now() + 5 * 60 * 1000) return null;
+    if (Date.now() - decoded.ts > APPROVAL_TOKEN_TTL_MS) return null;
+
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (isValidDesktopKey(req.headers['x-desktop-key'])) {
     (req as any).employee = { id: 0, role: 'admin' };

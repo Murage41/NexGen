@@ -103,19 +103,14 @@ export const calculatePayrollRunSchema = z.object({
   message: 'period_end must be on or after period_start',
 });
 
+// Who authorized a deduction is a verified approver (services/approval.ts), not
+// a typed reference. staff_debt stays in the enum only so addPayrollDeduction can
+// redirect it to debt recovery with a clear message.
 export const createPayrollDeductionSchema = z.object({
   deduction_type: z.enum(['staff_debt', 'statutory', 'advance', 'manual']),
   amount: z.number().finite().positive('amount must be greater than zero'),
-  authorization_reference: z.string().trim().max(200).nullish().optional(),
   notes: z.string().trim().max(1000).nullish().optional(),
-}).superRefine((data, ctx) => {
-  if (data.deduction_type === 'staff_debt' && !data.authorization_reference) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['authorization_reference'],
-      message: 'authorization reference is required for a staff debt deduction',
-    });
-  }
+  approval_token: z.string().max(1000).optional(),
 });
 
 export const createPayrollPaymentSchema = z.object({
@@ -151,7 +146,11 @@ export const openShiftSchema = z.object({
 });
 
 export const closeShiftSchema = z.object({
-  recovery_decision: z.object({ version: z.string().length(64), amount: z.number().finite().min(0), authorization_reference: z.string().max(200).optional(), reason: z.string().max(1000).optional() }).optional(),
+  // This validator strips unknown keys, so approval_token must be listed here or
+  // every desktop recovery would arrive without its approval.
+  // authorization_reference, reason and variance_reason are no longer collected;
+  // they stay accepted so a phone still running a cached older bundle can close.
+  recovery_decision: z.object({ version: z.string().length(64), amount: z.number().finite().min(0), approval_token: z.string().max(1000).optional(), authorization_reference: z.string().max(200).optional(), reason: z.string().max(1000).optional() }).optional(),
   notes: optionalText(),
   deduct_amount: z.number().min(0, 'deduct_amount cannot be negative').nullish().optional(),
   wage_paid: z.number().min(0, 'wage_paid cannot be negative'),

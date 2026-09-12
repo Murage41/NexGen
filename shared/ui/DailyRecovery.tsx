@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RecoveryEditor } from './PayrollStatement';
+import { RecoveryEditor, kes } from './PayrollStatement';
 
 export function DailyRecovery({
   shiftId,
@@ -8,6 +8,7 @@ export function DailyRecovery({
   onDecision,
   onReady,
   revision,
+  approval,
 }: any) {
   const [preview, setPreview] = useState<any>(null);
   const [error, setError] = useState('');
@@ -52,11 +53,22 @@ export function DailyRecovery({
     );
   if (!preview)
     return <p className="text-sm p-3">Checking compensation and debt…</p>;
+  // Nothing to decide, so nothing to approve: don't show a PIN prompt. The
+  // close needs no recovery decision in this case (onReady above is true).
+  if (preview.recoverable <= 0)
+    return (
+      <p className="text-sm text-gray-600 p-3 print:hidden">
+        {preview.outstanding > 0
+          ? `${kes(preview.outstanding)} is outstanding, but none is confirmed for recovery yet.`
+          : 'No employee debt to recover at this close.'}
+      </p>
+    );
   return (
     <RecoveryEditor
       key={`${preview.version}:${refresh}`}
       preview={preview}
       saved={decision}
+      approval={approval}
       label="Confirm recovery for this close"
       savedMessage="Recovery confirmed. It will be recorded when this shift closes."
       onSave={async (value: any) => {

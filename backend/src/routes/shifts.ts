@@ -2094,14 +2094,9 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         payrollPayments,
       });
       const { variance } = accountability;
-      // Materiality threshold: trivial rounding shouldn't force an explanation,
-      // a real shortage/surplus should. KES 50 chosen as a real-but-small bar.
-      const VARIANCE_REASON_THRESHOLD_KES = 50;
-      if (Math.abs(variance) >= VARIANCE_REASON_THRESHOLD_KES && String(varianceReason || '').trim().length < 3) {
-        const err: any = new Error(`A variance reason is required for a variance of KES ${Math.abs(variance).toFixed(2)} or more.`);
-        err.httpStatus = 400;
-        throw err;
-      }
+      // No written reason is required for a variance: closing a shift is routine
+      // entry, and the shift notes carry any explanation. Reasons stay mandatory
+      // only where something already posted is reversed, voided or amended.
 
       // Settle debt only once variance is final. postShiftRecovery writes this
       // shift's shortfall as standing debt and then allocates any confirmed
@@ -2225,9 +2220,7 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         total_accounted: accountability.total_accounted,
         variance,
         variance_type: variance < 0 ? 'deficit' : variance > 0 ? 'surplus' : 'balanced',
-        // Store whatever was actually provided, regardless of threshold - a
-        // voluntarily-entered reason for a below-threshold variance is still
-        // worth keeping, not discarding.
+        // No longer collected; kept for past shifts and for older cached clients.
         variance_reason: String(varianceReason || '').trim() || null,
         approved_by_employee_id: Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
         approved_by_role: req.employee?.role || 'admin',
