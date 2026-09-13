@@ -4,9 +4,26 @@ import { employeeDebtHistory } from '../services/employeePay';
 import { getKenyaDate } from '../utils/timezone';
 import { requireAdmin, requireAuth } from '../middleware/requireAdmin';
 import { paymentHttpStatus, recordMoneyAccountPayment } from '../services/receivablePayments';
+import { validate } from '../middleware/validate';
+import { createCreditAccountSchema, updateCreditAccountSchema } from '../schemas';
+import { evaluateCreditLimits } from '../services/creditLimits';
 
 const router = Router();
 router.use(requireAuth);
+
+const hasLimits = (account: any) => account.credit_limit != null || account.credit_age_limit_days != null;
+
+// Shift credit entry still matches customers by name for cached clients, so two
+// customers may not share a name (ignoring case and surrounding spaces).
+async function nameTaken(name: string, exceptId: number | null = null) {
+  const clash = await db('credit_accounts')
+    .where({ type: 'customer' })
+    .whereNull('deleted_at')
+    .whereRaw('LOWER(TRIM(name)) = ?', [name.trim().toLowerCase()])
+    .modify((q) => { if (exceptId) q.whereNot({ id: exceptId }); })
+    .first('id');
+  return Boolean(clash);
+}
 
 // GET / - List all credit accounts with running balance
 router.get('/', async (req, res) => {
@@ -27,6 +44,9 @@ router.get('/', async (req, res) => {
       'ca.employee_id',
       'ca.balance as outstanding_balance',
       'ca.created_at',
+      'ca.kra_pin',
+      'ca.credit_limit',
+      'ca.credit_age_limit_days',
     );
 
     if (type) query = query.where('ca.type', type);
@@ -35,6 +55,16 @@ router.get('/', async (req, res) => {
     query = query.orderBy('ca.balance', 'desc');
 
     const accounts = await query;
+    const isAdmin = (req as any).employee?.role === 'admin';
+    for (const account of accounts) {
+      // Limit status only for customers that have limits; everyone else has no
+      // rule to report, and shift screens load this list on every visit.
+      if (account.type === 'customer' && hasLimits(account)) {
+        account.credit_check = await evaluateCreditLimits(account, 0, db);
+      }
+      // A tax identifier isn't needed to serve a customer at the pump.
+      if (!isAdmin) delete account.kra_pin;
+    }
     res.json({ success: true, data: accounts });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -80,13 +110,30 @@ router.get('/:id', async (req, res) => {
       debtReviews = history.reviews;
     }
 
+    let creditCheck = null;
+    let limitOverrides: any[] = [];
+    const isAdmin = (req as any).employee?.role === 'admin';
+    if (!isAdmin) delete account.kra_pin;
+    if (account.type === 'customer') {
+      creditCheck = await evaluateCreditLimits(account, 0, db);
+      // Who approved which override is for administrators.
+      if (isAdmin) limitOverrides = (await db('credit_limit_overrides as o')
+        .leftJoin('employees as recorder', 'recorder.id', 'o.recorded_by_employee_id')
+        .where('o.account_id', account.id)
+        .orderBy('o.created_at', 'desc')
+        .orderBy('o.id', 'desc')
+        .limit(50)
+        .select('o.*', 'recorder.name as recorded_by_name'))
+        .map((row: any) => ({ ...row, breaches: JSON.parse(row.breaches || '[]') }));
+    }
+
     res.json({
       success: true,
       data: {
         ...account,
         outstanding_balance: Number(account.balance || 0),
         ...(account.type === 'customer'
-          ? { credits, payments, customer_invoices: customerInvoices }
+          ? { credits, payments, customer_invoices: customerInvoices, credit_check: creditCheck, limit_overrides: limitOverrides }
           : { debts, debt_history: debtHistory, debt_reviews: debtReviews }),
       },
     });
@@ -96,29 +143,25 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST / - Create a new customer credit account (admin)
-// Used primarily to onboard invoice-mode customers like Diwafa before their
-// first fuel-up. Money-mode accounts are still auto-created on shift credits.
-router.post('/', requireAdmin, async (req, res) => {
+// The only way customers come into existence: shift credit entry is
+// select-only. Limits are optional; blank means no rule.
+router.post('/', requireAdmin, validate(createCreditAccountSchema), async (req, res) => {
   try {
-    const { name, phone, billing_mode, payment_terms_days } = req.body;
-    if (!name || typeof name !== 'string' || !name.trim()) {
-      return res.status(400).json({ success: false, error: 'name is required' });
-    }
-    const mode = billing_mode === 'invoice' ? 'invoice' : 'money';
-    const termsDays = Number(payment_terms_days ?? 0);
-    if (!Number.isInteger(termsDays) || termsDays < 0 || termsDays > 365) {
-      return res.status(400).json({
-        success: false,
-        error: 'payment_terms_days must be a whole number from 0 to 365',
-      });
+    const { name, phone, kra_pin, billing_mode, payment_terms_days, credit_limit, credit_age_limit_days } = req.body;
+    if (await nameTaken(name)) {
+      return res.status(409).json({ success: false, error: `A customer named "${name}" already exists.` });
     }
 
     const [id] = await db('credit_accounts').insert({
-      name: name.trim(),
-      phone: phone || null,
+      name,
+      phone,
+      kra_pin: kra_pin ?? null,
       type: 'customer',
-      billing_mode: mode,
-      payment_terms_days: mode === 'invoice' ? termsDays : 0,
+      billing_mode,
+      // Money credits fall due the day they're given; terms apply to invoices.
+      payment_terms_days: billing_mode === 'invoice' ? payment_terms_days : 0,
+      credit_limit: credit_limit ?? null,
+      credit_age_limit_days: credit_age_limit_days ?? null,
       balance: 0,
     });
     const account = await db('credit_accounts').where({ id }).first();
@@ -134,7 +177,7 @@ router.post('/', requireAdmin, async (req, res) => {
 //     (mixing models on history is confusing; open a new account instead)
 //   invoice → money: blocked if unbilled invoice_consumption or unpaid
 //     customer_invoices exist on this account
-router.put('/:id', requireAdmin, async (req, res) => {
+router.put('/:id', requireAdmin, validate(updateCreditAccountSchema), async (req, res) => {
   try {
     const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
@@ -142,20 +185,26 @@ router.put('/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Only customer accounts are editable here' });
     }
 
-    const { name, phone, billing_mode, payment_terms_days } = req.body;
+    const { name, phone, kra_pin, billing_mode, payment_terms_days, credit_limit, credit_age_limit_days } = req.body;
     const update: any = {};
-    if (name !== undefined) update.name = String(name).trim();
-    if (phone !== undefined) update.phone = phone || null;
-    if (payment_terms_days !== undefined) {
-      const termsDays = Number(payment_terms_days);
-      if (!Number.isInteger(termsDays) || termsDays < 0 || termsDays > 365) {
-        return res.status(400).json({
-          success: false,
-          error: 'payment_terms_days must be a whole number from 0 to 365',
-        });
+    if (name !== undefined && name !== account.name) {
+      if (await nameTaken(name, account.id)) {
+        return res.status(409).json({ success: false, error: `A customer named "${name}" already exists.` });
       }
-      update.payment_terms_days = termsDays;
+      update.name = name;
     }
+    if (phone !== undefined) {
+      // Customers from before phones were required may be edited without one,
+      // but a number on file can be changed, not removed.
+      if (!phone && account.phone) {
+        return res.status(400).json({ success: false, error: 'phone is required' });
+      }
+      update.phone = phone || null;
+    }
+    if (kra_pin !== undefined) update.kra_pin = kra_pin;
+    if (credit_limit !== undefined) update.credit_limit = credit_limit;
+    if (credit_age_limit_days !== undefined) update.credit_age_limit_days = credit_age_limit_days;
+    if (payment_terms_days !== undefined) update.payment_terms_days = payment_terms_days;
 
     if (billing_mode !== undefined && billing_mode !== account.billing_mode) {
       if (billing_mode !== 'money' && billing_mode !== 'invoice') {

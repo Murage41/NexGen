@@ -17,6 +17,9 @@ Money received for an invoice is an invoice payment. It is deliberately
 separate from normal credit/debt payments and is not counted as a shift debt
 receipt when an admin records it outside the shift.
 
+Both kinds of customer are added from Credits, and either can have a credit
+limit and repayment limit. See [CREDIT-CUSTOMERS-AND-LIMITS.md](CREDIT-CUSTOMERS-AND-LIMITS.md).
+
 ## Record Consumption During a Shift
 
 1. Open the active shift and choose **Credits**.
@@ -29,6 +32,9 @@ receipt when an admin records it outside the shift.
 The backend checks the customer mode, shift, fuel type, pump/source, tank, and
 available shift litres. It records the shift retail value for operational
 accountability. The later invoice may use a different agreed price.
+
+If the entry would break the customer's credit or repayment limit, nothing is
+recorded until an administrator approves it on that screen.
 
 Do not enter the same issue under both normal credit and invoice consumption.
 

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { CreditCard, Phone, ChevronRight, Trash2, Users, Briefcase, ArrowDownCircle, ArrowUpCircle, Banknote } from 'lucide-react';
+import { CreditCard, Phone, ChevronRight, Trash2, Users, Briefcase, ArrowDownCircle, ArrowUpCircle, Banknote, UserPlus, Pencil, X } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount } from '../services/api';
+import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../shared/ui/CustomerAccountForm';
 import { getKenyaDate } from '../utils/timezone';
 
 type FilterTab = 'all' | 'customer' | 'employee';
@@ -20,6 +21,8 @@ export default function Credits() {
   const [paymentForm, setPaymentForm] = useState({ amount: '', payment_method: 'cash', notes: '' });
   const [paymentError, setPaymentError] = useState('');
   const [detailError, setDetailError] = useState('');
+  // Admin customer form: null when closed, account null when adding.
+  const [customerForm, setCustomerForm] = useState<{ account: any | null } | null>(null);
 
   const fmt = (n: number) => `KES ${Number(n).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
@@ -47,6 +50,35 @@ export default function Credits() {
       setLoadingDetail(false);
     }
   }
+
+  // Customers are created here (or on the desktop), never typed in at a shift.
+  // Errors propagate to the form, which shows them.
+  async function saveCustomer(payload: Record<string, unknown>) {
+    const editing = customerForm?.account;
+    if (editing) await updateCreditAccount(editing.id, payload);
+    else await createCreditAccount(payload);
+    setCustomerForm(null);
+    await loadAccounts();
+    if (editing && selectedAccount?.id === editing.id) await openAccount(editing);
+  }
+
+  const customerFormModal = customerForm && (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-gray-800">{customerForm.account ? 'Edit customer' : 'Add customer'}</h2>
+          <button onClick={() => setCustomerForm(null)} className="p-1 text-gray-400"><X size={20} /></button>
+        </div>
+        <CustomerAccountForm
+          key={customerForm.account?.id ?? 'new'}
+          account={customerForm.account}
+          onSubmit={saveCustomer}
+          onCancel={() => setCustomerForm(null)}
+          inputClassName="w-full border border-gray-300 rounded-lg p-3 text-sm bg-white"
+        />
+      </div>
+    </div>
+  );
 
   function openAccountPayment(account: any) {
     setPaymentAccount(account);
@@ -112,10 +144,16 @@ export default function Credits() {
 
     return (
       <div className="pb-6">
+        {customerFormModal}
         <PageHeader
           title={acct.name}
           back
           onBack={() => setSelectedAccount(null)}
+          right={isAdmin && isCustomer ? (
+            <button onClick={() => setCustomerForm({ account: acct })} className="p-2 text-gray-600" title="Edit customer">
+              <Pencil size={18} />
+            </button>
+          ) : undefined}
         />
 
         {/* Account summary card */}
@@ -137,6 +175,11 @@ export default function Credits() {
               {fmt(acct.outstanding_balance)}
             </p>
           </div>
+          {isCustomer && (
+            <div className="border-t pt-3 mt-1 text-sm">
+              <CreditLimitDetails account={acct} />
+            </div>
+          )}
           {detailError && <p className="text-sm text-red-600 text-center mb-2">{detailError}</p>}
           <div className="flex gap-2 mt-2">
             {isAdmin && isCustomer && Number(acct.outstanding_balance) > 0 && (
@@ -327,7 +370,16 @@ export default function Credits() {
 
   return (
     <div className="pb-6">
-      <PageHeader title="Credits" back />
+      {customerFormModal}
+      <PageHeader
+        title="Credits"
+        back
+        right={isAdmin ? (
+          <button onClick={() => setCustomerForm({ account: null })} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium">
+            <UserPlus size={16} /> Add
+          </button>
+        ) : undefined}
+      />
 
       {/* Summary card */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
@@ -379,6 +431,7 @@ export default function Credits() {
                     <span>{a.phone}</span>
                   </div>
                 )}
+                {a.type === 'customer' && <div className="mt-1"><CreditLimitSummary account={a} /></div>}
               </div>
               <div className="flex items-center gap-2 ml-3">
                 <p className={`text-base font-bold ${Number(a.outstanding_balance) > 0 ? 'text-red-600' : 'text-green-600'}`}>

@@ -59,17 +59,29 @@ async function main() {
     const verify = (body: any, headers: Record<string, string> = desktop) =>
       call('/auth/verify-pin', { method: 'POST', headers, body });
 
-    assert.equal((await call('/auth/approvers')).status, 401);
+    const attendantSession = { Authorization: `Bearer ${auth.generateToken(attendant, 'attendant')}` };
+    assert.equal((await call('/auth/approvers')).status, 401, 'the public cannot list approvers');
     assert.equal(
-      (await call('/auth/approvers', { headers: { Authorization: `Bearer ${auth.generateToken(attendant, 'attendant')}` } })).status,
-      403,
-      'attendants cannot list approvers',
+      (await call('/auth/approvers', { headers: attendantSession })).status,
+      200,
+      'an attendant can list approvers, to ask one to confirm a credit override',
     );
     const approvers = (await (await call('/auth/approvers', { headers: desktop })).json()).data;
     assert.deepEqual(approvers.map((a: any) => a.name), ['Manager Admin', 'Owner Admin'], 'only active admins');
     assert(approvers.every((a: any) => Object.keys(a).sort().join() === 'id,name'), 'approvers expose id and name only');
 
-    assert.equal((await verify({ ...subject, employee_id: owner, pin: '4821' }, {})).status, 401, 'verify-pin needs the desktop key or an admin session');
+    assert.equal((await verify({ ...subject, employee_id: owner, pin: '4821' }, {})).status, 401, 'verify-pin needs a signed-in caller');
+    assert.equal(
+      (await verify({ ...subject, employee_id: owner, pin: '4821' }, attendantSession)).status,
+      403,
+      'an attendant cannot request a recovery approval',
+    );
+    const overrideSubject = { purpose: 'credit_override', account_id: 1, shift_id: 1, amount: 500 };
+    assert.equal(
+      (await verify({ ...overrideSubject, employee_id: owner, pin: '4821' }, attendantSession)).status,
+      200,
+      'an attendant can have an admin confirm a credit override on their phone',
+    );
     assert.equal((await verify({ ...subject, purpose: 'payout', employee_id: owner, pin: '4821' })).status, 400, 'unknown purpose');
     assert.equal((await verify({ purpose: 'recovery', amount: 400, employee_id: owner, pin: '4821' })).status, 400, 'decision not described');
     assert.equal((await verify({ ...subject, employee_id: attendant, pin: '9999' })).status, 403, 'an attendant cannot approve');
@@ -108,7 +120,12 @@ async function main() {
     // ---- B. Approver resolution rules ----
     const binding400 = approvalBindings.recovery({ version, amount: 400 });
     assert.deepEqual(await resolveApprover(owner, undefined, binding400, db), { id: owner, name: 'Owner Admin' }, 'a signed-in admin approves as themselves');
-    await assert.rejects(() => resolveApprover(attendant, undefined, binding400, db), /active administrator/);
+    await assert.rejects(() => resolveApprover(attendant, undefined, binding400, db), /administrator must approve/, 'an attendant cannot approve for themselves');
+    assert.deepEqual(
+      await resolveApprover(attendant, auth.generateApprovalToken(owner, binding400), binding400, db),
+      { id: owner, name: 'Owner Admin' },
+      "an attendant's session can carry an admin's PIN approval",
+    );
     await assert.rejects(() => resolveApprover(null, undefined, binding400, db), /Select the approving administrator/);
     await assert.rejects(
       () => resolveApprover(null, token, approvalBindings.recovery({ version, amount: 0 }), db),

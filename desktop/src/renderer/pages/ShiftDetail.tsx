@@ -1,4 +1,5 @@
 import { DailyRecovery } from '../../../../shared/ui/DailyRecovery';
+import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/CreditLimitPrompt';
 import { desktopApproval, previewShiftRecovery } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
@@ -65,7 +66,9 @@ export default function ShiftDetail() {
   const [newExpense, setNewExpense] = useState({ category: '', description: '', amount: '' });
   const [newCredit, setNewCredit] = useState<{ customer_name: string; customer_phone: string; amount: string; description: string; account_id: number | null }>({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
   const [creditAccounts, setCreditAccounts] = useState<any[]>([]);
-  const [creditMode, setCreditMode] = useState<'existing' | 'new'>('existing');
+  // A credit or fuel-on-account entry the server held back for a limit, awaiting
+  // an administrator's approval. Resubmitted exactly as attempted.
+  const [creditBreach, setCreditBreach] = useState<{ kind: 'credit' | 'consumption'; details: any; payload: any } | null>(null);
   const [creditSearchQuery, setCreditSearchQuery] = useState('');
   const [showCreditDropdown, setShowCreditDropdown] = useState(false);
   // Phase 3B: invoice-mode customers don't get money credits — they accrue litres.
@@ -139,6 +142,8 @@ export default function ShiftDetail() {
   }
 
   useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
+  // An approval covers exactly what was attempted; editing the entry withdraws it.
+  useEffect(() => { setCreditBreach(null); }, [newCredit.account_id, newCredit.amount, newInvoice.fuel_type, newInvoice.litres]);
 
   useEffect(() => {
     const params = Object.fromEntries(new URLSearchParams(location.search));
@@ -479,16 +484,17 @@ export default function ShiftDetail() {
     }
   }
 
-  async function handleAddCredit() {
-    if (!newCredit.customer_name || !newCredit.amount) return;
-    const payload: any = {
-      customer_name: newCredit.customer_name,
+  function handleAddCredit() {
+    if (!newCredit.account_id || !newCredit.amount) return;
+    return submitCredit({
+      account_id: newCredit.account_id,
       amount: parseFloat(newCredit.amount),
       description: newCredit.description,
-    };
-    if (creditMode === 'new' && newCredit.customer_phone) {
-      payload.customer_phone = newCredit.customer_phone;
-    }
+    });
+  }
+
+  // An approved retry (limit_override) rethrows, so the approval prompt shows why.
+  async function submitCredit(payload: any) {
     setCreditError('');
     try {
       await addShiftCredit(
@@ -497,12 +503,15 @@ export default function ShiftDetail() {
         pendingOperationKey(creditOperation, 'shift-credit', payload),
       );
       creditOperation.current = null;
+      setCreditBreach(null);
       setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
       setCreditSearchQuery('');
-      setCreditMode('existing');
       setSelectedBillingMode(null);
       await loadShift();
     } catch (err: any) {
+      if (payload.limit_override) throw err;
+      const breach = isCreditLimitBreach(err);
+      if (breach) return setCreditBreach({ kind: 'credit', details: breach, payload });
       setCreditError(err?.response?.data?.error || err?.message || 'Failed to add credit');
     }
   }
@@ -526,25 +535,33 @@ export default function ShiftDetail() {
       setCreditError('Select the pump/nozzle that supplied these litres.');
       return;
     }
+    return submitInvoice({
+      account_id: newCredit.account_id,
+      fuel_type: newInvoice.fuel_type,
+      litres: litresNum,
+      pump_id: selectedPumpId,
+    });
+  }
+
+  async function submitInvoice(payload: any) {
+    setCreditError('');
     try {
-      const payload = {
-        account_id: newCredit.account_id,
-        fuel_type: newInvoice.fuel_type,
-        litres: litresNum,
-        pump_id: selectedPumpId,
-      };
       await addInvoiceConsumption(
         parseInt(id!),
         payload,
         pendingOperationKey(invoiceOperation, 'invoice-consumption', payload),
       );
       invoiceOperation.current = null;
+      setCreditBreach(null);
       setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
       setNewCredit({ customer_name: '', customer_phone: '', amount: '', description: '', account_id: null });
       setCreditSearchQuery('');
       setSelectedBillingMode(null);
       await loadShift();
     } catch (err: any) {
+      if (payload.limit_override) throw err;
+      const breach = isCreditLimitBreach(err);
+      if (breach) return setCreditBreach({ kind: 'consumption', details: breach, payload });
       setCreditError(err?.response?.data?.error || err?.message || 'Failed to record consumption');
     }
   }
@@ -1346,8 +1363,7 @@ export default function ShiftDetail() {
             <div className="flex gap-2 items-end">
               <div className="flex-1 relative">
                 <label className="block text-xs text-gray-500 mb-1">Customer</label>
-                {creditMode === 'existing' ? (
-                  <div className="relative">
+                <div className="relative">
                     <input
                       value={creditSearchQuery}
                       onChange={e => {
@@ -1365,6 +1381,7 @@ export default function ShiftDetail() {
                     {showCreditDropdown && (
                       <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                         {creditAccounts
+                          .filter(a => a.type === 'customer')
                           .filter(a => !creditSearchQuery || a.name?.toLowerCase().includes(creditSearchQuery.toLowerCase()))
                           .map(a => (
                             <button
@@ -1390,52 +1407,13 @@ export default function ShiftDetail() {
                               </span>
                             </button>
                           ))}
-                        <button
-                          type="button"
-                          className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm text-blue-600 font-medium border-t"
-                          onMouseDown={e => {
-                            e.preventDefault();
-                            setCreditMode('new');
-                            setCreditSearchQuery('');
-                            setNewCredit({ ...newCredit, customer_name: '', customer_phone: '', account_id: null });
-                            // New customers are always money-mode (invoice-mode
-                            // accounts are onboarded via the Credit Accounts page).
-                            setSelectedBillingMode('money');
-                            setShowCreditDropdown(false);
-                          }}
-                        >
-                          + Add new customer
-                        </button>
+                        {/* Customers are added in Credit Accounts, not typed in here. */}
+                        <p className="px-3 py-2 text-xs text-gray-500 border-t">
+                          Customer not listed? Add them in Credit Accounts first.
+                        </p>
                       </div>
                     )}
                   </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      value={newCredit.customer_name}
-                      onChange={e => setNewCredit({ ...newCredit, customer_name: e.target.value })}
-                      placeholder="Customer name"
-                      className="flex-1 border border-gray-300 rounded p-2 text-sm"
-                    />
-                    <input
-                      value={newCredit.customer_phone}
-                      onChange={e => setNewCredit({ ...newCredit, customer_phone: e.target.value })}
-                      placeholder="Phone (optional)"
-                      className="w-36 border border-gray-300 rounded p-2 text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCreditMode('existing');
-                        setCreditSearchQuery('');
-                        setNewCredit({ ...newCredit, customer_name: '', customer_phone: '' });
-                      }}
-                      className="text-xs text-blue-600 hover:underline whitespace-nowrap"
-                    >
-                      Use existing
-                    </button>
-                  </div>
-                )}
               </div>
               {selectedBillingMode === 'invoice' ? (
                 <>
@@ -1505,6 +1483,22 @@ export default function ShiftDetail() {
               </p>
             )}
             {creditError && <p className="text-sm text-red-600">{creditError}</p>}
+            {creditBreach && (
+              <CreditLimitPrompt
+                key={JSON.stringify(creditBreach.payload)}
+                breach={creditBreach.details}
+                approval={desktopApproval}
+                purpose={creditBreach.kind === 'credit' ? 'credit_override' : 'consumption_override'}
+                subject={creditBreach.kind === 'credit'
+                  ? { account_id: creditBreach.payload.account_id, shift_id: Number(id), amount: creditBreach.payload.amount }
+                  : { account_id: creditBreach.payload.account_id, shift_id: Number(id), fuel_type: creditBreach.payload.fuel_type, litres: creditBreach.payload.litres }}
+                onApprove={(fields) => creditBreach.kind === 'credit'
+                  ? submitCredit({ ...creditBreach.payload, ...fields })
+                  : submitInvoice({ ...creditBreach.payload, ...fields })}
+                onCancel={() => setCreditBreach(null)}
+                actionLabel={creditBreach.kind === 'credit' ? 'Approve and add credit' : 'Approve and record litres'}
+              />
+            )}
           </div>
         )}
       </div>

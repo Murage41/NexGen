@@ -5,10 +5,15 @@ import {
   generateApprovalToken,
   generateToken,
   getSessionTtlMs,
-  requireAdmin,
+  requireAuth,
 } from '../middleware/requireAdmin';
 import { hashPin, isHashedPin, verifyPin } from '../services/pinSecurity';
-import { approvalBindings, approvalSubjectError, isApprovalPurpose } from '../services/approval';
+import {
+  ATTENDANT_APPROVAL_PURPOSES,
+  approvalBindings,
+  approvalSubjectError,
+  isApprovalPurpose,
+} from '../services/approval';
 
 const router = Router();
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
@@ -126,10 +131,10 @@ router.get('/employees', async (_req, res) => {
 });
 
 // GET /api/auth/approvers - administrators who can approve a decision on the
-// shared desktop terminal. Admin-only on purpose: the public /employees list
-// above omits roles so it doesn't advertise which accounts' PINs are worth
-// guessing.
-router.get('/approvers', requireAdmin, async (_req, res) => {
+// shared desktop terminal, or on an attendant's phone when a credit needs an
+// override. Signed-in callers only: the public /employees list above omits
+// roles so it doesn't advertise which accounts' PINs are worth guessing.
+router.get('/approvers', requireAuth, async (_req, res) => {
   try {
     const approvers = await db('employees')
       .where({ active: true, role: 'admin' })
@@ -153,11 +158,15 @@ router.get('/approvers', requireAdmin, async (_req, res) => {
 // terminal, and the lock must hold however the request is sent.
 // Wrong PINs answer 403, not 401, so a signed-in mobile client never mistakes a
 // mistyped approval PIN for an expired session and logs out.
-router.post('/verify-pin', requireAdmin, async (req, res) => {
+router.post('/verify-pin', requireAuth, async (req, res) => {
   try {
     const { employee_id, pin, purpose } = req.body || {};
     if (!isApprovalPurpose(purpose)) {
       return res.status(400).json({ success: false, error: 'Unknown approval type.' });
+    }
+    // Attendants can only ask for the approvals that arise on their own screens.
+    if ((req as any).employee?.role !== 'admin' && !ATTENDANT_APPROVAL_PURPOSES.has(purpose)) {
+      return res.status(403).json({ success: false, error: 'Only an administrator can request this approval.' });
     }
     const subjectError = approvalSubjectError(purpose, req.body);
     if (subjectError) {

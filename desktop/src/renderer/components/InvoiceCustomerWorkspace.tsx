@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import {
   correctInvoiceConsumption,
+  getCreditAccount,
   getCustomerInvoices,
   getInvoiceCustomerConsumption,
   getInvoicePayments,
@@ -25,6 +26,7 @@ import {
   reverseInvoicePayment,
   updateCreditAccount,
 } from '../services/api';
+import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 
 export type InvoiceCustomerWorkspaceCustomer = {
   id: number;
@@ -118,6 +120,9 @@ export default function InvoiceCustomerWorkspace({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState('');
   const [termsDays, setTermsDays] = useState('0');
+  // Full account record: KRA PIN, limits, live limit status, limit approvals.
+  const [account, setAccount] = useState<any>(null);
+  const [editingCustomer, setEditingCustomer] = useState(false);
   const [savingTerms, setSavingTerms] = useState(false);
   const [correctionRow, setCorrectionRow] = useState<any | null>(null);
   const [correctionSources, setCorrectionSources] = useState<any[]>([]);
@@ -161,11 +166,25 @@ export default function InvoiceCustomerWorkspace({
     setPayments(paymentResponse.data.data || []);
   }
 
+  async function loadAccount() {
+    const response = await getCreditAccount(customer.id);
+    setAccount(response.data.data);
+    return response.data.data;
+  }
+
+  async function saveCustomer(payload: Record<string, unknown>) {
+    await updateCreditAccount(customer.id, payload);
+    const saved = await loadAccount();
+    setTermsDays(String(saved?.payment_terms_days || 0));
+    setEditingCustomer(false);
+    await onChanged();
+  }
+
   async function loadWorkspace() {
     try {
       setLoading(true);
       setError('');
-      await Promise.all([loadHistory(1), loadDocuments()]);
+      await Promise.all([loadHistory(1), loadDocuments(), loadAccount()]);
     } catch (err: any) {
       setError(err?.response?.data?.error || err?.message || 'Failed to load customer workspace.');
     } finally {
@@ -390,6 +409,24 @@ export default function InvoiceCustomerWorkspace({
 
   return (
     <div className="fixed inset-0 z-40 bg-gray-100 flex flex-col">
+      {editingCustomer && account && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-bold text-gray-800">Edit Invoice Customer</h3>
+              <button onClick={() => setEditingCustomer(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+            </div>
+            <CustomerAccountForm
+              key={account.id}
+              account={account}
+              lockBillingMode="invoice"
+              onSubmit={saveCustomer}
+              onCancel={() => setEditingCustomer(false)}
+            />
+            <CreditLimitDetails account={account} />
+          </div>
+        </div>
+      )}
       <header className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between gap-5">
           <div className="flex items-center gap-3 min-w-0">
@@ -398,10 +435,17 @@ export default function InvoiceCustomerWorkspace({
             </button>
             <div className="min-w-0">
               <h2 className="text-xl font-bold text-gray-900 truncate">{customer.name}</h2>
-              <p className="text-sm text-gray-500">{customer.phone || 'No phone number'} · Invoice customer</p>
+              <p className="text-sm text-gray-500">
+                {account?.phone || customer.phone || 'No phone number'} · Invoice customer
+                {account?.kra_pin ? ` · KRA PIN ${account.kra_pin}` : ''}
+              </p>
+              {account && <CreditLimitSummary account={account} />}
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setEditingCustomer(true)} disabled={!account} className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded hover:bg-gray-50 disabled:opacity-50">
+              <Pencil size={16} /> Edit customer
+            </button>
             <button onClick={() => onReceivePayment(customer.id)} className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700">
               <Wallet size={16} /> Receive Payment
             </button>

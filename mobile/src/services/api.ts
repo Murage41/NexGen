@@ -190,6 +190,16 @@ export const getExpenseSummary = (params?: any) => api.get('/expenses/summary', 
 export const getCreditAccounts = (params?: any) => api.get('/credit-accounts', { params });
 export const getCreditAccount = (id: number) => api.get(`/credit-accounts/${id}`);
 export const deleteCreditAccount = (id: number) => api.delete(`/credit-accounts/${id}`);
+export const createCreditAccount = (data: any) => api.post('/credit-accounts', data);
+export const updateCreditAccount = (id: number, data: any) => api.put(`/credit-accounts/${id}`, data);
+
+// An attendant whose credit needs an administrator's approval hands the phone to
+// an admin, who picks their name and enters their PIN (shared/ui/ApproverConfirm).
+// Signed-in admins approve as themselves and never use this. A module constant,
+// so the approver list isn't refetched on every render.
+export const getApprovers = () => api.get('/auth/approvers');
+export const verifyApproverPin = (body: Record<string, unknown>) => api.post('/auth/verify-pin', body);
+export const attendantApproval = { listApprovers: getApprovers, verifyPin: verifyApproverPin };
 export const addAccountPayment = (accountId: number, data: any) =>
   api.post(`/credit-accounts/${accountId}/payments`, data);
 

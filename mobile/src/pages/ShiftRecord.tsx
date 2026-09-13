@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories, createOperationKey } from '../services/api';
+import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories, createOperationKey, attendantApproval } from '../services/api';
+import { CreditLimitPrompt, isCreditLimitBreach } from '../../../shared/ui/CreditLimitPrompt';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
-import { Save, Plus, Trash2, Search, UserPlus, Banknote, RefreshCw } from 'lucide-react';
+import { Save, Plus, Trash2, Search, Banknote, RefreshCw } from 'lucide-react';
 import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
@@ -85,11 +86,15 @@ export default function ShiftRecord() {
   const [expenseCategories, setExpenseCategories] = useState<string[]>(PREDEFINED_EXPENSE_CATEGORIES);
   const [accountSearch, setAccountSearch] = useState('');
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
-  const [isNewCustomer, setIsNewCustomer] = useState(false);
+  // A credit or fuel-on-account entry the server held back for a limit, awaiting
+  // an administrator's approval. Resubmitted exactly as attempted.
+  const [creditBreach, setCreditBreach] = useState<{ kind: 'credit' | 'consumption'; details: any; payload: any } | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
   useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
+  // An approval covers exactly what was attempted; editing the entry withdraws it.
+  useEffect(() => { setCreditBreach(null); }, [newCredit.account_id, newCredit.amount, newInvoice.fuel_type, newInvoice.litres]);
 
   useEffect(() => {
     if (!readingsDirty || shiftStatus !== 'open' || readingSync !== 'dirty') return;
@@ -412,27 +417,33 @@ export default function ShiftRecord() {
     }
   }
 
-  async function handleAddCredit() {
-    if (!newCredit.customer_name || !newCredit.amount) return;
+  function handleAddCredit() {
+    if (!newCredit.account_id || !newCredit.amount) return;
+    return submitCredit({
+      account_id: newCredit.account_id,
+      amount: parseFloat(newCredit.amount),
+      description: newCredit.description,
+    });
+  }
+
+  // An approved retry (limit_override) rethrows, so the approval prompt shows why.
+  async function submitCredit(payload: any) {
     setCreditError('');
     try {
-      const payload: any = {
-        customer_name: newCredit.customer_name,
-        amount: parseFloat(newCredit.amount),
-        description: newCredit.description,
-      };
-      if (newCredit.account_id) payload.account_id = newCredit.account_id;
       await addShiftCredit(
         parseInt(id!),
         payload,
         pendingOperationKey(creditOperation, 'shift-credit', payload),
       );
       creditOperation.current = null;
+      setCreditBreach(null);
       setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
       setAccountSearch('');
-      setIsNewCustomer(false);
       await loadShift();
     } catch (err: any) {
+      if (payload.limit_override) throw err;
+      const breach = isCreditLimitBreach(err);
+      if (breach) return setCreditBreach({ kind: 'credit', details: breach, payload });
       setCreditError(err?.response?.data?.error || err?.message || 'Failed to add credit');
     }
   }
@@ -495,26 +506,33 @@ export default function ShiftRecord() {
       setCreditError('Select the pump or nozzle that supplied these litres.');
       return;
     }
+    return submitInvoice({
+      account_id: newCredit.account_id,
+      fuel_type: newInvoice.fuel_type,
+      litres: litresNum,
+      pump_id: selectedPumpId,
+    });
+  }
+
+  async function submitInvoice(payload: any) {
+    setCreditError('');
     try {
-      const payload = {
-        account_id: newCredit.account_id,
-        fuel_type: newInvoice.fuel_type,
-        litres: litresNum,
-        pump_id: selectedPumpId,
-      };
       await addInvoiceConsumption(
         parseInt(id!),
         payload,
         pendingOperationKey(invoiceOperation, 'invoice-consumption', payload),
       );
       invoiceOperation.current = null;
+      setCreditBreach(null);
       setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
       setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
       setAccountSearch('');
       setSelectedBillingMode(null);
-      setIsNewCustomer(false);
       await loadShift();
     } catch (err: any) {
+      if (payload.limit_override) throw err;
+      const breach = isCreditLimitBreach(err);
+      if (breach) return setCreditBreach({ kind: 'consumption', details: breach, payload });
       setCreditError(err?.response?.data?.error || err?.message || 'Failed to record consumption');
     }
   }
@@ -533,18 +551,7 @@ export default function ShiftRecord() {
     setNewCredit({ ...newCredit, customer_name: account.name, account_id: account.id });
     setAccountSearch(account.name);
     setShowAccountDropdown(false);
-    setIsNewCustomer(false);
     setSelectedBillingMode((account.billing_mode as 'money' | 'invoice') || 'money');
-  }
-
-  function selectNewCustomer() {
-    setIsNewCustomer(true);
-    setShowAccountDropdown(false);
-    setAccountSearch('');
-    setNewCredit({ ...newCredit, customer_name: '', account_id: null });
-    // New customers always start as money-mode (invoice-mode accounts must be
-    // onboarded from the desktop CreditAccounts page first).
-    setSelectedBillingMode('money');
   }
 
   const filteredAccounts = creditAccounts.filter(a =>
@@ -982,8 +989,7 @@ export default function ShiftRecord() {
           <div className="bg-white rounded-xl p-4 shadow-sm">
             <p className="text-sm font-medium text-gray-700 mb-2">Add Credit</p>
 
-            {/* Searchable account dropdown */}
-            {!isNewCustomer ? (
+            {/* Searchable account dropdown. Customers are added in Credits, not typed in here. */}
               <div className="relative mb-2" ref={searchRef}>
                 <div className="relative">
                   <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -1029,30 +1035,12 @@ export default function ShiftRecord() {
                         )}
                       </button>
                     ))}
-                    <button
-                      onClick={selectNewCustomer}
-                      className="w-full text-left px-4 py-3 flex items-center gap-2 text-blue-600 hover:bg-blue-50"
-                    >
-                      <UserPlus size={16} />
-                      <span className="text-sm font-medium">New Customer</span>
-                    </button>
+                    <p className="px-4 py-3 text-xs text-gray-500">
+                      {isAdmin ? 'Customer not listed? Add them in Credits first.' : 'Customer not listed? Ask an administrator to add them.'}
+                    </p>
                   </div>
                 )}
               </div>
-            ) : (
-              <div className="mb-2">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">New Customer</span>
-                  <button onClick={() => { setIsNewCustomer(false); setAccountSearch(''); }} className="text-xs text-gray-400 underline">Cancel</button>
-                </div>
-                <input
-                  value={newCredit.customer_name}
-                  onChange={e => setNewCredit({ ...newCredit, customer_name: e.target.value })}
-                  placeholder="Customer name"
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm"
-                />
-              </div>
-            )}
 
             {selectedBillingMode === 'invoice' ? (
               <>
@@ -1116,6 +1104,25 @@ export default function ShiftRecord() {
               </>
             )}
             {creditError && <p className="text-sm text-red-600 mt-2">{creditError}</p>}
+            {creditBreach && (
+              <div className="mt-3">
+                <CreditLimitPrompt
+                  key={JSON.stringify(creditBreach.payload)}
+                  breach={creditBreach.details}
+                  approval={isAdmin ? undefined : attendantApproval}
+                  purpose={creditBreach.kind === 'credit' ? 'credit_override' : 'consumption_override'}
+                  subject={creditBreach.kind === 'credit'
+                    ? { account_id: creditBreach.payload.account_id, shift_id: Number(id), amount: creditBreach.payload.amount }
+                    : { account_id: creditBreach.payload.account_id, shift_id: Number(id), fuel_type: creditBreach.payload.fuel_type, litres: creditBreach.payload.litres }}
+                  onApprove={(fields) => creditBreach.kind === 'credit'
+                    ? submitCredit({ ...creditBreach.payload, ...fields })
+                    : submitInvoice({ ...creditBreach.payload, ...fields })}
+                  onCancel={() => setCreditBreach(null)}
+                  inputClassName="w-full border border-gray-300 rounded-lg p-3 text-sm bg-white"
+                  actionLabel={creditBreach.kind === 'credit' ? 'Approve and add credit' : 'Approve and record litres'}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}

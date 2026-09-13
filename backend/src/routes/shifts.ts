@@ -4,6 +4,8 @@ import db from '../database';
 import { csvCell } from '../utils/csv';
 import { shiftRecoveryPreview, postShiftRecovery } from '../services/shiftSettlement';
 import { syncEmployeeDebt } from '../services/employeeDebt';
+import { approvalBindings } from '../services/approval';
+import { authorizeCreditExtension, recordCreditOverride } from '../services/creditLimits';
 import { validate } from '../middleware/validate';
 import {
   createShiftExpenseSchema,
@@ -1058,7 +1060,7 @@ router.delete('/:id/expenses/:expenseId', requireAdmin, async (req, res) => {
 router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(createShiftCreditSchema), async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
-    const { customer_name, customer_phone, amount, description } = req.body;
+    const { account_id: accountId, customer_name, customer_phone, amount, description } = req.body;
     const shiftId = req.params.id;
 
     const key = normalizeIdempotencyKey(req.get('Idempotency-Key'));
@@ -1070,33 +1072,25 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
       if (!shift || shift.status !== 'open') {
         throw Object.assign(new Error('Cannot modify a closed shift.'), { httpStatus: 400 });
       }
-      // Look up or auto-create credit_account for this customer
+      // Customers are created in Credits by an administrator, never here: a
+      // typed name that matches no customer is refused for everyone. account_id
+      // is what current screens send; the name lookup serves cached clients.
       // Phase 6: exclude soft-deleted accounts so we don't resurrect archived ones
-      let account = await trx('credit_accounts')
-        .whereRaw('LOWER(name) = ?', [customer_name.toLowerCase()])
-        .where({ type: 'customer' })
-        .whereNull('deleted_at')
-        .first();
-
+      const account = accountId
+        ? await trx('credit_accounts')
+          .where({ id: accountId, type: 'customer' })
+          .whereNull('deleted_at')
+          .first()
+        : await trx('credit_accounts')
+          .whereRaw('LOWER(name) = ?', [String(customer_name).toLowerCase()])
+          .where({ type: 'customer' })
+          .whereNull('deleted_at')
+          .first();
       if (!account) {
-        // Employee-access rollout (Tier 1): approving a new credit customer is
-        // an admin decision (rights matrix: employees record against *existing
-        // approved* customers only). An admin caller (including the desktop
-        // key) keeps the previous auto-create convenience; an attendant gets a
-        // clear error instead of silently onboarding a new customer.
-        if ((req as any).employee?.role !== 'admin') {
-          throw Object.assign(
-            new Error(`No approved customer account found for "${customer_name}". Ask an admin to create it first.`),
-            { httpStatus: 400 },
-          );
-        }
-        const [accountId] = await trx('credit_accounts').insert({
-          name: customer_name,
-          phone: customer_phone || null,
-          type: 'customer',
-          balance: 0,
-        });
-        account = { id: accountId, balance: 0, billing_mode: 'money' };
+        throw Object.assign(
+          new Error(`There is no customer account${customer_name ? ` named "${customer_name}"` : ''}. An administrator must add the customer in Credits first.`),
+          { code: 'CUSTOMER_NOT_FOUND', httpStatus: 400 },
+        );
       }
 
       // Phase 3B: invoice-mode accounts (e.g. Diwafa, Mugendi Stores) must not
@@ -1106,15 +1100,25 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
       if (account.billing_mode === 'invoice') {
         throw Object.assign(
           new Error(
-            `"${customer_name}" is an invoice-mode customer. Record litres & fuel type via invoice consumption instead of a money credit.`,
+            `"${account.name}" is an invoice-mode customer. Record litres & fuel type via invoice consumption instead of a money credit.`,
           ),
           { code: 'INVOICE_MODE_ACCOUNT', httpStatus: 400 },
         );
       }
 
+      const sessionEmployeeId = Number((req as any).employee?.id) > 0 ? Number((req as any).employee.id) : null;
+      const { check, approver } = await authorizeCreditExtension({
+        account,
+        amount,
+        override: req.body.limit_override === true,
+        approvalToken: req.body.approval_token,
+        binding: approvalBindings.credit_override({ account_id: account.id, shift_id: Number(shiftId), amount }),
+        sessionEmployeeId,
+      }, trx);
+
       // 1. Create credits line item (preserved for shift reporting / audit trail)
       const [mainCreditId] = await trx('credits').insert({
-        customer_name,
+        customer_name: account.name,
         customer_phone: customer_phone || null,
         amount,
         balance: amount,
@@ -1127,12 +1131,23 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
       // 2. Create shift_credits entry (for shift accountability)
       const [shiftCreditId] = await trx('shift_credits').insert({
         shift_id: shiftId,
-        customer_name,
+        customer_name: account.name,
         customer_phone: customer_phone || null,
         amount,
         description: description || null,
         credit_id: mainCreditId,
       });
+
+      if (approver) {
+        await recordCreditOverride(trx, {
+          account,
+          shiftId: Number(shiftId),
+          creditId: mainCreditId,
+          check,
+          approver,
+          recordedBy: sessionEmployeeId,
+        });
+      }
 
       // 3. Recompute the account balance from source rows (Phase 1 stale-cache fix:
       //    replaces the increment/decrement pattern that risks drift over time).
@@ -1169,7 +1184,8 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
     if (result.replayed) res.set('Idempotency-Replayed', 'true');
     res.status(result.status).json(result.body);
   } catch (err: any) {
-    res.status(err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
+    // details carries a limit breach's figures for the approval prompt.
+    res.status(err.httpStatus || 500).json({ success: false, error: err.message, code: err.code, details: err.details });
   }
 });
 
@@ -1652,6 +1668,22 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
         tankId: tank_id ? Number(tank_id) : null,
       });
 
+      const sessionEmployeeId = Number((req as any).employee?.id) > 0 ? Number((req as any).employee.id) : null;
+      const { check, approver } = await authorizeCreditExtension({
+        account,
+        amount: retailAmount,
+        override: req.body.limit_override === true,
+        approvalToken: req.body.approval_token,
+        // Bound to litres as submitted: the retail value is the server's to price.
+        binding: approvalBindings.consumption_override({
+          account_id: account.id,
+          shift_id: shiftId,
+          fuel_type,
+          litres: litresNum,
+        }),
+        sessionEmployeeId,
+      }, trx);
+
       const [id] = await trx('invoice_consumption').insert({
         account_id,
         shift_id: shiftId,
@@ -1661,10 +1693,18 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
         litres: litresNum,
         retail_price_at_time: retailPrice,
         retail_amount: retailAmount,
-        created_by_employee_id: (req as any).employee?.id > 0
-          ? (req as any).employee.id
-          : null,
+        created_by_employee_id: sessionEmployeeId,
       });
+      if (approver) {
+        await recordCreditOverride(trx, {
+          account,
+          shiftId,
+          consumptionId: id,
+          check,
+          approver,
+          recordedBy: sessionEmployeeId,
+        });
+      }
       const created = await trx('invoice_consumption').where({ id }).first();
       const entry = { ...created, source_required: source.source_required };
       return { status: 201, body: { success: true, data: entry } };
@@ -1675,7 +1715,8 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
     res.status(result.status).json(result.body);
   } catch (err: any) {
     const status = err.http || err.httpStatus || 500;
-    res.status(status).json({ success: false, error: err.message, code: err.code });
+    // details carries a limit breach's figures for the approval prompt.
+    res.status(status).json({ success: false, error: err.message, code: err.code, details: err.details });
   }
 });
 

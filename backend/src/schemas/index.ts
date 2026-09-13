@@ -219,10 +219,69 @@ export const createShiftExpenseSchema = z.object({
 
 // --- Credits ---
 export const createShiftCreditSchema = z.object({
-  customer_name: z.string().min(1, 'customer_name is required'),
+  // Customers are chosen, never typed into existence here: send account_id.
+  // customer_name is still accepted from clients cached before select-only
+  // entry, and must match an existing customer.
+  account_id: z.number().int().positive().optional(),
+  customer_name: z.string().trim().min(1, 'customer_name is required').optional(),
   customer_phone: optionalText(),
   amount: z.number({ error: 'amount is required' }).positive('amount must be greater than 0'),
   description: optionalText(),
+  limit_override: z.boolean().optional(),
+  approval_token: z.string().max(1000).optional(),
+}).refine((data) => data.account_id || data.customer_name, {
+  message: 'Select a customer',
+  path: ['account_id'],
+});
+
+// Kenya Revenue Authority PIN: a letter, nine digits, a letter (A012345678Z).
+// Not all digits - an "exactly N digits" rule would reject every real PIN.
+export const KRA_PIN_PATTERN = /^[A-Z]\d{9}[A-Z]$/;
+
+// Optional; blank means not recorded; stored uppercase.
+const kraPin = () => z.string().trim().toUpperCase()
+  .refine((value) => value === '' || KRA_PIN_PATTERN.test(value), 'KRA PIN must be a letter, 9 digits and a letter, e.g. A012345678Z')
+  .transform((value) => value || null)
+  .nullish();
+
+// Stored without spaces or dashes so one number always matches itself.
+const PHONE_PATTERN = /^\+?\d{9,13}$/;
+const PHONE_MESSAGE = 'Enter a valid phone number, e.g. 0712345678';
+const normalizePhone = (value: string) => value.replace(/[\s-]/g, '');
+
+const customerName = () => z.string().trim().min(1, 'name is required').max(120, 'name is too long');
+const paymentTermsDays = () => z.number().int('payment_terms_days must be a whole number').min(0).max(365, 'payment_terms_days must be a whole number from 0 to 365');
+// Limits are opt-in: null means no rule, never "zero allowed".
+const creditLimit = () => z.number({ error: 'credit_limit must be a number' }).finite()
+  .min(0, 'credit_limit cannot be negative').max(1_000_000_000, 'credit_limit is too large').nullish();
+const repaymentLimitDays = () => z.number({ error: 'credit_age_limit_days must be a number' })
+  .int('credit_age_limit_days must be a whole number of days').min(0).max(365, 'credit_age_limit_days must be 365 or less').nullish();
+
+export const createCreditAccountSchema = z.object({
+  name: customerName(),
+  phone: z.string({ error: 'phone is required' }).transform(normalizePhone).superRefine((value, ctx) => {
+    if (!value) ctx.addIssue({ code: 'custom', message: 'phone is required' });
+    else if (!PHONE_PATTERN.test(value)) ctx.addIssue({ code: 'custom', message: PHONE_MESSAGE });
+  }),
+  kra_pin: kraPin(),
+  billing_mode: z.enum(['money', 'invoice']).default('money'),
+  payment_terms_days: paymentTermsDays().default(0),
+  credit_limit: creditLimit(),
+  credit_age_limit_days: repaymentLimitDays(),
+});
+
+export const updateCreditAccountSchema = z.object({
+  name: customerName().optional(),
+  // Customers created before phone numbers were required may have none, so a
+  // blank phone is accepted here; the route refuses removing an existing one.
+  phone: z.string().nullish().transform((value) => (value == null ? value : normalizePhone(value))).superRefine((value, ctx) => {
+    if (value && !PHONE_PATTERN.test(value)) ctx.addIssue({ code: 'custom', message: PHONE_MESSAGE });
+  }),
+  kra_pin: kraPin(),
+  billing_mode: z.enum(['money', 'invoice']).optional(),
+  payment_terms_days: paymentTermsDays().optional(),
+  credit_limit: creditLimit(),
+  credit_age_limit_days: repaymentLimitDays(),
 });
 
 // --- Tank Dips ---

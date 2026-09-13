@@ -1,5 +1,6 @@
 import { useState, useEffect, Fragment } from 'react';
 import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount } from '../services/api';
+import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 import { Users, X, Banknote, Trash2, ChevronDown, ChevronUp, Search, Plus, Pencil } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
 import EmployeeDebtHistory from '../components/EmployeeDebtHistory';
@@ -23,10 +24,8 @@ export default function CreditAccounts() {
     notes: '',
   });
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [accountForm, setAccountForm] = useState<{ id: number | null; name: string; phone: string; billing_mode: 'money' | 'invoice'; payment_terms_days: string }>({
-    id: null, name: '', phone: '', billing_mode: 'money', payment_terms_days: '0',
-  });
-  const [accountError, setAccountError] = useState<string | null>(null);
+  // null while creating a customer; the account being edited otherwise.
+  const [editingAccount, setEditingAccount] = useState<any>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -154,47 +153,21 @@ export default function CreditAccounts() {
   }
 
   function openNewAccount() {
-    setAccountForm({ id: null, name: '', phone: '', billing_mode: 'money', payment_terms_days: '0' });
-    setAccountError(null);
+    setEditingAccount(null);
     setShowAccountModal(true);
   }
 
   function openEditAccount(account: any) {
-    setAccountForm({
-      id: account.id,
-      name: account.name || '',
-      phone: account.phone || '',
-      billing_mode: account.billing_mode === 'invoice' ? 'invoice' : 'money',
-      payment_terms_days: String(account.payment_terms_days || 0),
-    });
-    setAccountError(null);
+    setEditingAccount(account);
     setShowAccountModal(true);
   }
 
-  async function handleSaveAccount(e: any) {
-    e.preventDefault();
-    setAccountError(null);
-    try {
-      if (accountForm.id === null) {
-        await createCreditAccount({
-          name: accountForm.name,
-          phone: accountForm.phone || null,
-          billing_mode: accountForm.billing_mode,
-          payment_terms_days: Number(accountForm.payment_terms_days || 0),
-        });
-      } else {
-        await updateCreditAccount(accountForm.id, {
-          name: accountForm.name,
-          phone: accountForm.phone || null,
-          billing_mode: accountForm.billing_mode,
-          payment_terms_days: Number(accountForm.payment_terms_days || 0),
-        });
-      }
-      setShowAccountModal(false);
-      await loadAccounts();
-    } catch (err: any) {
-      setAccountError(err?.response?.data?.error || err?.message || 'Failed to save account');
-    }
+  // Errors propagate to the form, which shows them.
+  async function saveAccount(payload: Record<string, unknown>) {
+    if (editingAccount) await updateCreditAccount(editingAccount.id, payload);
+    else await createCreditAccount(payload);
+    setShowAccountModal(false);
+    await loadAccounts();
   }
 
   if (loading) return <div className="text-gray-500">Loading...</div>;
@@ -272,6 +245,7 @@ export default function CreditAccounts() {
               <th className="text-left p-3 font-medium text-gray-600">Phone</th>
               <th className="text-left p-3 font-medium text-gray-600">Type</th>
               <th className="text-left p-3 font-medium text-gray-600">Billing</th>
+              <th className="text-left p-3 font-medium text-gray-600">Limits</th>
               <th className="text-right p-3 font-medium text-gray-600">Outstanding Balance</th>
               <th className="text-left p-3 font-medium text-gray-600">Created</th>
               <th className="p-3 font-medium text-gray-600">Actions</th>
@@ -294,6 +268,7 @@ export default function CreditAccounts() {
                     <td className="p-3 text-gray-600">{account.phone || '-'}</td>
                     <td className="p-3">{typeBadge(account.type)}</td>
                     <td className="p-3">{account.type === 'customer' ? billingBadge(account.billing_mode) : <span className="text-gray-400 text-xs">—</span>}</td>
+                    <td className="p-3">{account.type === 'customer' ? <CreditLimitSummary account={account} /> : <span className="text-gray-400 text-xs">—</span>}</td>
                     <td className={`p-3 text-right font-medium ${balance > 0 ? 'text-red-600' : 'text-gray-600'}`}>
                       {formatKES(balance)}
                     </td>
@@ -335,12 +310,13 @@ export default function CreditAccounts() {
                   {/* Expanded Detail Row */}
                   {isExpanded && (
                     <tr className="border-t bg-gray-50">
-                      <td colSpan={7} className="p-4">
+                      <td colSpan={8} className="p-4">
                         {loadingDetail ? (
                           <p className="text-gray-400 text-sm">Loading details...</p>
                         ) : expandedAccount ? (
                           <div className="space-y-4">
                             {expandedAccount.type === 'employee' && <EmployeeDebtHistory account={expandedAccount} />}
+                            {expandedAccount.type === 'customer' && <CreditLimitDetails account={expandedAccount} />}
                             {/* Credits (line items) */}
                             {expandedAccount.credits && expandedAccount.credits.length > 0 && (
                               <div>
@@ -520,106 +496,21 @@ export default function CreditAccounts() {
       {/* New / Edit Account Modal */}
       {showAccountModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-800">
-                {accountForm.id === null ? 'New Customer Account' : 'Edit Customer Account'}
+                {editingAccount ? 'Edit Customer Account' : 'New Customer Account'}
               </h2>
               <button onClick={() => setShowAccountModal(false)} className="text-gray-400 hover:text-gray-600">
                 <X size={20} />
               </button>
             </div>
-            {accountError && <p className="text-sm text-red-600 mb-3">{accountError}</p>}
-            <form onSubmit={handleSaveAccount} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={accountForm.name}
-                  onChange={e => setAccountForm({ ...accountForm, name: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2"
-                  placeholder="e.g. Diwafa"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                <input
-                  type="text"
-                  value={accountForm.phone}
-                  onChange={e => setAccountForm({ ...accountForm, phone: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2"
-                  placeholder="Optional"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Billing Mode *</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setAccountForm({ ...accountForm, billing_mode: 'money' })}
-                    className={`flex-1 p-2 rounded-lg border text-sm font-medium ${
-                      accountForm.billing_mode === 'money'
-                        ? 'bg-gray-100 border-gray-400 text-gray-800'
-                        : 'bg-white border-gray-300 text-gray-500'
-                    }`}
-                  >
-                    Money
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAccountForm({ ...accountForm, billing_mode: 'invoice' })}
-                    className={`flex-1 p-2 rounded-lg border text-sm font-medium ${
-                      accountForm.billing_mode === 'invoice'
-                        ? 'bg-purple-100 border-purple-400 text-purple-800'
-                        : 'bg-white border-gray-300 text-gray-500'
-                    }`}
-                  >
-                    Invoice
-                  </button>
-                </div>
-                <p className="text-xs text-gray-500 mt-1.5">
-                  {accountForm.billing_mode === 'money'
-                    ? 'Standard: shift credits record a money amount owed. Managed from this page.'
-                    : 'For companies billed on invoice (e.g. Diwafa, Mugendi Stores Kamuwongo). Shift records litres per fuel type; invoice issued later at an agreed price.'}
-                </p>
-                {accountForm.billing_mode === 'invoice' && (
-                  <>
-                    <div className="mt-3">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Payment terms</label>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-500">Net</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="365"
-                          step="1"
-                          value={accountForm.payment_terms_days}
-                          onChange={e => setAccountForm({ ...accountForm, payment_terms_days: e.target.value })}
-                          className="w-24 border border-gray-300 rounded-lg p-2"
-                        />
-                        <span className="text-sm text-gray-500">days</span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded p-2 mt-2">
-                      Invoice-mode accounts are managed from the <strong>Customer Invoices</strong> page and won't appear in this list after saving.
-                    </p>
-                  </>
-                )}
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAccountModal(false)}
-                  className="flex-1 py-2 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700">
-                  {accountForm.id === null ? 'Create' : 'Save'}
-                </button>
-              </div>
-            </form>
+            <CustomerAccountForm
+              key={editingAccount?.id ?? 'new'}
+              account={editingAccount}
+              onSubmit={saveAccount}
+              onCancel={() => setShowAccountModal(false)}
+            />
           </div>
         </div>
       )}
