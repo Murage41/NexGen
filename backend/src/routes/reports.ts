@@ -818,6 +818,10 @@ async function computeMonthlyReport(month: string) {
       money_credits_issued: receivableActivity.money_credits_issued,
       money_credit_corrections: receivableActivity.money_credit_corrections,
       money_payment_reversals: receivableActivity.money_payment_reversals,
+      money_refunds: receivableActivity.money_refunds,
+      // Credit customers held on account (owed to them), after corrections.
+      opening_customer_credits: openingReceivables.money_customer_credits,
+      closing_customer_credits: closingReceivables.money_customer_credits,
       invoice_receivables_issued: receivableActivity.invoice_receivables_issued,
       invoice_receivable_adjustments: receivableActivity.invoice_adjustments,
       unrecovered_losses: unrecoveredLosses,
@@ -1090,8 +1094,16 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
       .sum('amount as total')
       .first();
     const employeeRefunds = roundMoney(Number((refundRow as any)?.total || 0));
+    // Credit on account paid back to customers (receivablePayments.ts).
+    const customerRefundRow = await db('customer_refunds')
+      .where({ status: 'posted' })
+      .whereBetween('refund_date', [from, to])
+      .sum('amount as total')
+      .first();
+    const customerRefunds = roundMoney(Number((customerRefundRow as any)?.total || 0));
 
-    const totalOutflows = totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses + employeeRefunds;
+    const totalOutflows = totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses
+      + employeeRefunds + customerRefunds;
 
     const outstandingReceivables = await getCurrentReceivableTotals(db);
 
@@ -1118,6 +1130,7 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
           shift_expenses: totalShiftExpenses,
           general_expenses: totalGeneralExpenses,
           employee_refunds: employeeRefunds,
+          customer_refunds: customerRefunds,
           total: totalOutflows,
         },
         net_cash_flow: totalInflows - totalOutflows,

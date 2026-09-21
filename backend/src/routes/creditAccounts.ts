@@ -3,10 +3,18 @@ import db from '../database';
 import { employeeDebtHistory } from '../services/employeePay';
 import { getKenyaDate } from '../utils/timezone';
 import { requireAdmin, requireAuth } from '../middleware/requireAdmin';
-import { paymentHttpStatus, recordMoneyAccountPayment } from '../services/receivablePayments';
+import {
+  customerCreditBalance,
+  paymentHttpStatus,
+  recordMoneyAccountPayment,
+  refundCustomerCredit,
+  roundMoney,
+} from '../services/receivablePayments';
 import { validate } from '../middleware/validate';
 import { createCreditAccountSchema, updateCreditAccountSchema } from '../schemas';
 import { evaluateCreditLimits } from '../services/creditLimits';
+import { approvalBindings, resolveApprover } from '../services/approval';
+import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 
 const router = Router();
 router.use(requireAuth);
@@ -56,7 +64,17 @@ router.get('/', async (req, res) => {
 
     const accounts = await query;
     const isAdmin = (req as any).employee?.role === 'admin';
+    // Credit held on account after a closed-shift correction (receivablePayments.ts).
+    const heldRows = await db('credit_payments')
+      .where({ status: 'posted' })
+      .whereNull('deleted_at')
+      .where('unapplied_amount', '>', 0)
+      .groupBy('account_id')
+      .select('account_id')
+      .sum({ total: 'unapplied_amount' });
+    const held = new Map(heldRows.map((row: any) => [Number(row.account_id), roundMoney(Number(row.total || 0))]));
     for (const account of accounts) {
+      account.credit_on_account = held.get(Number(account.id)) || 0;
       // Limit status only for customers that have limits; everyone else has no
       // rule to report, and shift screens load this list on every visit.
       if (account.type === 'customer' && hasLimits(account)) {
@@ -112,7 +130,16 @@ router.get('/:id', async (req, res) => {
 
     let creditCheck = null;
     let limitOverrides: any[] = [];
+    let creditOnAccount = 0;
+    let refunds: any[] = [];
     const isAdmin = (req as any).employee?.role === 'admin';
+    if (account.type === 'customer' && account.billing_mode !== 'invoice') {
+      creditOnAccount = await customerCreditBalance(Number(account.id), db);
+      refunds = await db('customer_refunds')
+        .where({ account_id: account.id })
+        .orderBy('refund_date', 'desc')
+        .orderBy('id', 'desc');
+    }
     if (!isAdmin) delete account.kra_pin;
     if (account.type === 'customer') {
       creditCheck = await evaluateCreditLimits(account, 0, db);
@@ -133,7 +160,7 @@ router.get('/:id', async (req, res) => {
         ...account,
         outstanding_balance: Number(account.balance || 0),
         ...(account.type === 'customer'
-          ? { credits, payments, customer_invoices: customerInvoices, credit_check: creditCheck, limit_overrides: limitOverrides }
+          ? { credits, payments, customer_invoices: customerInvoices, credit_check: creditCheck, limit_overrides: limitOverrides, credit_on_account: creditOnAccount, refunds }
           : { debts, debt_history: debtHistory, debt_reviews: debtReviews }),
       },
     });
@@ -297,6 +324,43 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
   }
 });
 
+// POST /:id/refunds - pay a customer back credit they hold on account.
+// Body: { amount, method: 'cash'|'mpesa', date?, reference?, approval_token? }.
+// An administrator approves: their own session, or a PIN token on the desktop.
+router.post('/:id/refunds', requireAdmin, async (req: any, res) => {
+  try {
+    const accountId = Number(req.params.id);
+    const amount = Number(req.body?.amount);
+    const method = String(req.body?.method || '');
+    const sessionEmployeeId = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
+    const result = await runIdempotent(
+      db,
+      { scope: `customer-refund:${accountId}`, key: normalizeIdempotencyKey(req.get('Idempotency-Key')), payload: req.body },
+      async (trx) => {
+        const approver = await resolveApprover(
+          sessionEmployeeId,
+          req.body?.approval_token,
+          approvalBindings.customer_refund({ account_id: accountId, method, amount }),
+          trx,
+        );
+        const refund = await refundCustomerCredit(trx, {
+          accountId,
+          amount,
+          method,
+          date: req.body?.date || null,
+          reference: req.body?.reference || null,
+          approver,
+          recordedBy: sessionEmployeeId,
+        });
+        return { status: 201, body: { success: true, data: refund } };
+      },
+    );
+    res.status(result.status).json(result.body);
+  } catch (err: any) {
+    res.status(err.http || err.httpStatus || paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
 // DELETE /:id - Remove a customer account (only if balance = 0 and type = 'customer')
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
@@ -309,6 +373,13 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 
     if (Number(account.balance || 0) > 0) {
       return res.status(400).json({ success: false, error: 'Cannot delete account with outstanding balance' });
+    }
+    const held = await customerCreditBalance(Number(account.id), db);
+    if (held > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `${account.name} holds KES ${held.toFixed(2)} in credit. Refund it before removing the account.`,
+      });
     }
 
     // Phase 7 fix: soft-delete to preserve audit trail (was hard-delete)
@@ -441,6 +512,19 @@ router.get('/:id/statement', async (req, res) => {
             credit_amount: 0,
           });
         }
+      }
+
+      // Credit held on account that was paid back to the customer.
+      const refunds = await db('customer_refunds')
+        .where({ account_id: account.id, status: 'posted' })
+        .orderBy('refund_date', 'asc');
+      for (const r of refunds) {
+        entries.push({
+          date: r.refund_date,
+          description: `Refund of credit on account (${r.method === 'mpesa' ? 'M-Pesa' : 'cash'})${r.reference ? `: ${r.reference}` : ''}`,
+          debit_amount: Number(r.amount),
+          credit_amount: 0,
+        });
       }
     } else if (account.type === 'employee') {
       const data = await employeeDebtHistory(Number(account.employee_id), db);

@@ -68,6 +68,22 @@ async function createSchema(db: Knex) {
     t.timestamp('reversed_at').nullable();
     t.integer('reversed_by_employee_id').nullable();
     t.text('reversal_reason').nullable();
+    // Customer credit on account (migration 046).
+    t.decimal('unapplied_amount', 14, 2).notNullable().defaultTo(0);
+  });
+  await db.schema.createTable('customer_refunds', (t) => {
+    t.increments('id').primary();
+    t.integer('account_id').notNullable();
+    t.decimal('amount', 14, 2).notNullable();
+    t.string('method').notNullable();
+    t.string('refund_date').notNullable();
+    t.string('status').notNullable().defaultTo('posted');
+  });
+  await db.schema.createTable('customer_refund_allocations', (t) => {
+    t.increments('id').primary();
+    t.integer('refund_id').notNullable();
+    t.integer('payment_id').notNullable();
+    t.decimal('amount', 14, 2).notNullable();
   });
   await db.schema.createTable('credit_payment_allocations', (t) => {
     t.increments('id').primary();

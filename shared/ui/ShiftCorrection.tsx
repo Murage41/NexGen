@@ -72,9 +72,27 @@ const WHAT: Record<CorrectionEntry['entry_type'], string> = {
   invoice_consumption: 'fuel on account',
 };
 
-function owedLabel(account: any) {
-  if (account.measure === 'uninvoiced_fuel') return `Uninvoiced fuel for ${account.name}`;
-  return `${account.name} owes`;
+// A normal credit customer either owes, or holds credit on account after a
+// correction left them paid ahead.
+function standing(owed: unknown, credit: unknown) {
+  return Number(credit || 0) > 0 ? `in credit ${kes(credit)}` : `owes ${kes(owed)}`;
+}
+
+function AccountChange({ account }: { account: any }) {
+  if (account.measure === 'credit') {
+    return (
+      <>
+        {account.name}: {standing(account.owed_before, account.credit_before)} →{' '}
+        <strong>{standing(account.owed_after, account.credit_after)}</strong>
+      </>
+    );
+  }
+  const label = account.measure === 'uninvoiced_fuel' ? `Uninvoiced fuel for ${account.name}` : `${account.name} owes`;
+  return (
+    <>
+      {label}: {kes(account.owed_before)} → <strong>{kes(account.owed_after)}</strong>
+    </>
+  );
 }
 
 // A shift's variance in words: below zero the drawer was short.
@@ -302,9 +320,17 @@ export function ShiftCorrectionForm({
           <ul className="space-y-1 text-blue-900">
             {(preview.accounts || []).map((a: any) => (
               <li key={a.account_id}>
-                {owedLabel(a)}: {kes(a.owed_before)} → <strong>{kes(a.owed_after)}</strong>
+                <AccountChange account={a} />
               </li>
             ))}
+            {(preview.accounts || [])
+              .filter((a: any) => Number(a.credit_after || 0) > Number(a.credit_before || 0))
+              .map((a: any) => (
+                <li key={`credit-${a.account_id}`} className="text-xs">
+                  {a.name} has paid more than they owe, so they keep {kes(Number(a.credit_after) - Number(a.credit_before))} as
+                  credit. It pays their next credit automatically, or you can refund it from their account.
+                </li>
+              ))}
             {Number(preview.variance_before) !== Number(preview.variance_after) && (
               <li>
                 Shift #{preview.shift?.id}: {describeShiftBalance(preview.variance_before)} → <strong>{describeShiftBalance(preview.variance_after)}</strong>

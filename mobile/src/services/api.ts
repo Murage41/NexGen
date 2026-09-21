@@ -304,6 +304,8 @@ export const setRecoveryLimit = (id: number, percent: number) => api.put(`/payro
 export const reviewEmployeeDebt = (id: number, data: any) => api.put(`/payroll/debts/${id}/review`, data);
 // Money owed back to an employee after a closed-shift correction.
 export const settleEmployeeRefund = (id: number, data: Record<string, unknown>) => financialPost(`/payroll/refunds/${id}/settle`, data);
+// Paying a customer back credit they hold on account after a correction.
+export const refundCustomerCredit = (id: number, data: Record<string, unknown>) => financialPost(`/credit-accounts/${id}/refunds`, data);
 export const previewShiftRecovery = (id: number, wage_paid: number) => api.post(`/shifts/${id}/recovery-preview`, { wage_paid });
 
 export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/${id}/supplement`);

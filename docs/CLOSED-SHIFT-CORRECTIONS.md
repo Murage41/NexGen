@@ -97,11 +97,19 @@ money, so a "shortage" that was a typing error must be returned.
 - **Employee pay statement:** shortage added or reduced by each correction, and
   money owed back.
 
+## When a Customer Ends Up Paid Ahead
+
+For example, a wrong credit the customer already paid while owing nothing else,
+or a payment moved to a customer who owed less. The money was received, so it
+belongs to the customer: it stays on their account as **credit**. The preview
+says so before you post. See **Credit on Account** in
+[Credit Customers and Limits](CREDIT-CUSTOMERS-AND-LIMITS.md).
+
+An employee's repayment can't be moved to an employee who owes less than the
+payment; that correction is refused.
+
 ## When a Correction Is Refused
 
-- **The customer would end up paid ahead.** For example, a wrong credit the
-  customer already paid while owing nothing else. NexGen cannot hold a
-  customer's credit balance yet, so leave the entry as it is for now.
 - **The litres would exceed what the pumps sold on the shift.**
 - **The fuel is already on an invoice.**
 - **The shift is open, or the entry has already been corrected.**
@@ -118,7 +126,9 @@ Run on a test copy, never on the station's records.
    shortage. Confirm the unpaid part is cancelled and the repaid part is owed
    back; settle it in cash and find it in the cash-flow report.
 4. Change a fuel-on-account entry's litres and confirm pump sales cap it.
-5. Try a correction that leaves a customer paid ahead and confirm the refusal.
+5. Correct a credit the customer already paid down to a smaller amount. Confirm
+   the difference shows as credit on their account, is used when their next
+   credit's shift closes, and can be refunded with approval.
 6. Preview, change something on the shift, then post: confirm the refusal.
 7. Confirm the daily report for the shift's date is unchanged and today's lists
    the corrections.

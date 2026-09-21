@@ -1,5 +1,6 @@
 import type { Knex } from 'knex';
-import { recomputeAccountBalance } from './accountBalance';
+import { readAccountBalance, recomputeAccountBalance } from './accountBalance';
+import { getKenyaDate } from '../utils/timezone';
 import {
   postInvoiceAccountingEvent,
   receivingAccountForMethod,
@@ -528,7 +529,22 @@ export async function reverseMoneyAccountPaymentInTransaction(
     (sum, allocation) => sum + toCents(allocation.amount_applied),
     0,
   );
-  if (allocatedCents !== toCents(payment.amount)) {
+  // Credit held on account from this payment was part of it too. Once some of
+  // that credit has been paid out as a refund, the payment can't be undone.
+  const refundedRow = await trx('customer_refund_allocations as allocation')
+    .join('customer_refunds as refund', 'allocation.refund_id', 'refund.id')
+    .where('allocation.payment_id', payment.id)
+    .where('refund.status', 'posted')
+    .sum({ total: 'allocation.amount' })
+    .first();
+  if (toCents(Number((refundedRow as any)?.total || 0)) > 0) {
+    throw httpError(
+      'Part of this payment was held as credit and has already been refunded to the customer, so it cannot be reversed.',
+      409,
+      'PAYMENT_PARTLY_REFUNDED',
+    );
+  }
+  if (allocatedCents + toCents(Number(payment.unapplied_amount || 0)) !== toCents(payment.amount)) {
     throw httpError(
       'Payment allocation history is incomplete. Run the receivables integrity audit before reversing this payment.',
       409,
@@ -561,6 +577,7 @@ export async function reverseMoneyAccountPaymentInTransaction(
     reversed_at: reversedAt,
     reversed_by_employee_id: Number(input.actorId || 0) > 0 ? input.actorId : null,
     reversal_reason: reason,
+    unapplied_amount: 0,
   });
 
   if (payment.account_id && !input.skipBalanceRefresh) await recomputeAccountBalance(payment.account_id, trx);
@@ -576,6 +593,135 @@ export async function reverseMoneyAccountPayment(
   },
 ) {
   return conn.transaction((trx) => reverseMoneyAccountPaymentInTransaction(trx, input));
+}
+
+// ---- Customer credit on account ---------------------------------------------
+// A closed-shift correction can leave a customer having paid more than they owe
+// (services/shiftCorrections.ts). The excess stays on the payment that overpaid,
+// as unapplied_amount - the way an ERP keeps an overpayment's remaining amount
+// on the customer's ledger. It pays their next credits as they become payable,
+// or is refunded. For every customer payment:
+//   amount = active allocations + unapplied_amount + refunded allocations.
+
+export async function customerCreditBalance(accountId: number, conn: DbConnection): Promise<number> {
+  const row = await conn('credit_payments')
+    .where({ account_id: accountId, status: 'posted' })
+    .whereNull('deleted_at')
+    .where('unapplied_amount', '>', 0)
+    .sum({ total: 'unapplied_amount' })
+    .first();
+  return roundMoney(Number((row as any)?.total || 0));
+}
+
+// Applies held credit to the customer's payable credits, oldest first on both
+// sides, and returns the amount applied. Call it wherever credits may have
+// become payable: shift close, corrections, payment reversals.
+export async function applyCustomerCredit(trx: Knex.Transaction, accountId: number): Promise<number> {
+  const payments = await trx('credit_payments')
+    .where({ account_id: accountId, status: 'posted' })
+    .whereNull('deleted_at')
+    .where('unapplied_amount', '>', 0)
+    .orderBy('id');
+  let appliedCents = 0;
+  for (const payment of payments) {
+    const credits = await getEligibleMoneyCredits(accountId, trx);
+    const availableCents = credits.reduce((sum, credit) => sum + toCents(Number(credit.balance || 0)), 0);
+    if (availableCents <= 0) break;
+    const heldCents = toCents(Number(payment.unapplied_amount));
+    const cents = Math.min(heldCents, availableCents);
+    const allocations = await allocateMoneyCredits(trx, credits, fromCents(cents));
+    if (allocations.length > 0) {
+      await trx('credit_payment_allocations').insert(
+        allocations.map((allocation) => ({
+          payment_id: payment.id,
+          credit_id: allocation.credit_id,
+          amount_applied: allocation.amount_applied,
+        })),
+      );
+    }
+    await trx('credit_payments').where({ id: payment.id }).update({ unapplied_amount: fromCents(heldCents - cents) });
+    appliedCents += cents;
+  }
+  if (appliedCents > 0) {
+    await trx('credit_accounts').where({ id: accountId }).update({ balance: await readAccountBalance(accountId, trx) });
+  }
+  return fromCents(appliedCents);
+}
+
+// A closing shift's credits become payable, so credit their customers hold on
+// account pays them first. Called by the close route, inside its transaction.
+export async function applyCustomerCreditForShift(trx: Knex.Transaction, shiftId: number) {
+  const accountIds = await trx('credits')
+    .where({ shift_id: shiftId })
+    .whereNull('deleted_at')
+    .whereNotNull('account_id')
+    .distinct('account_id')
+    .pluck('account_id');
+  for (const accountId of accountIds) await applyCustomerCredit(trx, Number(accountId));
+}
+
+// Pays a customer back some or all of their credit on account. The refund is
+// its own document, linked to the payments whose credit it paid out.
+export async function refundCustomerCredit(
+  trx: Knex.Transaction,
+  input: {
+    accountId: number;
+    amount: number;
+    method: string;
+    date?: string | null;
+    reference?: string | null;
+    approver: { id: number; name: string };
+    recordedBy: number | null;
+  },
+) {
+  const amount = validatePositiveMoney(input.amount);
+  if (!['cash', 'mpesa'].includes(input.method)) {
+    throw httpError('Choose how it was paid back: cash or M-Pesa.', 400, 'INVALID_REFUND_METHOD');
+  }
+  const today = getKenyaDate();
+  const date = input.date || today;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) {
+    throw httpError('Enter the date it was paid back (not in the future).', 400, 'INVALID_REFUND_DATE');
+  }
+  const account = await trx('credit_accounts').where({ id: input.accountId }).whereNull('deleted_at').first();
+  if (!account || account.type !== 'customer' || (account.billing_mode || 'money') !== 'money') {
+    throw httpError('Customer not found.', 404, 'ACCOUNT_NOT_FOUND');
+  }
+  const held = await customerCreditBalance(input.accountId, trx);
+  if (toCents(amount) > toCents(held)) {
+    throw httpError(
+      `${account.name} has KES ${held.toFixed(2)} in credit, so no more than that can be refunded.`,
+      409,
+      'REFUND_EXCEEDS_CREDIT',
+    );
+  }
+
+  const [refundId] = await trx('customer_refunds').insert({
+    account_id: input.accountId,
+    amount,
+    method: input.method,
+    refund_date: date,
+    reference: String(input.reference || '').trim().slice(0, 100) || null,
+    status: 'posted',
+    approved_by_employee_id: input.approver.id,
+    approved_by_name: input.approver.name,
+    created_by_employee_id: input.recordedBy,
+  });
+  const payments = await trx('credit_payments')
+    .where({ account_id: input.accountId, status: 'posted' })
+    .whereNull('deleted_at')
+    .where('unapplied_amount', '>', 0)
+    .orderBy('id');
+  let remainingCents = toCents(amount);
+  for (const payment of payments) {
+    if (remainingCents === 0) break;
+    const heldCents = toCents(Number(payment.unapplied_amount));
+    const cents = Math.min(heldCents, remainingCents);
+    await trx('customer_refund_allocations').insert({ refund_id: refundId, payment_id: payment.id, amount: fromCents(cents) });
+    await trx('credit_payments').where({ id: payment.id }).update({ unapplied_amount: fromCents(heldCents - cents) });
+    remainingCents -= cents;
+  }
+  return trx('customer_refunds').where({ id: refundId }).first();
 }
 
 export function paymentHttpStatus(err: any): number {

@@ -85,6 +85,24 @@ The correction keeps the original on record, fixes the customer's balance, and
 recalculates the attendant's shortage. See
 [Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
 
+## Credit on Account
+
+A customer holds credit when a closed-shift correction leaves them having paid
+more than they owe. Accounting systems do the same with an overpayment: it
+stays on the customer's account until it is used or refunded.
+
+- The customer list shows **In credit** next to their balance.
+- It pays their next credit automatically as soon as that credit's shift closes.
+- To pay it back, open the customer and use **Refund**: the amount (up to what
+  they hold), cash or M-Pesa, the date, an optional reference, and an
+  administrator's approval. The refund is on their statement and under
+  **Refunds to Customers** in the cash-flow report.
+- A customer holding credit cannot be removed until it is refunded.
+- Their credit limit counts the credit against what they owe.
+
+Customers cannot pay ahead at the pump: a payment still can't be more than what
+they owe on closed shifts.
+
 ## Release Acceptance Test
 
 1. Add a money customer with a phone, KRA PIN, credit limit of 1,000 and

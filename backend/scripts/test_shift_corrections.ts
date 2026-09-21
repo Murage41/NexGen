@@ -22,8 +22,10 @@ async function main() {
   const { syncEmployeeDebt, employeeDebtSummary } = await import('../src/services/employeeDebt');
   const { recordEmployeeDebtReceipt, employeePayStatement } = await import('../src/services/employeePay');
   const { readAccountBalance } = await import('../src/services/accountBalance');
+  const { customerCreditBalance, applyCustomerCreditForShift } = await import('../src/services/receivablePayments');
   const { getReceivablePositionAsOf, getReceivableActivity } = await import('../src/services/receivableReporting');
   const { auditReceivableIntegrity } = await import('../src/services/receivableIntegrity');
+  const { creditExposure } = await import('../src/services/creditLimits');
   const { default: shiftsRouter } = await import('../src/routes/shifts');
   const { default: creditAccountsRouter } = await import('../src/routes/creditAccounts');
   const { default: authRouter } = await import('../src/routes/auth');
@@ -101,7 +103,11 @@ async function main() {
         await db('staff_debts').insert({ employee_id: shift.employee_id, shift_id: shiftId, original_deficit: -a.variance, deducted_from_wage: 0, carried_forward: -a.variance, balance: -a.variance, status: 'outstanding', recovery_status: 'confirmed' });
       }
       await db('shifts').where({ id: shiftId }).update({ status: 'closed', end_time: new Date().toISOString(), direct_wage_cash_amount: 0 });
-      await db.transaction((trx) => syncEmployeeDebt(Number(shift.employee_id), trx));
+      await db.transaction(async (trx) => {
+        await syncEmployeeDebt(Number(shift.employee_id), trx);
+        // As the close route does once the shift is closed.
+        await applyCustomerCreditForShift(trx, shiftId);
+      });
       return a.variance;
     };
 
@@ -150,6 +156,7 @@ async function main() {
       return posted.body.data;
     };
     const owed = (accountId: number) => readAccountBalance(accountId, db);
+    const customerCredit = (accountId: number) => customerCreditBalance(accountId, db);
     const cached = async (accountId: number) => Number((await db('credit_accounts').where({ id: accountId }).first()).balance);
     const outstanding = async (employeeId: number) => (await employeeDebtSummary(employeeId, db)).outstanding;
     const corrections = () => db('shift_accountability_adjustments').where({ adjustment_type: 'shift_correction' });
@@ -341,27 +348,79 @@ async function main() {
     assert.equal(rePayer.variance_after, 0, 'the drawer is unchanged');
     console.log("PASS a payment recorded for the wrong payer moves between an employee's debt and a customer");
 
-    // ---- G. A customer can't be left in credit ----
+    // ---- G. A customer left paid ahead keeps the money as credit on account ----
     const s7 = await openShift('2026-09-08');
     await sales(s7, 800, 0);
     const zawadiCredit = await credit(s7, zawadi, 800, '2026-09-08');
     await close(s7);
     const s8 = await openShift('2026-09-09');
     await sales(s8, 0, 800);
-    assert.equal((await call('POST', `/shifts/${s8}/credit-receipts`, attendantSession, { account_id: zawadi, amount: 800, payment_method: 'cash' })).status, 201);
+    const zawadiPaid = await call('POST', `/shifts/${s8}/credit-receipts`, attendantSession, { account_id: zawadi, amount: 800, payment_method: 'cash' });
+    assert.equal(zawadiPaid.status, 201);
     await close(s8);
     const before = await corrections().count({ n: 'id' }).first();
-    for (const body of [
-      { entry_type: 'credit', entry_id: zawadiCredit.shiftCreditId, kind: 'not_valid' },
-      { entry_type: 'credit', entry_id: zawadiCredit.shiftCreditId, kind: 'wrong_amount', amount: 500 },
-    ]) {
-      const refused = await preview(s7, body);
-      assert.equal(refused.status, 409, JSON.stringify(refused.body));
-      assert.equal(refused.body.code, 'CUSTOMER_OVERPAID');
-    }
-    assert.equal((await db('credits').where({ id: zawadiCredit.creditId }).first()).status, 'paid', 'nothing changed');
-    assert.deepEqual(await corrections().count({ n: 'id' }).first(), before, 'a refused or previewed correction leaves no record');
-    console.log('PASS a correction that would leave a customer paid ahead is refused, and a preview changes nothing');
+    const lowerBody = { entry_type: 'credit', entry_id: zawadiCredit.shiftCreditId, kind: 'wrong_amount', amount: 500 };
+    const lower = await preview(s7, lowerBody);
+    assert.equal(lower.status, 200, JSON.stringify(lower.body));
+    assert.deepEqual(
+      lower.body.data.accounts.map((a: any) => [a.name, a.owed_after, a.credit_before, a.credit_after]),
+      [['Zawadi', 0, 0, 300]],
+      'the credit was 500, not 800: Zawadi paid 300 too much and keeps it as credit',
+    );
+    assert.equal((await db('credits').where({ id: zawadiCredit.creditId }).first()).status, 'paid', 'a preview changes nothing');
+    assert.deepEqual(await corrections().count({ n: 'id' }).first(), before, 'and leaves no record');
+    const lowered = await correct(s7, lowerBody);
+    assert.equal(lowered.attendant.debt_added, 300, 'the overstated 300 should have been in the drawer');
+    assert.equal(await customerCredit(zawadi), 300);
+    assert.equal(Number((await db('credit_payments').where({ id: zawadiPaid.body.data.id }).first()).unapplied_amount), 300, 'held on the payment that overpaid');
+
+    // Held credit pays their next credit as soon as its shift closes.
+    const s9 = await openShift('2026-09-10');
+    await sales(s9, 200, 0);
+    await credit(s9, zawadi, 200, '2026-09-10');
+    assert.equal(await customerCredit(zawadi), 300, 'not while the shift is open');
+    await close(s9);
+    assert.deepEqual([await owed(zawadi), await customerCredit(zawadi)], [0, 100]);
+
+    // A payment moved to a customer who owes less leaves them in credit too.
+    const wanjiru = await customer('Wanjiru');
+    await credit(s9, wanjiru, 300, '2026-09-10');
+    const s10 = await openShift('2026-09-11');
+    await sales(s10, 0, 500);
+    const kauPays = await call('POST', `/shifts/${s10}/credit-receipts`, attendantSession, { account_id: kau, amount: 500, payment_method: 'cash' });
+    await close(s10);
+    const toWanjiru = await correct(s10, { entry_type: 'payment', entry_id: kauPays.body.data.id, kind: 'wrong_customer', account_id: wanjiru });
+    assert.deepEqual(
+      toWanjiru.accounts.map((a: any) => [a.name, a.owed_after, a.credit_after]),
+      [['Kau', 10700, 0], ['Wanjiru', 0, 200]],
+    );
+    assert.equal((await getReceivablePositionAsOf(db as any, today)).money_customer_credits, 300, 'credit owed to customers is reported on its own');
+    const wanjiruAccount = await db('credit_accounts').where({ id: wanjiru }).first();
+    assert.equal(await creditExposure(wanjiruAccount, db as any), -200, 'credit held counts against their limit');
+    const keepAccount = await call('DELETE', `/credit-accounts/${wanjiru}`, desktop);
+    assert.equal(keepAccount.status, 400, 'a customer holding credit cannot be removed');
+    assert.match(keepAccount.body.error, /holds KES 200\.00 in credit/);
+
+    // Paying credit back: an administrator approves, and it is a cash outflow.
+    const refundBody = { amount: 100, method: 'mpesa', reference: 'QX12' };
+    const refundApproval = (amount: number) => approval('customer_refund', { account_id: zawadi, method: 'mpesa', amount });
+    assert.equal((await call('POST', `/credit-accounts/${zawadi}/refunds`, desktop, refundBody)).status, 400, 'the desktop names the approver');
+    const tooMuch = await call('POST', `/credit-accounts/${zawadi}/refunds`, desktop, { ...refundBody, amount: 150, approval_token: await refundApproval(150) });
+    assert.equal(tooMuch.status, 409, 'no more than the credit held');
+    const refunded = await call('POST', `/credit-accounts/${zawadi}/refunds`, desktop, { ...refundBody, approval_token: await refundApproval(100) });
+    assert.equal(refunded.status, 201, JSON.stringify(refunded.body));
+    assert.equal(refunded.body.data.approved_by_name, 'Owner Admin');
+    const zawadiView = (await call('GET', `/credit-accounts/${zawadi}`, desktop)).body.data;
+    assert.deepEqual([zawadiView.credit_on_account, zawadiView.refunds.length], [0, 1]);
+    const zawadiStatement = (await call('GET', `/credit-accounts/${zawadi}/statement`, desktop)).body.data;
+    assert(zawadiStatement.some((e: any) => /Refund of credit on account/.test(e.description) && e.debit_amount === 100));
+    assert.equal(zawadiStatement[zawadiStatement.length - 1].running_balance, 0);
+    const refundFlow = (await call('GET', `/reports/cash-flow?from=${today}&to=${today}`, desktop)).body.data;
+    assert.equal(refundFlow.outflows.customer_refunds, 100);
+    const lockedPayment = await preview(s8, { entry_type: 'payment', entry_id: zawadiPaid.body.data.id, kind: 'not_valid' });
+    assert.equal(lockedPayment.status, 409, 'a payment whose credit was paid back cannot be reversed');
+    assert.equal(lockedPayment.body.code, 'PAYMENT_PARTLY_REFUNDED');
+    console.log('PASS a customer paid ahead keeps credit on account: applied at their next close, refundable with approval');
 
     // ---- H. A stale preview is refused; a signed-in admin approves as themselves ----
     const diwafaS0 = await db('shift_credits').where({ shift_id: s0, customer_name: 'Diwafa' }).first();
@@ -405,6 +464,12 @@ async function main() {
     assert.equal(log.length, (await corrections()).length, 'the corrections log lists every correction');
     const integrity = await auditReceivableIntegrity(db as any);
     assert.equal(integrity.issues.length, 0, JSON.stringify(integrity.issues));
+    // ...and the audit notices a payment whose parts don't add up.
+    const heldPayment = await db('credit_payments').where('unapplied_amount', '>', 0).first();
+    await db('credit_payments').where({ id: heldPayment.id }).update({ unapplied_amount: Number(heldPayment.unapplied_amount) + 5 });
+    const broken = await auditReceivableIntegrity(db as any);
+    assert(broken.issues.some((i: any) => i.kind === 'payment_credit_mismatch' && i.record_id === heldPayment.id), JSON.stringify(broken.issues));
+    await db('credit_payments').where({ id: heldPayment.id }).update({ unapplied_amount: heldPayment.unapplied_amount });
     assert.equal((await db.raw('PRAGMA integrity_check'))[0].integrity_check, 'ok');
     assert.deepEqual(await db.raw('PRAGMA foreign_key_check'), []);
     console.log('PASS receivables integrity holds after every correction');

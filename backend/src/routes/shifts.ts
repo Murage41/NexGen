@@ -36,6 +36,8 @@ import {
   getCompensationPlanById,
 } from '../services/compensation';
 import {
+  applyCustomerCredit,
+  applyCustomerCreditForShift,
   paymentHttpStatus,
   recordMoneyAccountPaymentInTransaction,
   reverseMoneyAccountPaymentInTransaction,
@@ -1630,6 +1632,8 @@ router.post('/:id/credit-receipts/:paymentId/reverse', requireAdmin, async (req:
         await reverseEmployeeDebtReceipt(paymentId, reason, trx, actorId);
       } else {
         await reverseMoneyAccountPaymentInTransaction(trx, { paymentId, reason, actorId });
+        // Credit the customer holds on account pays what is owed again.
+        if (payment.account_id) await applyCustomerCredit(trx, Number(payment.account_id));
       }
     });
     res.json({ success: true });
@@ -1923,6 +1927,10 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         // this, per the repayment-only redesign in shiftSettlement.ts.
         direct_wage_cash_amount: employee_wage,
       });
+
+      // This shift's credits are payable from now on, so credit a customer
+      // holds on account (from a closed-shift correction) pays them first.
+      await applyCustomerCreditForShift(trx, Number(shift.id));
 
       // Now recompute tank cache — the shift is closed so its sales are included
       for (const t of allTanks) {

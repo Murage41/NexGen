@@ -1,6 +1,7 @@
 import { useState, useEffect, Fragment } from 'react';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, desktopApproval } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
+import { CustomerCreditPanel } from '../../../../shared/ui/CustomerCredit';
 import { Users, X, Banknote, Trash2, ChevronDown, ChevronUp, Search, Plus, Pencil } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
 import EmployeeDebtHistory from '../components/EmployeeDebtHistory';
@@ -44,6 +45,14 @@ export default function CreditAccounts() {
       console.error('Failed to load credit accounts:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshAfterRefund() {
+    await loadAccounts();
+    if (expandedId) {
+      const res = await getCreditAccount(expandedId);
+      setExpandedAccount(res.data.data || res.data);
     }
   }
 
@@ -271,6 +280,9 @@ export default function CreditAccounts() {
                     <td className="p-3">{account.type === 'customer' ? <CreditLimitSummary account={account} /> : <span className="text-gray-400 text-xs">—</span>}</td>
                     <td className={`p-3 text-right font-medium ${balance > 0 ? 'text-red-600' : 'text-gray-600'}`}>
                       {formatKES(balance)}
+                      {Number(account.credit_on_account || 0) > 0 && (
+                        <p className="text-xs font-medium text-green-700">In credit {formatKES(Number(account.credit_on_account))}</p>
+                      )}
                     </td>
                     <td className="p-3 text-gray-500">
                       {account.created_at ? new Date(account.created_at).toLocaleDateString('en-KE') : '-'}
@@ -295,7 +307,7 @@ export default function CreditAccounts() {
                             <Pencil size={14} />
                           </button>
                         )}
-                        {account.type === 'customer' && balance === 0 && (
+                        {account.type === 'customer' && balance === 0 && !(Number(account.credit_on_account || 0) > 0) && (
                           <button
                             onClick={() => handleDelete(account)}
                             className="text-red-500 hover:text-red-700"
@@ -317,6 +329,15 @@ export default function CreditAccounts() {
                           <div className="space-y-4">
                             {expandedAccount.type === 'employee' && <EmployeeDebtHistory account={expandedAccount} />}
                             {expandedAccount.type === 'customer' && <CreditLimitDetails account={expandedAccount} />}
+                            {expandedAccount.type === 'customer' && (
+                              <CustomerCreditPanel
+                                account={expandedAccount}
+                                canRefund
+                                approval={desktopApproval}
+                                refund={refundCustomerCredit}
+                                onRefunded={refreshAfterRefund}
+                              />
+                            )}
                             {/* Credits (line items) */}
                             {expandedAccount.credits && expandedAccount.credits.length > 0 && (
                               <div>

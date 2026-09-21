@@ -52,6 +52,16 @@ async function run() {
       table.timestamp('deleted_at').nullable();
       table.string('reversed_at').nullable();
       table.integer('reversed_by_correction_id').nullable();
+      // Customer credit on account (migration 046).
+      table.decimal('unapplied_amount', 14, 2).notNullable().defaultTo(0);
+    });
+    await db.schema.createTable('customer_refunds', (table) => {
+      table.increments('id').primary();
+      table.integer('account_id').notNullable();
+      table.decimal('amount', 14, 2).notNullable();
+      table.string('method').notNullable();
+      table.date('refund_date').notNullable();
+      table.string('status').notNullable().defaultTo('posted');
     });
     await db.schema.createTable('customer_invoices', (table) => {
       table.increments('id').primary();
@@ -160,6 +170,7 @@ async function run() {
     const current = await getCurrentReceivableTotals(db);
     assert.deepEqual(current, {
       money_receivables: 500,
+      money_customer_credits: 0,
       invoice_receivables: 1900,
       total_receivables: 2400,
     });

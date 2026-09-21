@@ -1,6 +1,7 @@
 import type { Knex } from 'knex';
 import { getKenyaDate } from '../utils/timezone';
 import { resolveApprover, type Approver } from './approval';
+import { customerCreditBalance } from './receivablePayments';
 
 // Credit limits for customer accounts (M5).
 //
@@ -105,7 +106,9 @@ export async function creditExposure(account: any, db: Conn): Promise<number> {
     .where('balance', '>', 0)
     .sum({ total: 'balance' })
     .first();
-  return money(Number((credits as any)?.total || 0));
+  // Credit they hold on account pays their next credits as those become payable.
+  const held = await customerCreditBalance(Number(account.id), db);
+  return money(Number((credits as any)?.total || 0) - held);
 }
 
 // Unpaid items that are more than `limitDays` past due as of `today`.

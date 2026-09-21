@@ -613,6 +613,9 @@ export default function Reports() {
                     {Number(monthlyData.money_payment_reversals || 0) !== 0 && (
                       <PnLRow label="+ Payments Reversed by Corrections" value={monthlyData.money_payment_reversals} color="text-amber-600" indent />
                     )}
+                    {Number(monthlyData.money_refunds || 0) !== 0 && (
+                      <PnLRow label="+ Credit Refunded to Customers" value={monthlyData.money_refunds} color="text-amber-600" indent />
+                    )}
                     <PnLRow label="+ Customer Invoices Issued" value={monthlyData.invoice_receivables_issued} color="text-amber-600" indent />
                     <PnLRow
                       label="+/- Credit & Debit Notes / Voids"
@@ -627,6 +630,11 @@ export default function Reports() {
                     <p className="px-4 pt-2 text-[11px] text-gray-400">
                       Money {kes(monthlyData.closing_money_receivables || 0)} · Invoices {kes(monthlyData.closing_invoice_receivables || 0)}
                     </p>
+                    {(Number(monthlyData.opening_customer_credits || 0) > 0 || Number(monthlyData.closing_customer_credits || 0) > 0) && (
+                      <p className="px-4 pt-1 text-[11px] text-green-700">
+                        Customers in credit after corrections (owed to them, not included above): opening {kes(monthlyData.opening_customer_credits || 0)} · closing {kes(monthlyData.closing_customer_credits || 0)}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1015,6 +1023,9 @@ export default function Reports() {
                     <PnLRow label="General Expenses" value={cfData.outflows.general_expenses} color="text-red-600" />
                     {Number(cfData.outflows.employee_refunds || 0) > 0 && (
                       <PnLRow label="Refunds to Employees" value={cfData.outflows.employee_refunds} color="text-red-600" />
+                    )}
+                    {Number(cfData.outflows.customer_refunds || 0) > 0 && (
+                      <PnLRow label="Refunds to Customers" value={cfData.outflows.customer_refunds} color="text-red-600" />
                     )}
                     <PnLRow label="Total Outflows" value={cfData.outflows.total} bold border color="text-red-700" />
                   </div>

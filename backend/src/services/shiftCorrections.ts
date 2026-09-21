@@ -4,6 +4,8 @@ import { computeShiftAccountability, roundMoney } from './shiftAccountability';
 import { getKenyaDate } from '../utils/timezone';
 import {
   allocateMoneyCredits,
+  applyCustomerCredit,
+  customerCreditBalance,
   getEligibleMoneyCredits,
   reverseMoneyAccountPaymentInTransaction,
 } from './receivablePayments';
@@ -199,21 +201,17 @@ async function refreshAccount(trx: Trx, account: any) {
   await trx('credit_accounts').where({ id: account.id }).update({ balance });
 }
 
+const isMoneyCustomer = (account: any) =>
+  account?.type === 'customer' && (account.billing_mode || 'money') === 'money';
+
 async function loadAccount(trx: Trx, id: number) {
   return trx('credit_accounts').where({ id }).whereNull('deleted_at').first();
 }
 
-function overpaid(name: string, paid: number, owes: number): never {
-  const over = roundMoney(paid - owes);
-  fail(
-    `${name} would end up paying ${kes(over)} more than they owe. NexGen cannot hold a customer's credit balance yet, so this correction can't be posted. Leave the entry as it is for now.`,
-    409,
-    'CUSTOMER_OVERPAID',
-  );
-}
-
-// Pays a customer's closed-shift credits from an existing payment, oldest first
-// (the preferred credit first when given). Every shilling must land.
+// Pays a customer's closed-shift credits from a payment, oldest first (the
+// preferred credit first when given). What the customer doesn't owe stays on
+// that payment as credit on account (receivablePayments.ts) instead of being
+// refused: the money was received, so it belongs to them.
 async function applyToCredits(
   trx: Trx,
   account: any,
@@ -229,12 +227,19 @@ async function applyToCredits(
     ];
   }
   const available = credits.reduce((sum: number, c: any) => sum + toCents(c.balance), 0);
-  if (toCents(amount) > available) overpaid(account.name, amount, available / 100);
-  const allocations = await allocateMoneyCredits(trx, credits, amount);
-  if (allocations.length > 0) {
+  const applyCents = Math.min(toCents(amount), available);
+  if (applyCents > 0) {
+    const allocations = await allocateMoneyCredits(trx, credits, applyCents / 100);
     await trx('credit_payment_allocations').insert(
       allocations.map((a) => ({ payment_id: paymentId, credit_id: a.credit_id, amount_applied: a.amount_applied })),
     );
+  }
+  const heldCents = toCents(amount) - applyCents;
+  if (heldCents > 0) {
+    const payment = await trx('credit_payments').where({ id: paymentId }).first('unapplied_amount');
+    await trx('credit_payments').where({ id: paymentId }).update({
+      unapplied_amount: (toCents(payment?.unapplied_amount) + heldCents) / 100,
+    });
   }
 }
 
@@ -278,9 +283,6 @@ async function postReplacementPayment(ctx: Context, payer: any, amount: number, 
   if ((payer.billing_mode || 'money') !== 'money') {
     fail(`${payer.name} is an invoice customer; their payments are recorded against invoices.`);
   }
-  const credits = await getEligibleMoneyCredits(Number(payer.id), trx);
-  const available = credits.reduce((sum: number, c: any) => sum + toCents(c.balance), 0);
-  if (toCents(amount) > available) overpaid(payer.name, amount, available / 100);
   const [id] = await trx('credit_payments').insert({
     account_id: payer.id,
     credit_id: null,
@@ -395,9 +397,6 @@ async function correctCredit(ctx: Context): Promise<EntryOutcome> {
   }
   if (paidCents > 0) {
     const preferred = request.kind === 'wrong_amount' ? replacementId : null;
-    const credits = await getEligibleMoneyCredits(Number(account.id), trx);
-    const available = credits.reduce((sum: number, c: any) => sum + toCents(c.balance), 0);
-    if (paidCents > available) overpaid(account.name, paidCents / 100, available / 100);
     for (const [paymentId, cents] of byPayment) {
       await applyToCredits(trx, account, paymentId, cents / 100, preferred);
     }
@@ -793,7 +792,11 @@ async function runShiftCorrection(
   // Balances before, for everyone the entry touches (read before any change).
   const entryAccounts = await accountsForEntry(trx, request, shift.id);
   const before = new Map<number, number>();
-  for (const account of entryAccounts) before.set(Number(account.id), await owedNow(trx, account));
+  const creditBefore = new Map<number, number>();
+  for (const account of entryAccounts) {
+    before.set(Number(account.id), await owedNow(trx, account));
+    if (isMoneyCustomer(account)) creditBefore.set(Number(account.id), await customerCreditBalance(Number(account.id), trx));
+  }
   const attendantBefore = (await employeeDebtSummary(Number(shift.employee_id), trx)).outstanding;
 
   const outcome = request.entryType === 'credit'
@@ -814,6 +817,9 @@ async function runShiftCorrection(
   for (const id of outcome.accountIds) {
     const account = await trx('credit_accounts').where({ id }).first();
     if (!account) continue;
+    // Credit a customer holds pays whatever this correction made payable, and
+    // an overpayment it created waits for their next credit.
+    if (isMoneyCustomer(account)) await applyCustomerCredit(trx, id);
     await refreshAccount(trx, account);
     if (!before.has(id)) before.set(id, 0);
     accounts.push({
@@ -825,6 +831,8 @@ async function runShiftCorrection(
         : account.billing_mode === 'invoice' ? 'uninvoiced_fuel' : 'credit',
       owed_before: roundMoney(before.get(id) || 0),
       owed_after: roundMoney(await owedNow(trx, account)),
+      credit_before: roundMoney(creditBefore.get(id) || 0),
+      credit_after: isMoneyCustomer(account) ? await customerCreditBalance(id, trx) : 0,
     });
   }
   await syncEmployeeDebt(Number(shift.employee_id), trx);
@@ -865,7 +873,7 @@ async function runShiftCorrection(
         request.amount ?? null, request.litres ?? null, request.pumpId ?? null],
       original: outcome.original,
       replacement: outcome.replacement ? { ...outcome.replacement, credit_id: undefined, shift_credit_id: undefined, payment_id: undefined, entry_id: undefined } : null,
-      accounts: accounts.map((a) => [a.account_id, a.owed_before, a.owed_after]),
+      accounts: accounts.map((a) => [a.account_id, a.owed_before, a.owed_after, a.credit_before, a.credit_after]),
       attendant: [attendant.deficit_before, attendant.deficit_after, attendant.debt_added,
         attendant.debt_reduced, attendant.refund_owed, attendant.not_refunded, attendant.owed_before],
       variance: [varianceBefore, varianceAfter],

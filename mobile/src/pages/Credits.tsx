@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { CreditCard, Phone, ChevronRight, Trash2, Users, Briefcase, ArrowDownCircle, ArrowUpCircle, Banknote, UserPlus, Pencil, X } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../shared/ui/CustomerAccountForm';
+import { CustomerCreditPanel } from '../../../shared/ui/CustomerCredit';
 import { getKenyaDate } from '../utils/timezone';
 
 type FilterTab = 'all' | 'customer' | 'employee';
@@ -180,6 +181,16 @@ export default function Credits() {
               <CreditLimitDetails account={acct} />
             </div>
           )}
+          {isCustomer && (
+            <div className="mt-3">
+              <CustomerCreditPanel
+                account={acct}
+                canRefund={isAdmin}
+                refund={refundCustomerCredit}
+                onRefunded={async () => { await loadAccounts(); await openAccount(acct); }}
+              />
+            </div>
+          )}
           {detailError && <p className="text-sm text-red-600 text-center mb-2">{detailError}</p>}
           <div className="flex gap-2 mt-2">
             {isAdmin && isCustomer && Number(acct.outstanding_balance) > 0 && (
@@ -190,7 +201,7 @@ export default function Credits() {
                 <Banknote size={14} /> Record Payment
               </button>
             )}
-            {isAdmin && isCustomer && Number(acct.outstanding_balance) === 0 && (
+            {isAdmin && isCustomer && Number(acct.outstanding_balance) === 0 && !(Number(acct.credit_on_account || 0) > 0) && (
               <button
                 onClick={() => handleRemoveAccount(acct)}
                 className="flex-1 bg-red-50 text-red-600 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1"
@@ -434,9 +445,14 @@ export default function Credits() {
                 {a.type === 'customer' && <div className="mt-1"><CreditLimitSummary account={a} /></div>}
               </div>
               <div className="flex items-center gap-2 ml-3">
-                <p className={`text-base font-bold ${Number(a.outstanding_balance) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                  {fmt(a.outstanding_balance)}
-                </p>
+                <div className="text-right">
+                  <p className={`text-base font-bold ${Number(a.outstanding_balance) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    {fmt(a.outstanding_balance)}
+                  </p>
+                  {Number(a.credit_on_account || 0) > 0 && (
+                    <p className="text-[11px] font-medium text-green-700">In credit {fmt(Number(a.credit_on_account))}</p>
+                  )}
+                </div>
                 <ChevronRight size={18} className="text-gray-400" />
               </div>
             </button>

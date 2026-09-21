@@ -7,6 +7,7 @@ export type ReceivableIntegrityIssue = {
     | 'invoice_overallocated'
     | 'invoice_balance_mismatch'
     | 'money_account_overpaid'
+    | 'payment_credit_mismatch'
     | 'account_cache_mismatch'
     | 'accounting_event_missing'
     | 'accounting_balance_mismatch';
@@ -158,7 +159,58 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
         .sum('amount as total')
         .first();
       const original = roundMoney(Number((originalRow as any)?.total || 0));
-      const paid = roundMoney(Number((paymentRow as any)?.total || 0));
+      // Credit held on account, and credit refunded, were received but paid
+      // no credit (receivablePayments.ts), so they don't count as paid here.
+      const heldRow = await db('credit_payments')
+        .where({ account_id: account.id, status: 'posted' })
+        .whereNull('deleted_at')
+        .sum('unapplied_amount as total')
+        .first();
+      const refundedRow = await db('customer_refund_allocations as allocation')
+        .join('customer_refunds as refund', 'allocation.refund_id', 'refund.id')
+        .join('credit_payments as payment', 'allocation.payment_id', 'payment.id')
+        .where('payment.account_id', account.id)
+        .where('payment.status', 'posted')
+        .where('refund.status', 'posted')
+        .sum('allocation.amount as total')
+        .first();
+      const paid = roundMoney(
+        Number((paymentRow as any)?.total || 0)
+          - Number((heldRow as any)?.total || 0)
+          - Number((refundedRow as any)?.total || 0),
+      );
+
+      // Every payment that pays through allocations, holds credit or was
+      // refunded must add up: amount = applied + held + refunded.
+      const tracked = await db('credit_payments as payment')
+        .where('payment.account_id', account.id)
+        .where('payment.status', 'posted')
+        .whereNull('payment.deleted_at')
+        .select(
+          'payment.id',
+          'payment.amount',
+          'payment.unapplied_amount',
+          db.raw('(SELECT COALESCE(SUM(a.amount_applied), 0) FROM credit_payment_allocations a WHERE a.payment_id = payment.id AND a.reversed_at IS NULL) as applied'),
+          db.raw('(SELECT COUNT(*) FROM credit_payment_allocations a WHERE a.payment_id = payment.id) as allocation_rows'),
+          db.raw("(SELECT COALESCE(SUM(r.amount), 0) FROM customer_refund_allocations r JOIN customer_refunds f ON f.id = r.refund_id WHERE r.payment_id = payment.id AND f.status = 'posted') as refunded"),
+        );
+      for (const payment of tracked as any[]) {
+        const refunded = Number(payment.refunded || 0);
+        const held = Number(payment.unapplied_amount || 0);
+        if (Number(payment.allocation_rows) === 0 && held === 0 && refunded === 0) continue;
+        const accounted = roundMoney(Number(payment.applied || 0) + held + refunded);
+        if (Math.abs(accounted - roundMoney(Number(payment.amount))) >= 0.01) {
+          issues.push({
+            kind: 'payment_credit_mismatch',
+            account_id: Number(account.id),
+            record_id: Number(payment.id),
+            expected: roundMoney(Number(payment.amount)),
+            actual: accounted,
+            difference: difference(accounted, Number(payment.amount)),
+            message: `Payment ${payment.id} is KES ${Number(payment.amount).toFixed(2)}, but applied, held and refunded parts add up to KES ${accounted.toFixed(2)}.`,
+          });
+        }
+      }
       if (paid > original) {
         issues.push({
           kind: 'money_account_overpaid',
@@ -257,6 +309,7 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
     invoice_overallocated: 0,
     invoice_balance_mismatch: 0,
     money_account_overpaid: 0,
+    payment_credit_mismatch: 0,
     account_cache_mismatch: 0,
     accounting_event_missing: 0,
     accounting_balance_mismatch: 0,

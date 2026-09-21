@@ -46,47 +46,65 @@ function moneyCustomerPayment(db: Knex) {
 
 const reversedOn = (table: string) => `date(${table}.reversed_at, '+3 hours')`;
 
-export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
-  const moneyCreditsRow = await db('credits as credit')
-    .join('credit_accounts as account', 'credit.account_id', 'account.id')
+// What each money customer owed on a date: credits less payments, plus credit
+// on account paid back to them. A customer can be in credit after a closed-shift
+// correction (receivablePayments.ts); that is money the station owes them, so it
+// is reported on its own instead of being netted against other customers' debt.
+async function moneyNetByAccount(db: Knex, asOfDate: string) {
+  const net = new Map<number, number>();
+  const add = (rows: any[], sign: number) => {
+    for (const row of rows) {
+      const id = Number(row.account_id);
+      net.set(id, (net.get(id) || 0) + sign * Number(row.total || 0));
+    }
+  };
+  add(await moneyCustomer(db('credits as credit'))
     .whereNull('credit.deleted_at')
-    .whereNull('account.deleted_at')
-    .where('account.type', 'customer')
-    .where(function (this: any) {
-      this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
-    })
     .whereRaw("date(credit.created_at, '+3 hours') <= ?", [asOfDate])
-    .sum({ total: 'credit.amount' })
-    .first();
-  const moneyPaymentsRow = await db('credit_payments as payment')
-    .leftJoin('credits as source_credit', 'payment.credit_id', 'source_credit.id')
-    .join(
-      'credit_accounts as account',
-      db.raw('account.id = COALESCE(payment.account_id, source_credit.account_id)'),
-    )
-    .whereNull('payment.deleted_at')
-    .where('payment.status', 'posted')
-    .whereNull('account.deleted_at')
-    .where('account.type', 'customer')
-    .where(function (this: any) {
-      this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
-    })
-    .where('payment.date', '<=', asOfDate)
-    .sum({ total: 'payment.amount' })
-    .first();
+    .groupBy('account.id')
+    .select('account.id as account_id')
+    .sum({ total: 'credit.amount' }), 1);
   // Credits and payments a later correction reversed still stood on this date.
-  const correctedCreditsRow = await moneyCustomer(db('credits as credit'))
+  add(await moneyCustomer(db('credits as credit'))
     .whereNotNull('credit.reversed_by_correction_id')
     .whereRaw("date(credit.created_at, '+3 hours') <= ?", [asOfDate])
     .whereRaw(`${reversedOn('credit')} > ?`, [asOfDate])
-    .sum({ total: 'credit.amount' })
-    .first();
-  const correctedPaymentsRow = await moneyCustomerPayment(db)
+    .groupBy('account.id')
+    .select('account.id as account_id')
+    .sum({ total: 'credit.amount' }), 1);
+  add(await moneyCustomerPayment(db)
+    .where('payment.status', 'posted')
+    .where('payment.date', '<=', asOfDate)
+    .groupBy('account.id')
+    .select('account.id as account_id')
+    .sum({ total: 'payment.amount' }), -1);
+  add(await moneyCustomerPayment(db)
     .whereNotNull('payment.reversed_by_correction_id')
     .where('payment.date', '<=', asOfDate)
     .whereRaw(`${reversedOn('payment')} > ?`, [asOfDate])
-    .sum({ total: 'payment.amount' })
-    .first();
+    .groupBy('account.id')
+    .select('account.id as account_id')
+    .sum({ total: 'payment.amount' }), -1);
+  add(await db('customer_refunds as refund')
+    .join('credit_accounts as account', 'refund.account_id', 'account.id')
+    .whereNull('account.deleted_at')
+    .where('refund.status', 'posted')
+    .where('refund.refund_date', '<=', asOfDate)
+    .groupBy('account.id')
+    .select('account.id as account_id')
+    .sum({ total: 'refund.amount' }), 1);
+  return net;
+}
+
+export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
+  const net = await moneyNetByAccount(db, asOfDate);
+  let owedCents = 0;
+  let creditCents = 0;
+  for (const value of net.values()) {
+    const cents = Math.round(value * 100);
+    if (cents > 0) owedCents += cents;
+    else creditCents -= cents;
+  }
   const invoiceEventsRow = await db('invoice_accounting_events as event')
     .join('credit_accounts as account', 'event.account_id', 'account.id')
     .whereNull('account.deleted_at')
@@ -96,17 +114,12 @@ export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
     .sum({ total: 'event.receivable_delta' })
     .first();
 
-  const moneyCredits = roundMoney(
-    Number((moneyCreditsRow as any)?.total || 0) + Number((correctedCreditsRow as any)?.total || 0),
-  );
-  const moneyPayments = roundMoney(
-    Number((moneyPaymentsRow as any)?.total || 0) + Number((correctedPaymentsRow as any)?.total || 0),
-  );
-  const moneyReceivables = roundMoney(Math.max(0, moneyCredits - moneyPayments));
+  const moneyReceivables = roundMoney(owedCents / 100);
   const invoiceReceivables = roundMoney(Number((invoiceEventsRow as any)?.total || 0));
   return {
     as_of_date: asOfDate,
     money_receivables: moneyReceivables,
+    money_customer_credits: roundMoney(creditCents / 100),
     invoice_receivables: invoiceReceivables,
     total_receivables: roundMoney(moneyReceivables + invoiceReceivables),
   };
@@ -134,10 +147,19 @@ export async function getCurrentReceivableTotals(db: Knex) {
     .where('invoice.balance', '>', 0)
     .sum({ total: 'invoice.balance' })
     .first();
+  const heldRow = await db('credit_payments as payment')
+    .join('credit_accounts as account', 'payment.account_id', 'account.id')
+    .whereNull('account.deleted_at')
+    .whereNull('payment.deleted_at')
+    .where('payment.status', 'posted')
+    .where('payment.unapplied_amount', '>', 0)
+    .sum({ total: 'payment.unapplied_amount' })
+    .first();
   const moneyReceivables = roundMoney(Number((moneyRow as any)?.total || 0));
   const invoiceReceivables = roundMoney(Number((invoiceRow as any)?.total || 0));
   return {
     money_receivables: moneyReceivables,
+    money_customer_credits: roundMoney(Number((heldRow as any)?.total || 0)),
     invoice_receivables: invoiceReceivables,
     total_receivables: roundMoney(moneyReceivables + invoiceReceivables),
   };
@@ -191,6 +213,11 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
     .whereRaw(`${reversedOn('payment')} BETWEEN ? AND ?`, [from, to])
     .sum({ total: 'payment.amount' })
     .first();
+  const refundsRow = await db('customer_refunds')
+    .where({ status: 'posted' })
+    .whereBetween('refund_date', [from, to])
+    .sum({ total: 'amount' })
+    .first();
   const invoiceIssueRow = await db('invoice_accounting_events')
     .where({ event_type: 'invoice_issue' })
     .whereBetween('posting_date', [from, to])
@@ -223,6 +250,8 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
   // reversed (owed again).
   const moneyCreditCorrections = roundMoney(-Number((creditCorrectionsRow as any)?.total || 0));
   const moneyPaymentReversals = roundMoney(Number((paymentReversalsRow as any)?.total || 0));
+  // Credit on account paid back to customers in the period.
+  const moneyRefunds = roundMoney(Number((refundsRow as any)?.total || 0));
   const invoiceIssued = roundMoney(Number((invoiceIssueRow as any)?.total || 0));
   const invoicePaymentsReceived = roundMoney(Number((invoicePaymentRow as any)?.cash || 0));
   const invoiceAdjustments = roundMoney(Number((invoiceAdjustmentRow as any)?.total || 0));
@@ -230,6 +259,7 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
     money_credits_issued: moneyCreditsIssued,
     money_credit_corrections: moneyCreditCorrections,
     money_payment_reversals: moneyPaymentReversals,
+    money_refunds: moneyRefunds,
     invoice_receivables_issued: invoiceIssued,
     invoice_adjustments: invoiceAdjustments,
     total_receivables_issued: roundMoney(

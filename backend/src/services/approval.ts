@@ -29,6 +29,9 @@ export const approvalBindings = {
   // Paying back, or setting off, money owed to an employee after a correction.
   refund_settlement: (fields: any) =>
     `refund_settlement:${Number(fields?.adjustment_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
+  // Paying a customer back credit they hold on account.
+  customer_refund: (fields: any) =>
+    `customer_refund:${Number(fields?.account_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
 };
 
 export type ApprovalPurpose = keyof typeof approvalBindings;
@@ -50,6 +53,12 @@ export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): str
     return /^[0-9a-f]{64}$/.test(String(fields?.confirmation_token ?? ''))
       ? null
       : 'The correction being approved is missing. Preview it again.';
+  }
+  if (purpose === 'customer_refund') {
+    if (!positive(fields?.account_id)) return 'The customer being refunded is missing.';
+    if (!['cash', 'mpesa'].includes(String(fields?.method ?? ''))) return 'Choose how the refund is paid.';
+    if (!positive(fields?.amount)) return 'The amount being approved is missing.';
+    return null;
   }
   if (purpose === 'refund_settlement') {
     if (!positive(fields?.adjustment_id)) return 'The refund being settled is missing.';

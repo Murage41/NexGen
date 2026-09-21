@@ -22,7 +22,8 @@ export type ApprovalPurpose =
   | 'credit_override'
   | 'consumption_override'
   | 'shift_correction'
-  | 'refund_settlement';
+  | 'refund_settlement'
+  | 'customer_refund';
 
 export function useApprover(approval?: ApprovalApi) {
   const [approvers, setApprovers] = useState<{ id: number; name: string }[]>([]);

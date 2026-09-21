@@ -3,7 +3,7 @@ import db from '../database';
 import { reverseEmployeeDebtReceipt } from './employeePay';
 import { recomputeAccountBalance } from './accountBalance';
 import { refreshPayrollLine, refreshPayrollRun } from './payroll';
-import { reverseMoneyAccountPaymentInTransaction } from './receivablePayments';
+import { applyCustomerCredit, reverseMoneyAccountPaymentInTransaction } from './receivablePayments';
 
 type DbConnection = Knex | Knex.Transaction;
 
@@ -153,6 +153,8 @@ export async function cancelOpenShift(
     }
 
     for (const accountId of affectedCustomerAccounts) {
+      // Credit a customer holds on account pays what is owed again.
+      await applyCustomerCredit(trx, accountId);
       await recomputeAccountBalance(accountId, trx);
     }
 
