@@ -22,6 +22,13 @@ export const approvalBindings = {
   // Fuel on account past a limit; the retail value is priced by the server.
   consumption_override: (fields: any) =>
     `consumption_override:${Number(fields?.account_id)}:${Number(fields?.shift_id)}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(3)}`,
+  // A closed-shift correction: its preview token hashes the decision and every
+  // figure it changes (services/shiftCorrections.ts).
+  shift_correction: (fields: any) =>
+    `shift_correction:${String(fields?.confirmation_token ?? '')}`,
+  // Paying back, or setting off, money owed to an employee after a correction.
+  refund_settlement: (fields: any) =>
+    `refund_settlement:${Number(fields?.adjustment_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
 };
 
 export type ApprovalPurpose = keyof typeof approvalBindings;
@@ -39,6 +46,17 @@ const positive = (value: unknown) => Number.isFinite(Number(value)) && Number(va
 // malformed client fails at the PIN prompt instead of later with "no longer
 // matches".
 export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): string | null {
+  if (purpose === 'shift_correction') {
+    return /^[0-9a-f]{64}$/.test(String(fields?.confirmation_token ?? ''))
+      ? null
+      : 'The correction being approved is missing. Preview it again.';
+  }
+  if (purpose === 'refund_settlement') {
+    if (!positive(fields?.adjustment_id)) return 'The refund being settled is missing.';
+    if (!['cash', 'mpesa', 'offset'].includes(String(fields?.method ?? ''))) return 'Choose how the refund is settled.';
+    if (!positive(fields?.amount)) return 'The amount being approved is missing.';
+    return null;
+  }
   if (purpose === 'consumption_override') {
     if (!positive(fields?.account_id) || !positive(fields?.shift_id)) return 'The customer or shift being approved is missing.';
     if (fields?.fuel_type !== 'petrol' && fields?.fuel_type !== 'diesel') return 'The fuel type being approved is missing.';

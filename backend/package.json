@@ -26,7 +26,7 @@
     "test:shift-operations": "tsx scripts/test_shift_operations.ts",
     "test:receivable-payments": "tsx scripts/test_receivable_payment_integrity.ts",
     "test:invoice-consumption": "tsx scripts/test_invoice_consumption_controls.ts",
-    "test:invoice-consumption-corrections": "tsx scripts/test_invoice_consumption_corrections.ts",
+    "test:shift-corrections": "tsx scripts/test_shift_corrections.ts",
     "test:invoice-draft-reservations": "tsx scripts/test_invoice_draft_reservations.ts",
     "test:invoice-accounting": "tsx scripts/test_invoice_accounting_controls.ts",
     "test:receivable-reporting": "tsx scripts/test_receivable_reporting.ts",

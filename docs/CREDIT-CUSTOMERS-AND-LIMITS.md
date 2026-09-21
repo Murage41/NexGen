@@ -78,9 +78,12 @@ While the shift is still open, an administrator can remove a debt payment
 entered by mistake with the bin icon next to it under **Debt Collections**.
 Payments are never erased: the payment is marked reversed and kept on record,
 the customer owes that amount again, and it no longer counts toward the shift's
-cash. Attendants cannot remove payments. After the shift closes, its drawer has
-been reconciled, so a wrong payment is fixed with a shift accounting correction
-instead.
+cash. Attendants cannot remove payments.
+
+After the shift closes, use the pencil next to the payment or credit instead.
+The correction keeps the original on record, fixes the customer's balance, and
+recalculates the attendant's shortage. See
+[Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
 
 ## Release Acceptance Test
 

@@ -16,7 +16,13 @@ export type ApprovalApi = {
   verifyPin: (body: Record<string, unknown>) => Promise<any>;
 };
 
-export type ApprovalPurpose = 'recovery' | 'deduction' | 'credit_override' | 'consumption_override';
+export type ApprovalPurpose =
+  | 'recovery'
+  | 'deduction'
+  | 'credit_override'
+  | 'consumption_override'
+  | 'shift_correction'
+  | 'refund_settlement';
 
 export function useApprover(approval?: ApprovalApi) {
   const [approvers, setApprovers] = useState<{ id: number; name: string }[]>([]);

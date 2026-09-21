@@ -65,8 +65,12 @@ direct receipt and is included in cash reporting once.
 Use **Reverse** with a reason to correct an erroneous receipt. A receipt taken
 in a shift that is still open can also be removed from that shift's **Debt
 Collections** list by an administrator; it is reversed and kept on record the
-same way. Payments tied to a closed drawer require a shift accounting
-correction, since changing them would change an already reconciled drawer. Reversing a wage payment does not
+same way. A receipt on a closed shift is corrected from the shift with the
+pencil next to it, since changing it changes an already reconciled drawer; see
+[Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md). A correction that
+reduces a shortage the employee already repaid shows the repaid part under
+**Owed back after corrections** on their statement, to be paid to them or set
+off against what they owe. Reversing a wage payment does not
 reverse a debt offset; voiding payroll restores its debt allocations after
 ordinary payroll payments have been reversed.
 

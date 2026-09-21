@@ -38,16 +38,42 @@ export async function employeeDebtHistory(
       );
     }
   }
+  // Closed-shift corrections that added to or reduced a shortage, and money
+  // owed back to the employee (services/shiftCorrections.ts).
+  const adjustments = await db('staff_debt_adjustments as a')
+    .leftJoin('shift_accountability_adjustments as c', 'a.accountability_adjustment_id', 'c.id')
+    .where((q) => {
+      q.where('a.employee_id', employeeId);
+      if (debtIds.length) q.orWhereIn('a.staff_debt_id', debtIds);
+    })
+    .select(
+      'a.*',
+      'c.reason as correction_reason',
+      'c.posting_date as correction_posting_date',
+      'c.approved_by_name as correction_approved_by',
+    )
+    .orderBy('a.id');
+  const corrections = adjustments.filter((a) => ['increase', 'decrease'].includes(a.adjustment_type));
+  const refunds = adjustments.filter((a) => a.adjustment_type === 'employee_credit_review');
   for (const debt of summary.debts) {
     const recovered = money(
       history
         .filter((r) => r.staff_debt_id === debt.id && !r.reversed_at)
         .reduce((s, r) => s + Number(r.amount), 0),
     );
+    const corrected = money(
+      corrections
+        .filter((a) => a.staff_debt_id === debt.id && a.adjustment_type === 'decrease' && a.status === 'posted')
+        .reduce((s, a) => s + Number(a.amount), 0),
+    );
     debt.allocated_repayments = recovered;
+    debt.corrected = corrected;
+    debt.created_by_correction_id = corrections.find(
+      (a) => a.staff_debt_id === debt.id && a.adjustment_type === 'increase',
+    )?.accountability_adjustment_id ?? null;
     // Legacy balances include corrections and repayments that predate allocation tracking.
     debt.historical_adjustment = money(
-      Number(debt.balance) - (Number(debt.carried_forward) - recovered),
+      Number(debt.balance) - (Number(debt.carried_forward) - recovered - corrected),
     );
   }
   const receipts = await db('credit_payments as p')
@@ -64,7 +90,10 @@ export async function employeeDebtHistory(
         .whereIn('staff_debt_id', debtIds)
         .orderBy('id')
     : [];
-  return { ...summary, history, receipts, reviews };
+  const owedToEmployee = money(
+    refunds.filter((r) => r.status === 'review_required').reduce((s, r) => s + Number(r.amount), 0),
+  );
+  return { ...summary, history, receipts, reviews, corrections, refunds, owed_to_employee: owedToEmployee };
 }
 
 export async function employeePayStatement(employeeId: number, db: Knex) {
@@ -219,7 +248,7 @@ export async function reverseEmployeeDebtReceipt(
     const shift = await db('shifts').where({ id: payment.shift_id }).first();
     if (!shift || shift.status !== 'open')
       throw settlementError(
-        'A receipt in a closed shift requires a shift accounting correction.',
+        'This receipt is on a closed shift. Use Correct next to it on the shift instead.',
       );
   }
   await reverseDebtAllocations(

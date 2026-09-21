@@ -8,6 +8,8 @@ import {
   reverseDebtReceipt,
   setRecoveryLimit,
   reviewEmployeeDebt,
+  settleEmployeeRefund,
+  desktopApproval,
 } from '../services/api';
 export default function EmployeePay() {
   const { id } = useParams();
@@ -20,11 +22,13 @@ export default function EmployeePay() {
       key={id || 'me'}
       load={load}
       admin={Boolean(id)}
+      approval={desktopApproval}
       actions={{
         receipt: recordDebtReceipt,
         reverseReceipt: reverseDebtReceipt,
         limit: setRecoveryLimit,
         review: reviewEmployeeDebt,
+        settleRefund: settleEmployeeRefund,
       }}
     />
   );

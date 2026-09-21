@@ -2,15 +2,16 @@ import { useState, Fragment } from 'react';
 import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
   getStockReconciliationByShift, getDebtorAging, getCashFlow,
-  exportMonthlyReport, exportStockReconciliation,
+  exportMonthlyReport, exportStockReconciliation, getShiftCorrections,
 } from '../services/api';
+import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
 import {
   BarChart3, Calendar, TrendingUp, TrendingDown, Minus,
   Droplets, AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle, Download,
 } from 'lucide-react';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
-type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow';
+type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow' | 'corrections';
 
 function downloadBlob(response: any, fallbackFilename: string) {
   const disposition = String(response.headers['content-disposition'] || '');
@@ -52,6 +53,11 @@ export default function Reports() {
   const [cfFrom, setCfFrom] = useState(getKenyaMonth() + '-01');
   const [cfTo, setCfTo] = useState(getKenyaDate());
   const [cfData, setCfData] = useState<any>(null);
+
+  // Corrections to closed shifts
+  const [corrFrom, setCorrFrom] = useState(getKenyaMonth() + '-01');
+  const [corrTo, setCorrTo] = useState(getKenyaDate());
+  const [corrData, setCorrData] = useState<any[] | null>(null);
 
   async function loadDailyReport() {
     setLoading(true);
@@ -108,6 +114,12 @@ export default function Reports() {
     catch { setDebtorData(null); }
     finally { setLoading(false); }
   }
+  async function loadCorrections() {
+    setLoading(true);
+    try { const res = await getShiftCorrections({ from: corrFrom, to: corrTo }); setCorrData(res.data.data || []); }
+    catch { setCorrData(null); }
+    finally { setLoading(false); }
+  }
   async function loadCashFlow() {
     setLoading(true);
     try { const res = await getCashFlow({ from: cfFrom, to: cfTo }); setCfData(res.data.data); }
@@ -138,6 +150,7 @@ export default function Reports() {
     { key: 'stock', label: 'Stock Reconciliation' },
     { key: 'debtors', label: 'Debtor Aging' },
     { key: 'cashflow', label: 'Cash Flow' },
+    { key: 'corrections', label: 'Corrections' },
   ];
 
   return (
@@ -390,6 +403,19 @@ export default function Reports() {
                 </div>
               )}
 
+              {/* Corrections posted this day, to this or any earlier closed shift */}
+              {dailyData.corrections && dailyData.corrections.length > 0 && (
+                <div className="bg-white rounded-lg shadow overflow-hidden">
+                  <div className="p-4 border-b bg-blue-50">
+                    <h2 className="text-sm font-semibold text-blue-800 uppercase tracking-wide">Corrections Posted This Day</h2>
+                    <p className="text-xs text-blue-700 mt-1">Shifts above are shown as they were closed. These corrections are dated today and name the shift they correct.</p>
+                  </div>
+                  <div className="px-4">
+                    <ShiftCorrectionList corrections={dailyData.corrections} />
+                  </div>
+                </div>
+              )}
+
               {/* General Expenses */}
               {dailyData.expenses && dailyData.expenses.length > 0 && (
                 <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -581,6 +607,12 @@ export default function Reports() {
                   <div className="py-2">
                     <PnLRow label="Opening Receivables" value={monthlyData.opening_receivables} />
                     <PnLRow label="+ Money Credits Issued" value={monthlyData.money_credits_issued} color="text-amber-600" indent />
+                    {Number(monthlyData.money_credit_corrections || 0) !== 0 && (
+                      <PnLRow label="- Credits Reversed by Corrections" value={monthlyData.money_credit_corrections} color="text-green-700" indent />
+                    )}
+                    {Number(monthlyData.money_payment_reversals || 0) !== 0 && (
+                      <PnLRow label="+ Payments Reversed by Corrections" value={monthlyData.money_payment_reversals} color="text-amber-600" indent />
+                    )}
                     <PnLRow label="+ Customer Invoices Issued" value={monthlyData.invoice_receivables_issued} color="text-amber-600" indent />
                     <PnLRow
                       label="+/- Credit & Debit Notes / Voids"
@@ -981,6 +1013,9 @@ export default function Reports() {
                     <PnLRow label="Wages Paid" value={cfData.outflows.wages_paid} color="text-red-600" />
                     <PnLRow label="Shift Expenses" value={cfData.outflows.shift_expenses} color="text-red-600" />
                     <PnLRow label="General Expenses" value={cfData.outflows.general_expenses} color="text-red-600" />
+                    {Number(cfData.outflows.employee_refunds || 0) > 0 && (
+                      <PnLRow label="Refunds to Employees" value={cfData.outflows.employee_refunds} color="text-red-600" />
+                    )}
                     <PnLRow label="Total Outflows" value={cfData.outflows.total} bold border color="text-red-700" />
                   </div>
                 </div>
@@ -1001,6 +1036,74 @@ export default function Reports() {
           {!cfData && !loading && (
             <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
               Select a date range and click "Generate Report".
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── CORRECTIONS ───────────────────────────────────────────── */}
+      {activeTab === 'corrections' && (
+        <div>
+          <div className="bg-white rounded-lg shadow p-4 mb-6 flex items-center gap-4 flex-wrap">
+            <Calendar size={18} className="text-gray-400" />
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">From</label>
+              <input type="date" value={corrFrom} onChange={e => setCorrFrom(e.target.value)}
+                className="border border-gray-300 rounded-lg p-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">To</label>
+              <input type="date" value={corrTo} onChange={e => setCorrTo(e.target.value)}
+                className="border border-gray-300 rounded-lg p-2 text-sm" />
+            </div>
+            <button onClick={loadCorrections} disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm mt-4">
+              {loading ? 'Loading...' : 'Show Corrections'}
+            </button>
+          </div>
+          {corrData && (
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <div className="p-4 border-b bg-gray-50">
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Corrections to Closed Shifts</h2>
+                <p className="text-xs text-gray-500 mt-1">Every correction, by the day it was posted: what changed, who approved it, and its effect on the attendant.</p>
+              </div>
+              {corrData.length === 0 ? (
+                <p className="p-6 text-center text-gray-400 text-sm">No corrections in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="text-left p-3 font-medium text-gray-600">Posted</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Shift</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Correction</th>
+                      <th className="text-right p-3 font-medium text-gray-600">Shift balance</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Approved by</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {corrData.map((c: any) => (
+                      <tr key={c.id} className="border-t align-top">
+                        <td className="p-3 whitespace-nowrap">{c.posting_date || String(c.created_at || '').slice(0, 10)}<p className="text-xs text-gray-400">#{c.id}</p></td>
+                        <td className="p-3 whitespace-nowrap">#{c.shift_id} · {c.shift_date}<p className="text-xs text-gray-400">{c.attendant_name}</p></td>
+                        <td className="p-3">
+                          {c.reason}
+                          {c.note && <p className="text-xs text-gray-500">Note: {c.note}</p>}
+                          {c.details?.attendant?.debt_added > 0 && <p className="text-xs text-red-600">{c.details.attendant.name} charged {kes(c.details.attendant.debt_added)}</p>}
+                          {c.details?.attendant?.debt_reduced > 0 && <p className="text-xs text-green-700">{c.details.attendant.name}'s shortage reduced by {kes(c.details.attendant.debt_reduced)}</p>}
+                          {c.details?.attendant?.refund_owed > 0 && <p className="text-xs text-amber-700">{kes(c.details.attendant.refund_owed)} owed back to {c.details.attendant.name}</p>}
+                        </td>
+                        <td className="p-3 text-right font-mono whitespace-nowrap">{describeShiftBalance(c.variance_before)} → {describeShiftBalance(c.variance_after)}</td>
+                        <td className="p-3">{c.approved_by_name || '—'}{c.recorded_by_name && c.recorded_by_name !== c.approved_by_name && <p className="text-xs text-gray-400">recorded by {c.recorded_by_name}</p>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+          {!corrData && !loading && (
+            <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
+              Select a date range and click "Show Corrections".
             </div>
           )}
         </div>

@@ -366,45 +366,92 @@ router.get('/:id/statement', async (req, res) => {
         });
       }
     } else if (account.type === 'customer') {
-      // Debits: credits added (money owed increases)
+      // Debits: credits added (money owed increases). A credit a closed-shift
+      // correction reversed keeps its line, and the reversal gets its own on
+      // the day it was posted, so an earlier statement never changes.
       const credits = await db('credits')
-        .where({ account_id: account.id })
-        .whereNull('deleted_at')
-        .select('created_at as date', 'description', 'amount')
-        .orderBy('created_at', 'asc');
+        .leftJoin('shift_accountability_adjustments as correction', 'credits.reversed_by_correction_id', 'correction.id')
+        .where('credits.account_id', account.id)
+        .where((q) => q.whereNull('credits.deleted_at').orWhereNotNull('credits.reversed_by_correction_id'))
+        .select(
+          'credits.created_at as date',
+          'credits.description',
+          'credits.amount',
+          'credits.shift_id',
+          'credits.correction_of_id',
+          'credits.reversed_at',
+          'credits.reversed_by_correction_id',
+          'correction.reason as correction_reason',
+        )
+        .orderBy('credits.created_at', 'asc');
 
       for (const c of credits) {
         entries.push({
           date: c.date,
-          description: c.description || 'Credit issued',
+          description: c.correction_of_id
+            ? `Corrected credit, shift #${c.shift_id}${c.description ? ` (${c.description})` : ''}`
+            : c.description || 'Credit issued',
           debit_amount: Number(c.amount),
           credit_amount: 0,
         });
+        if (c.reversed_by_correction_id) {
+          entries.push({
+            date: c.reversed_at,
+            description: `Correction #${c.reversed_by_correction_id}: ${c.correction_reason || 'credit reversed'}`,
+            debit_amount: 0,
+            credit_amount: Number(c.amount),
+          });
+        }
       }
 
       // Credits: payments made (money owed decreases)
       const payments = await db('credit_payments')
-        .where({ account_id: account.id, status: 'posted' })
-        .whereNull('deleted_at')
-        .select('date', 'notes', 'amount', 'payment_method', 'payment_type')
-        .orderBy('date', 'asc');
+        .leftJoin('shift_accountability_adjustments as correction', 'credit_payments.reversed_by_correction_id', 'correction.id')
+        .where('credit_payments.account_id', account.id)
+        .whereNull('credit_payments.deleted_at')
+        .where((q) => q.where('credit_payments.status', 'posted').orWhereNotNull('credit_payments.reversed_by_correction_id'))
+        .select(
+          'credit_payments.date',
+          'credit_payments.notes',
+          'credit_payments.amount',
+          'credit_payments.payment_method',
+          'credit_payments.payment_type',
+          'credit_payments.correction_of_id',
+          'credit_payments.reversed_at',
+          'credit_payments.reversed_by_correction_id',
+          'correction.reason as correction_reason',
+        )
+        .orderBy('credit_payments.date', 'asc');
 
       for (const p of payments) {
         const label = p.payment_type === 'account' ? 'Account payment' : 'Credit payment';
         entries.push({
           date: p.date,
-          description: p.notes || `${label} (${p.payment_method})`,
+          description: p.correction_of_id
+            ? `Corrected payment (${p.payment_method})`
+            : p.notes || `${label} (${p.payment_method})`,
           debit_amount: 0,
           credit_amount: Number(p.amount),
         });
+        if (p.reversed_by_correction_id) {
+          entries.push({
+            date: p.reversed_at,
+            description: `Correction #${p.reversed_by_correction_id}: ${p.correction_reason || 'payment reversed'}`,
+            debit_amount: Number(p.amount),
+            credit_amount: 0,
+          });
+        }
       }
     } else if (account.type === 'employee') {
       const data = await employeeDebtHistory(Number(account.employee_id), db);
       for (const debt of data.debts) {
-        entries.push({ date: debt.created_at, description: `Shift #${debt.shift_id} deficit carried forward`, debit_amount: Number(debt.carried_forward), credit_amount: 0 });
+        entries.push({ date: debt.created_at, description: debt.created_by_correction_id ? `Correction #${debt.created_by_correction_id}: shortage added for shift #${debt.shift_id}` : `Shift #${debt.shift_id} deficit carried forward`, debit_amount: Number(debt.carried_forward), credit_amount: 0 });
         if (debt.historical_adjustment) entries.push({ date: debt.created_at, description: `Historical corrections / settlements for shift #${debt.shift_id} (not a new repayment)`, debit_amount: Math.max(0, debt.historical_adjustment), credit_amount: Math.max(0, -debt.historical_adjustment) });
       }
       for (const item of data.history.filter(h => !h.reversed_at)) entries.push({ date: item.created_at || data.debts.find(d => d.id === item.staff_debt_id)?.created_at, description: `${item.type} #${item.source_id} for shift #${item.origin_shift_id}`, debit_amount: 0, credit_amount: Number(item.amount) });
+      // Shortage reduced by a closed-shift correction, or set off against money
+      // owed back to them.
+      for (const item of data.corrections.filter((a: any) => a.adjustment_type === 'decrease' && a.status === 'posted')) entries.push({ date: item.created_at, description: item.reason, debit_amount: 0, credit_amount: Number(item.amount) });
     }
 
     // Sort chronologically

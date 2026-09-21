@@ -7,6 +7,7 @@ export interface ShiftTimelineInput {
   expenses?: any[];
   payrollPayments?: any[];
   reviewEvents?: any[];
+  corrections?: any[];
 }
 
 export interface ShiftTimelineEvent {
@@ -156,6 +157,21 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
       description: review.notes ? `${actor}: ${review.notes}` : actor,
       occurred_at: occurredAt,
       precision: 'time',
+    });
+  }
+
+  for (const correction of input.corrections || []) {
+    const occurredAt = eventTime(correction.created_at);
+    if (!occurredAt) continue;
+    const by = correction.approved_by_name ? `Approved by ${correction.approved_by_name}` : null;
+    events.push({
+      id: `shift-correction-${correction.id}`,
+      type: 'shift_correction',
+      title: 'Correction posted after close',
+      description: [correction.reason, by].filter(Boolean).join('. ') || null,
+      occurred_at: occurredAt,
+      precision: 'time',
+      amount: amount(Number(correction.variance_after || 0) - Number(correction.variance_before || 0)),
     });
   }
 

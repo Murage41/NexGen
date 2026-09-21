@@ -36,6 +36,8 @@ import {
   reverseEmployeeDebtReceipt,
 } from '../services/employeePay';
 import { settlementError, positiveMoney } from '../services/employeeDebt';
+import { owedRefund, settleEmployeeRefund, type RefundMethod } from '../services/employeeRefunds';
+import { approvalBindings, resolveApprover } from '../services/approval';
 
 const router = Router();
 const fail = (res: any, e: any) =>
@@ -112,6 +114,30 @@ router.post(
         actor(req),
       ),
     ),
+);
+// Settle money owed back to an employee after a closed-shift correction:
+// { method: 'cash'|'mpesa'|'offset', date?, reference?, approval_token? }.
+router.post('/refunds/:id/settle', (req: any, res) =>
+  mutate(req, res, `refund-settle:${req.params.id}`, async (trx) => {
+    const method = String(req.body?.method || '') as RefundMethod;
+    if (!['cash', 'mpesa', 'offset'].includes(method)) {
+      throw settlementError('Choose how the refund was settled.', 400);
+    }
+    const { amount } = await owedRefund(trx, Number(req.params.id));
+    const approver = await resolveApprover(
+      actor(req),
+      req.body?.approval_token,
+      approvalBindings.refund_settlement({ adjustment_id: Number(req.params.id), method, amount }),
+      trx,
+    );
+    return settleEmployeeRefund(trx, {
+      adjustmentId: Number(req.params.id),
+      method,
+      date: req.body?.date || null,
+      reference: req.body?.reference || null,
+      approver,
+    });
+  }),
 );
 router.put('/employees/:id/recovery-limit', async (req, res) => {
   try {

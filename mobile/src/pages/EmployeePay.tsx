@@ -8,6 +8,7 @@ import {
   reverseDebtReceipt,
   setRecoveryLimit,
   reviewEmployeeDebt,
+  settleEmployeeRefund,
 } from '../services/api';
 export default function EmployeePay() {
   const { id } = useParams();
@@ -25,6 +26,7 @@ export default function EmployeePay() {
         reverseReceipt: reverseDebtReceipt,
         limit: setRecoveryLimit,
         review: reviewEmployeeDebt,
+        settleRefund: settleEmployeeRefund,
       }}
     />
   );

@@ -1,11 +1,12 @@
 import { DailyRecovery } from '../../../shared/ui/DailyRecovery';
-import { previewShiftRecovery } from '../services/api';
+import { ShiftCorrectionForm, ShiftCorrectionList, describeShiftBalance, type CorrectionEntry } from '../../../shared/ui/ShiftCorrection';
+import { previewShiftRecovery, shiftCorrectionApi } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
 
 function compensationComponentLabel(component: any, schedule: string) {
@@ -48,6 +49,9 @@ export default function ShiftDetail() {
   const [receiptForm, setReceiptForm] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
   const [collectingReceipt, setCollectingReceipt] = useState(false);
   const receiptOperation = useRef<{ fingerprint: string; key: string } | null>(null);
+  // A closed shift's entries are corrected, never edited (shared/ui/ShiftCorrection).
+  const [correcting, setCorrecting] = useState<CorrectionEntry | null>(null);
+  const [correctionAccounts, setCorrectionAccounts] = useState<any[]>([]);
 
   useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
 
@@ -66,6 +70,21 @@ export default function ShiftDetail() {
         a.type === 'customer' && Number(a.outstanding_balance ?? a.balance ?? 0) > 0
       ));
     } catch { setCreditAccounts([]); }
+  }
+
+  async function openCorrection(entry: CorrectionEntry) {
+    setCorrecting(entry);
+    if (correctionAccounts.length) return;
+    try {
+      const res = await getCreditAccounts();
+      setCorrectionAccounts(res.data.data || res.data || []);
+    } catch { setCorrectionAccounts([]); }
+  }
+
+  async function correctionPosted() {
+    setCorrecting(null);
+    setCorrectionAccounts([]);
+    await Promise.all([loadShift(), loadCreditAccounts()]);
   }
 
   async function loadShift() {
@@ -196,6 +215,13 @@ export default function ShiftDetail() {
 
   const fmt = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const isOpen = shift.status === 'open';
+  const canCorrect = isAdmin && shift.status === 'closed';
+  const corrections: any[] = shift.corrections || [];
+  const correctButton = (entry: CorrectionEntry) => (
+    <button onClick={() => void openCorrection(entry)} className="ml-2 p-1 text-blue-600" aria-label="Correct this entry">
+      <Pencil size={14} />
+    </button>
+  );
   const isCancelled = shift.status === 'cancelled';
   const expected = shift.expected_sales || 0;
   const totalCash = shift.total_cash || 0;
@@ -343,6 +369,11 @@ export default function ShiftDetail() {
             <span>Collections reviewed</span>
             <span>Entries reviewed</span>
           </div>
+          {corrections.length > 0 && (
+            <p className="mt-3 border-t pt-2 text-sm text-gray-700">
+              After {corrections.length} correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>. The figures above are as the shift was closed.
+            </p>
+          )}
           {shift.close_reconciliation.variance_reason && (
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">{shift.close_reconciliation.variance_reason}</p>
           )}
@@ -614,12 +645,15 @@ export default function ShiftDetail() {
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
           <p className="font-semibold text-gray-700 mb-2">Credits Given</p>
           {shift.shift_credits.map((c: any) => (
-            <div key={c.id} className="flex justify-between py-1 text-sm">
+            <div key={c.id} className="flex justify-between items-center py-1 text-sm">
               <div>
                 <span className="text-gray-600 font-medium">{c.customer_name}</span>
                 {c.description && <span className="text-gray-400 ml-1 text-xs">({c.description})</span>}
               </div>
-              <span>{fmt(c.amount)}</span>
+              <span className="flex items-center">
+                {fmt(c.amount)}
+                {canCorrect && c.account_id && correctButton({ entry_type: 'credit', entry_id: c.id, account_id: c.account_id, account_name: c.customer_name, amount: Number(c.amount) })}
+              </span>
             </div>
           ))}
           <div className="flex justify-between border-t pt-1 mt-1 text-sm font-bold">
@@ -634,14 +668,19 @@ export default function ShiftDetail() {
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-purple-400">
           <p className="font-semibold text-gray-700 mb-2">Invoice Consumption (litres)</p>
           {shift.invoice_consumption.map((c: any) => (
-            <div key={c.id} className="flex justify-between py-1 text-sm">
+            <div key={c.id} className="flex justify-between items-center py-1 text-sm">
               <div>
                 <span className="text-gray-600 font-medium">{c.account_name}</span>
                 <span className="text-gray-400 ml-1 text-xs">
                   ({Number(c.litres).toLocaleString()} L {c.fuel_type} @ {fmt(Number(c.retail_price_at_time))})
                 </span>
               </div>
-              <span>{fmt(Number(c.retail_amount))}</span>
+              <span className="flex items-center">
+                {fmt(Number(c.retail_amount))}
+                {canCorrect && (c.invoice_line_id
+                  ? <span className="ml-2 text-[10px] text-gray-400">on invoice</span>
+                  : correctButton({ entry_type: 'invoice_consumption', entry_id: c.id, account_id: c.account_id, account_name: c.account_name, litres: Number(c.litres), fuel_type: c.fuel_type, pump_id: c.pump_id }))}
+              </span>
             </div>
           ))}
           <div className="flex justify-between border-t pt-1 mt-1 text-sm font-bold">
@@ -717,7 +756,10 @@ export default function ShiftDetail() {
                     {r.payment_method}
                   </span>
                 </div>
-                <p className="font-semibold text-sm">{fmt(Number(r.amount))}</p>
+                <p className="font-semibold text-sm flex items-center">
+                  {fmt(Number(r.amount))}
+                  {canCorrect && correctButton({ entry_type: 'payment', entry_id: r.id, account_id: r.account_id, account_name: r.account_name, amount: Number(r.amount), payment_method: r.payment_method })}
+                </p>
               </div>
             ))}
             <div className="flex justify-between pt-1 text-sm font-bold border-t">
@@ -729,6 +771,38 @@ export default function ShiftDetail() {
           <p className="text-sm text-gray-400">No debt collections this shift</p>
         )}
       </div>
+
+      {/* Corrections posted after close */}
+      {corrections.length > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-blue-400">
+          <p className="font-semibold text-gray-700">Corrections after close</p>
+          <p className="text-xs text-gray-500 mb-1">Nothing was edited. Each correction reversed an entry, kept it on record, and is dated the day it was made.</p>
+          <ShiftCorrectionList corrections={corrections} />
+        </div>
+      )}
+
+      {correcting && (
+        <div className="mobile-modal-overlay flex items-end justify-center">
+          <div className="mobile-bottom-sheet max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl p-5">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Correct an entry</h3>
+                <p className="text-xs text-gray-500">Shift #{shift.id} is closed, so the entry is not edited: it is reversed and kept on record.</p>
+              </div>
+              <button onClick={() => setCorrecting(null)} className="p-1 text-gray-500" aria-label="Close"><X size={20} /></button>
+            </div>
+            <ShiftCorrectionForm
+              shiftId={shift.id}
+              entry={correcting}
+              accounts={correctionAccounts}
+              pumps={(shift.readings || []).map((r: any) => ({ pump_id: r.pump_id, pump_label: r.pump_label, nozzle_label: r.nozzle_label, fuel_type: r.fuel_type }))}
+              api={shiftCorrectionApi}
+              onDone={correctionPosted}
+              onCancel={() => setCorrecting(null)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       {isOpen && (

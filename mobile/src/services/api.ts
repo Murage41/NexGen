@@ -139,22 +139,14 @@ export const updateInvoiceConsumption = (shiftId: number, entryId: number, data:
   api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
 export const deleteInvoiceConsumption = (shiftId: number, entryId: number) =>
   api.delete(`/shifts/${shiftId}/invoice-consumption/${entryId}`);
-export const previewInvoiceConsumptionCorrection = (
-  shiftId: number,
-  entryId: number,
-  data: { litres: number; pump_id?: number | null; tank_id?: number | null },
-) => api.post(`/shifts/${shiftId}/invoice-consumption/${entryId}/correction-preview`, data);
-export const correctInvoiceConsumption = (
-  shiftId: number,
-  entryId: number,
-  data: {
-    litres: number;
-    pump_id?: number | null;
-    tank_id?: number | null;
-    reason: string;
-    confirmation_token: string;
-  },
-) => api.post(`/shifts/${shiftId}/invoice-consumption/${entryId}/correct`, data);
+// Closed-shift corrections: a credit, payment or fuel-on-account entry of a
+// closed shift is reversed and replaced, never edited (shared/ui/ShiftCorrection).
+// The signed-in administrator approves as themselves.
+export const previewShiftCorrection = (shiftId: number, data: Record<string, unknown>) =>
+  api.post(`/shifts/${shiftId}/corrections/preview`, data);
+export const postShiftCorrection = (shiftId: number, data: Record<string, unknown>) =>
+  api.post(`/shifts/${shiftId}/corrections`, data);
+export const shiftCorrectionApi = { preview: previewShiftCorrection, post: postShiftCorrection };
 
 // Employees
 export const getEmployees = () => api.get('/employees');
@@ -310,6 +302,8 @@ export const recordDebtReceipt = (id: number, data: any, key: string) => financi
 export const reverseDebtReceipt = (id: number, reason: string) => financialPost(`/payroll/receipts/${id}/reverse`, { reason });
 export const setRecoveryLimit = (id: number, percent: number) => api.put(`/payroll/employees/${id}/recovery-limit`, { percent });
 export const reviewEmployeeDebt = (id: number, data: any) => api.put(`/payroll/debts/${id}/review`, data);
+// Money owed back to an employee after a closed-shift correction.
+export const settleEmployeeRefund = (id: number, data: Record<string, unknown>) => financialPost(`/payroll/refunds/${id}/settle`, data);
 export const previewShiftRecovery = (id: number, wage_paid: number) => api.post(`/shifts/${id}/recovery-preview`, { wage_paid });
 
 export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/${id}/supplement`);

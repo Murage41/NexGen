@@ -16,6 +16,36 @@ export function previousBusinessDate(date: string) {
   return parsed.toISOString().slice(0, 10);
 }
 
+// Closed-shift corrections (services/shiftCorrections.ts) reverse a credit or
+// payment on the day they are posted. Until then it counted, so positions and
+// activity for earlier dates keep it; the reversal lands on its own date.
+function moneyCustomer(query: any) {
+  return query
+    .join('credit_accounts as account', 'credit.account_id', 'account.id')
+    .whereNull('account.deleted_at')
+    .where('account.type', 'customer')
+    .where(function (this: any) {
+      this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
+    });
+}
+
+function moneyCustomerPayment(db: Knex) {
+  return db('credit_payments as payment')
+    .leftJoin('credits as source_credit', 'payment.credit_id', 'source_credit.id')
+    .join(
+      'credit_accounts as account',
+      db.raw('account.id = COALESCE(payment.account_id, source_credit.account_id)'),
+    )
+    .whereNull('payment.deleted_at')
+    .whereNull('account.deleted_at')
+    .where('account.type', 'customer')
+    .where(function (this: any) {
+      this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
+    });
+}
+
+const reversedOn = (table: string) => `date(${table}.reversed_at, '+3 hours')`;
+
 export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
   const moneyCreditsRow = await db('credits as credit')
     .join('credit_accounts as account', 'credit.account_id', 'account.id')
@@ -44,6 +74,19 @@ export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
     .where('payment.date', '<=', asOfDate)
     .sum({ total: 'payment.amount' })
     .first();
+  // Credits and payments a later correction reversed still stood on this date.
+  const correctedCreditsRow = await moneyCustomer(db('credits as credit'))
+    .whereNotNull('credit.reversed_by_correction_id')
+    .whereRaw("date(credit.created_at, '+3 hours') <= ?", [asOfDate])
+    .whereRaw(`${reversedOn('credit')} > ?`, [asOfDate])
+    .sum({ total: 'credit.amount' })
+    .first();
+  const correctedPaymentsRow = await moneyCustomerPayment(db)
+    .whereNotNull('payment.reversed_by_correction_id')
+    .where('payment.date', '<=', asOfDate)
+    .whereRaw(`${reversedOn('payment')} > ?`, [asOfDate])
+    .sum({ total: 'payment.amount' })
+    .first();
   const invoiceEventsRow = await db('invoice_accounting_events as event')
     .join('credit_accounts as account', 'event.account_id', 'account.id')
     .whereNull('account.deleted_at')
@@ -53,8 +96,12 @@ export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
     .sum({ total: 'event.receivable_delta' })
     .first();
 
-  const moneyCredits = roundMoney(Number((moneyCreditsRow as any)?.total || 0));
-  const moneyPayments = roundMoney(Number((moneyPaymentsRow as any)?.total || 0));
+  const moneyCredits = roundMoney(
+    Number((moneyCreditsRow as any)?.total || 0) + Number((correctedCreditsRow as any)?.total || 0),
+  );
+  const moneyPayments = roundMoney(
+    Number((moneyPaymentsRow as any)?.total || 0) + Number((correctedPaymentsRow as any)?.total || 0),
+  );
   const moneyReceivables = roundMoney(Math.max(0, moneyCredits - moneyPayments));
   const invoiceReceivables = roundMoney(Number((invoiceEventsRow as any)?.total || 0));
   return {
@@ -122,6 +169,28 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
     .whereBetween('payment.date', [from, to])
     .sum({ total: 'payment.amount' })
     .first();
+  // Gross: credits issued and payments received in the period count even if a
+  // later correction reversed them; that correction is its own line.
+  const correctedIssuedRow = await moneyCustomer(db('credits as credit'))
+    .whereNotNull('credit.reversed_by_correction_id')
+    .whereRaw("date(credit.created_at, '+3 hours') BETWEEN ? AND ?", [from, to])
+    .sum({ total: 'credit.amount' })
+    .first();
+  const correctedReceivedRow = await moneyCustomerPayment(db)
+    .whereNotNull('payment.reversed_by_correction_id')
+    .whereBetween('payment.date', [from, to])
+    .sum({ total: 'payment.amount' })
+    .first();
+  const creditCorrectionsRow = await moneyCustomer(db('credits as credit'))
+    .whereNotNull('credit.reversed_by_correction_id')
+    .whereRaw(`${reversedOn('credit')} BETWEEN ? AND ?`, [from, to])
+    .sum({ total: 'credit.amount' })
+    .first();
+  const paymentReversalsRow = await moneyCustomerPayment(db)
+    .whereNotNull('payment.reversed_by_correction_id')
+    .whereRaw(`${reversedOn('payment')} BETWEEN ? AND ?`, [from, to])
+    .sum({ total: 'payment.amount' })
+    .first();
   const invoiceIssueRow = await db('invoice_accounting_events')
     .where({ event_type: 'invoice_issue' })
     .whereBetween('posting_date', [from, to])
@@ -144,16 +213,28 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
     .sum({ total: 'receivable_delta' })
     .first();
 
-  const moneyCreditsIssued = roundMoney(Number((moneyCreditsRow as any)?.total || 0));
-  const moneyPaymentsReceived = roundMoney(Number((moneyPaymentsRow as any)?.total || 0));
+  const moneyCreditsIssued = roundMoney(
+    Number((moneyCreditsRow as any)?.total || 0) + Number((correctedIssuedRow as any)?.total || 0),
+  );
+  const moneyPaymentsReceived = roundMoney(
+    Number((moneyPaymentsRow as any)?.total || 0) + Number((correctedReceivedRow as any)?.total || 0),
+  );
+  // Credits a correction reversed in the period (owed less), and payments it
+  // reversed (owed again).
+  const moneyCreditCorrections = roundMoney(-Number((creditCorrectionsRow as any)?.total || 0));
+  const moneyPaymentReversals = roundMoney(Number((paymentReversalsRow as any)?.total || 0));
   const invoiceIssued = roundMoney(Number((invoiceIssueRow as any)?.total || 0));
   const invoicePaymentsReceived = roundMoney(Number((invoicePaymentRow as any)?.cash || 0));
   const invoiceAdjustments = roundMoney(Number((invoiceAdjustmentRow as any)?.total || 0));
   return {
     money_credits_issued: moneyCreditsIssued,
+    money_credit_corrections: moneyCreditCorrections,
+    money_payment_reversals: moneyPaymentReversals,
     invoice_receivables_issued: invoiceIssued,
     invoice_adjustments: invoiceAdjustments,
-    total_receivables_issued: roundMoney(moneyCreditsIssued + invoiceIssued + invoiceAdjustments),
+    total_receivables_issued: roundMoney(
+      moneyCreditsIssued + moneyCreditCorrections + moneyPaymentReversals + invoiceIssued + invoiceAdjustments,
+    ),
     money_payments_received: moneyPaymentsReceived,
     invoice_payments_received: invoicePaymentsReceived,
     total_payments_received: roundMoney(moneyPaymentsReceived + invoicePaymentsReceived),

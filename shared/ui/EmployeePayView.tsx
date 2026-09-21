@@ -3,8 +3,83 @@ import { ReasonDialog } from './ReasonDialog';
 import { newOperationKey } from './operationKey';
 import { useEffect, useRef, useState } from 'react';
 import { PayrollStatement, kes } from './PayrollStatement';
+import { ApproverFields, useApprover, type ApprovalApi } from './ApproverConfirm';
 
-export function EmployeePayView({ load, admin = false, actions }: any) {
+const kenyaToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
+
+// Money owed back to an employee after a closed-shift correction reduced a
+// shortage they had already repaid. Settled in full: paid to them, or set off
+// against what they owe now. Never through payroll, which carries earned wages.
+function SettleRefund({ refund, approval, settle, onDone, onCancel }: {
+  refund: any;
+  approval?: ApprovalApi;
+  settle: (id: number, body: Record<string, unknown>) => Promise<any>;
+  onDone: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  const approver = useApprover(approval);
+  const [method, setMethod] = useState('cash');
+  const [date, setDate] = useState(kenyaToday());
+  const [reference, setReference] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit() {
+    setBusy(true);
+    setError('');
+    try {
+      const approved = await approver.confirm('refund_settlement', {
+        adjustment_id: refund.id,
+        method,
+        amount: Number(refund.amount),
+      });
+      await settle(refund.id, {
+        method,
+        ...(method === 'offset' ? {} : { date }),
+        reference: reference.trim() || undefined,
+        ...(approved.approval_token ? { approval_token: approved.approval_token } : {}),
+      });
+      await onDone();
+    } catch (e: any) {
+      setError(e.response?.data?.error || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="border rounded-lg p-3 mt-2 space-y-2 bg-gray-50 print:hidden">
+      <label className="block text-sm">
+        How it was settled
+        <select className="w-full border rounded-lg p-2 mt-1 bg-white" value={method} onChange={(e) => setMethod(e.target.value)}>
+          <option value="cash">Paid to them in cash</option>
+          <option value="mpesa">Paid to them by M-Pesa</option>
+          <option value="offset">Set off against what they owe now</option>
+        </select>
+      </label>
+      {method !== 'offset' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <label className="block text-sm">
+            Date paid
+            <input type="date" className="w-full border rounded-lg p-2 mt-1 bg-white" value={date} onChange={(e) => setDate(e.target.value)} />
+          </label>
+          <label className="block text-sm">
+            Reference (optional)
+            <input className="w-full border rounded-lg p-2 mt-1 bg-white" maxLength={100} value={reference} onChange={(e) => setReference(e.target.value)} />
+          </label>
+        </div>
+      )}
+      <ApproverFields state={approver} inputClassName="w-full border rounded-lg p-2 mt-1 bg-white" />
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      <div className="flex gap-2 justify-end">
+        <button type="button" className="px-3 py-2 rounded-lg text-gray-700" onClick={onCancel}>Cancel</button>
+        <button type="button" disabled={busy || !approver.ready} onClick={() => void submit()} className="px-3 py-2 rounded-lg bg-blue-700 text-white disabled:opacity-50">
+          {busy ? 'Saving…' : `Settle ${kes(refund.amount)}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function EmployeePayView({ load, admin = false, actions, approval }: any) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -22,6 +97,7 @@ export function EmployeePayView({ load, admin = false, actions }: any) {
   const [limit, setLimit] = useState('100');
   const [reviewAction, setReviewAction] = useState<any>(null);
   const [reviewStatus, setReviewStatus] = useState('confirmed');
+  const [settling, setSettling] = useState<number | null>(null);
   async function refresh() {
     try {
       const r = await load();
@@ -93,6 +169,12 @@ export function EmployeePayView({ load, admin = false, actions }: any) {
           <p className="text-sm text-gray-500">Outstanding debt</p>
           <p className="text-xl font-semibold">{kes(data.debt.outstanding)}</p>
         </div>
+        {Number(data.debt.owed_to_employee || 0) > 0 && (
+          <div className="border border-amber-300 bg-amber-50 rounded-xl p-4 col-span-2">
+            <p className="text-sm text-amber-800">Owed back to {admin ? data.employee.name : 'you'} after a correction</p>
+            <p className="text-xl font-semibold text-amber-900">{kes(data.debt.owed_to_employee)}</p>
+          </div>
+        )}
       </div>
       <details className="bg-white border rounded-xl p-4">
         <summary className="font-semibold cursor-pointer">
@@ -186,9 +268,21 @@ export function EmployeePayView({ load, admin = false, actions }: any) {
             </p>
             <p className="text-sm mt-2">
               Carried forward {kes(d.carried_forward)} − allocated repayments{' '}
-              {kes(d.allocated_repayments)} + historical adjustments{' '}
+              {kes(d.allocated_repayments)}
+              {Number(d.corrected || 0) > 0 && <> − corrections {kes(d.corrected)}</>}
+              {' '}+ historical adjustments{' '}
               {kes(d.historical_adjustment)} = {kes(d.balance)}
             </p>
+            {d.created_by_correction_id && (
+              <p className="text-xs text-blue-800 mt-1">Added by correction #{d.created_by_correction_id} after the shift closed.</p>
+            )}
+            {(data.debt.corrections || [])
+              .filter((a: any) => a.staff_debt_id === d.id && a.adjustment_type === 'decrease')
+              .map((a: any) => (
+                <p key={`correction:${a.id}`} className="text-sm mt-1">
+                  {String(a.created_at || '').slice(0, 10)} · {a.reason} · −{kes(a.amount)}
+                </p>
+              ))}
             {Number(d.historical_adjustment) !== 0 && (
               <p className="text-xs text-amber-800">
                 Historical adjustments include corrections or settlements
@@ -226,6 +320,36 @@ export function EmployeePayView({ load, admin = false, actions }: any) {
             )}
           </details>
         ))}
+        {(data.debt.refunds || []).length > 0 && (
+          <div className="border-t pt-3 space-y-2">
+            <h3 className="font-semibold">Owed back after corrections</h3>
+            {data.debt.refunds.map((r: any) => (
+              <div key={r.id} className="text-sm border rounded-lg p-3">
+                <p>
+                  {String(r.created_at || '').slice(0, 10)} · shift #{r.shift_id} · {kes(r.amount)} ·{' '}
+                  {r.status === 'review_required'
+                    ? <span className="text-amber-700 font-medium">owed</span>
+                    : <span className="text-green-700">settled {r.settlement_date} by {r.settlement_method === 'offset' ? 'set-off' : r.settlement_method === 'mpesa' ? 'M-Pesa' : 'cash'}{r.settled_by_name ? `, approved by ${r.settled_by_name}` : ''}</span>}
+                </p>
+                <p className="text-xs text-gray-600 mt-1">{r.reason}</p>
+                {admin && r.status === 'review_required' && actions.settleRefund && settling !== r.id && (
+                  <button disabled={busy} className="text-blue-700 underline text-sm mt-1 print:hidden" onClick={() => setSettling(r.id)}>
+                    Settle
+                  </button>
+                )}
+                {admin && settling === r.id && (
+                  <SettleRefund
+                    refund={r}
+                    approval={approval}
+                    settle={actions.settleRefund}
+                    onCancel={() => setSettling(null)}
+                    onDone={async () => { setSettling(null); await refresh(); }}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {data.debt.receipts?.map((p: any) => (
           <div key={p.id} className="text-sm border-t pt-2">
             Receipt #{p.id} · {p.date} · {p.payment_method} · {kes(p.amount)} ·{' '}

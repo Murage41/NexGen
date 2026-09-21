@@ -35,6 +35,9 @@ async function run() {
       table.decimal('balance', 14, 2).notNullable();
       table.timestamp('created_at').notNullable();
       table.timestamp('deleted_at').nullable();
+      // Closed-shift corrections (migration 045).
+      table.string('reversed_at').nullable();
+      table.integer('reversed_by_correction_id').nullable();
     });
     await db.schema.createTable('credit_payments', (table) => {
       table.increments('id').primary();
@@ -47,6 +50,8 @@ async function run() {
       table.string('status').notNullable().defaultTo('posted');
       table.date('date').notNullable();
       table.timestamp('deleted_at').nullable();
+      table.string('reversed_at').nullable();
+      table.integer('reversed_by_correction_id').nullable();
     });
     await db.schema.createTable('customer_invoices', (table) => {
       table.increments('id').primary();

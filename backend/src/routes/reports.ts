@@ -19,6 +19,7 @@ import {
   getReceivablePositionAsOf,
   previousBusinessDate,
 } from '../services/receivableReporting';
+import { listShiftCorrections } from '../services/shiftCorrections';
 
 const router = Router();
 
@@ -28,6 +29,24 @@ function roundMoney(value: number): number {
 
 function sumMoney(rows: any[], selector: (row: any) => any): number {
   return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
+}
+
+// A day's shifts are reported as they were closed: an entry a later correction
+// reversed still counts here and its replacement does not. The correction is
+// listed on the day it was made (services/shiftCorrections.ts). Open shifts
+// have no corrections, so these filters change nothing for them.
+function asClosedConsumption(query: any, table = '') {
+  const column = (name: string) => (table ? `${table}.${name}` : name);
+  return query
+    .whereNull(column('created_by_correction_id'))
+    .where((q: any) => q.whereNull(column('deleted_at')).orWhereNotNull(column('reversed_by_correction_id')));
+}
+
+function asClosedReceipts(query: any) {
+  return query
+    .whereNull('deleted_at')
+    .whereNull('created_by_correction_id')
+    .where((q: any) => q.where('status', 'posted').orWhereNotNull('reversed_by_correction_id'));
 }
 
 // ─── Daily Report ─────────────────────────────────────────────────────────────
@@ -80,9 +99,9 @@ router.get('/daily', requireAdmin, async (req, res) => {
       const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
       const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
       // Phase 3B: invoice-mode consumption for this shift (retail-priced)
-      const shiftInvoiceConsumption = await db('invoice_consumption')
-        .where({ shift_id: shift.id })
-        .whereNull('deleted_at');
+      const shiftInvoiceConsumption = await asClosedConsumption(
+        db('invoice_consumption').where({ shift_id: shift.id }),
+      );
       const shiftInvoiceRetail = shiftInvoiceConsumption.reduce(
         (s: number, c: any) => s + Number(c.retail_amount || 0),
         0,
@@ -122,7 +141,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
       const mpesaNet = Number(collections?.mpesa_net) || 0;
       const totalCollections = cash + mpesa + credits;
       const shiftCreditReceipts = hasShiftCreditReceipts
-        ? await db('credit_payments').where({ shift_id: shift.id, status: 'posted' }).whereNull('deleted_at')
+        ? await asClosedReceipts(db('credit_payments').where({ shift_id: shift.id }))
         : [];
       const creditReceiptsCash = sumMoney(
         shiftCreditReceipts.filter((receipt: any) => (receipt.payment_method || 'cash') !== 'mpesa'),
@@ -216,7 +235,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
       const rows = await db('invoice_consumption')
         .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
         .whereIn('invoice_consumption.shift_id', shiftIdsForInvoice)
-        .whereNull('invoice_consumption.deleted_at')
+        .where((q: any) => asClosedConsumption(q, 'invoice_consumption'))
         .select(
           'invoice_consumption.account_id',
           'credit_accounts.name as account_name',
@@ -403,6 +422,8 @@ router.get('/daily', requireAdmin, async (req, res) => {
         net_profit: netProfit,
         // Accountability
         unrecovered_losses: unrecoveredLosses,
+        // Corrections made today, to this or any earlier closed shift.
+        corrections: await listShiftCorrections(db, { postingDate: date }),
         // Tank stock
         tank_snapshot: tankSnapshot,
       },
@@ -795,6 +816,8 @@ async function computeMonthlyReport(month: string) {
       money_credit_payments_received: receivableActivity.money_payments_received,
       invoice_payments_received: receivableActivity.invoice_payments_received,
       money_credits_issued: receivableActivity.money_credits_issued,
+      money_credit_corrections: receivableActivity.money_credit_corrections,
+      money_payment_reversals: receivableActivity.money_payment_reversals,
       invoice_receivables_issued: receivableActivity.invoice_receivables_issued,
       invoice_receivable_adjustments: receivableActivity.invoice_adjustments,
       unrecovered_losses: unrecoveredLosses,
@@ -1058,7 +1081,17 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     const drawerPayouts = roundMoney(Number(drawerPayroll?.total || 0) + directShiftCash + totalShiftExpenses);
     const totalInflows = roundMoney(recordedInflows + drawerPayouts);
 
-    const totalOutflows = totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses;
+    // Money paid back to employees after a correction reduced a shortage they
+    // had already repaid (services/employeeRefunds.ts). Set-offs move no cash.
+    const refundRow = await db('staff_debt_adjustments')
+      .where({ adjustment_type: 'employee_credit_review', status: 'settled' })
+      .whereIn('settlement_method', ['cash', 'mpesa'])
+      .whereBetween('settlement_date', [from, to])
+      .sum('amount as total')
+      .first();
+    const employeeRefunds = roundMoney(Number((refundRow as any)?.total || 0));
+
+    const totalOutflows = totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses + employeeRefunds;
 
     const outstandingReceivables = await getCurrentReceivableTotals(db);
 
@@ -1084,6 +1117,7 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
           wages_paid: totalWagesPaid,
           shift_expenses: totalShiftExpenses,
           general_expenses: totalGeneralExpenses,
+          employee_refunds: employeeRefunds,
           total: totalOutflows,
         },
         net_cash_flow: totalInflows - totalOutflows,

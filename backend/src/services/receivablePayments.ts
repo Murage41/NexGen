@@ -375,7 +375,7 @@ export async function getEligibleMoneyCredits(
     .orderBy('id', 'asc');
 }
 
-async function allocateMoneyCredits(
+export async function allocateMoneyCredits(
   trx: Knex.Transaction,
   credits: any[],
   amount: number,
@@ -501,6 +501,9 @@ export async function reverseMoneyAccountPaymentInTransaction(
     paymentId: number;
     reason: string;
     actorId?: number | null;
+    // Closed-shift corrections refresh balances themselves, silently, because
+    // their preview is rolled back and must not log changes that never happen.
+    skipBalanceRefresh?: boolean;
   },
 ) {
   const reason = String(input.reason || '').trim();
@@ -560,7 +563,7 @@ export async function reverseMoneyAccountPaymentInTransaction(
     reversal_reason: reason,
   });
 
-  if (payment.account_id) await recomputeAccountBalance(payment.account_id, trx);
+  if (payment.account_id && !input.skipBalanceRefresh) await recomputeAccountBalance(payment.account_id, trx);
   return trx('credit_payments').where({ id: payment.id }).first();
 }
 

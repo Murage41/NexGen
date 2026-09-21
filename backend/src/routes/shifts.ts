@@ -1,10 +1,8 @@
 import { Router } from 'express';
-import crypto from 'crypto';
 import db from '../database';
 import { csvCell } from '../utils/csv';
 import { shiftRecoveryPreview, postShiftRecovery } from '../services/shiftSettlement';
-import { syncEmployeeDebt } from '../services/employeeDebt';
-import { approvalBindings } from '../services/approval';
+import { approvalBindings, resolveApprover } from '../services/approval';
 import { authorizeCreditExtension, recordCreditOverride } from '../services/creditLimits';
 import { validate } from '../middleware/validate';
 import {
@@ -52,6 +50,16 @@ import { buildShiftTimeline } from '../services/shiftTimeline';
 import { getShiftReview, updateShiftReview } from '../services/shiftReview';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
+import { computeShiftAccountability } from '../services/shiftAccountability';
+import {
+  listShiftCorrections,
+  parseCorrectionRequest,
+  postShiftCorrection,
+  previewShiftCorrection,
+} from '../services/shiftCorrections';
+
+// Scripts import the formula from here; it lives in the service.
+export { computeShiftAccountability };
 
 const router = Router();
 
@@ -69,116 +77,6 @@ function staleShiftWrite(section: 'readings' | 'collections', currentRevision: n
 
 function toSqliteDateTime(value: string): string {
   return String(value).slice(0, 19).replace('T', ' ');
-}
-
-function roundMoney(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function sumMoney(rows: any[], selector: (row: any) => any): number {
-  return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
-}
-
-function splitCreditReceipts(creditReceipts: any[]) {
-  const credit_receipts_cash = sumMoney(
-    creditReceipts.filter((receipt: any) => (receipt.payment_method || 'cash') !== 'mpesa'),
-    (receipt: any) => receipt.amount,
-  );
-  const credit_receipts_mpesa = sumMoney(
-    creditReceipts.filter((receipt: any) => receipt.payment_method === 'mpesa'),
-    (receipt: any) => receipt.amount,
-  );
-  const total_credit_receipts = roundMoney(credit_receipts_cash + credit_receipts_mpesa);
-
-  return {
-    credit_receipts_cash,
-    credit_receipts_mpesa,
-    total_credit_receipts,
-  };
-}
-
-export function computeShiftAccountability({
-  readings,
-  collections,
-  shiftCredits,
-  invoiceConsumption,
-  creditReceipts,
-  expenses,
-  employee_wage,
-  payrollPayments = [],
-}: {
-  readings: any[];
-  collections: any;
-  shiftCredits: any[];
-  invoiceConsumption: any[];
-  creditReceipts: any[];
-  expenses: any[];
-  employee_wage: number;
-  payrollPayments?: any[];
-}) {
-  const expected_sales = sumMoney(readings, (reading: any) => reading.amount_sold);
-  const total_cash = roundMoney(collections ? Number(collections.cash_amount || 0) : 0);
-  const total_mpesa = roundMoney(collections ? Number(collections.mpesa_amount || 0) : 0);
-  const total_credits = sumMoney(shiftCredits, (credit: any) => credit.amount);
-  const total_invoice_consumption = sumMoney(invoiceConsumption, (entry: any) => entry.retail_amount);
-  const total_expenses = sumMoney(expenses, (expense: any) => expense.amount);
-  const total_payroll_payments = sumMoney(payrollPayments, (payment: any) => payment.amount);
-  const normalized_wage = roundMoney(Number(employee_wage || 0));
-  const { credit_receipts_cash, credit_receipts_mpesa, total_credit_receipts } = splitCreditReceipts(creditReceipts);
-
-  const sales_cash = roundMoney(total_cash - credit_receipts_cash);
-  const sales_mpesa = roundMoney(total_mpesa - credit_receipts_mpesa);
-  const sales_collections = roundMoney(sales_cash + sales_mpesa);
-  const drawer_cash = total_cash;
-  const drawer_mpesa = total_mpesa;
-  const drawer_total = roundMoney(drawer_cash + drawer_mpesa);
-  const sales_accounted = roundMoney(
-    sales_collections
-      + total_credits
-      + total_invoice_consumption
-      + total_expenses
-      + normalized_wage
-      + total_payroll_payments,
-  );
-  const sales_variance = roundMoney(sales_accounted - expected_sales);
-  const expected_shift_total = roundMoney(expected_sales + total_credit_receipts);
-  const total_accounted = roundMoney(
-    drawer_total
-      + total_credits
-      + total_invoice_consumption
-      + total_expenses
-      + normalized_wage
-      + total_payroll_payments,
-  );
-  const variance = roundMoney(total_accounted - expected_shift_total);
-
-  return {
-    expected_sales,
-    expected_shift_total,
-    total_cash,
-    total_mpesa,
-    expected_cash: drawer_cash,
-    expected_mpesa: drawer_mpesa,
-    expected_total_received: drawer_total,
-    drawer_total,
-    credit_receipts_cash,
-    credit_receipts_mpesa,
-    total_credit_receipts,
-    sales_cash,
-    sales_mpesa,
-    sales_collections,
-    drawer_cash,
-    drawer_mpesa,
-    total_credits,
-    total_invoice_consumption,
-    total_expenses,
-    total_payroll_payments,
-    employee_wage: normalized_wage,
-    sales_accounted,
-    sales_variance,
-    total_accounted,
-    variance,
-  };
 }
 
 /** Guard: only open shifts are editable. */
@@ -287,6 +185,19 @@ router.get('/current', requireAuth, async (req: any, res) => {
   }
 });
 
+// GET /shifts/corrections?from=&to= - every closed-shift correction, newest
+// first, with who approved and who recorded it. Before '/:id' on purpose.
+router.get('/corrections', requireAdmin, async (req: any, res) => {
+  try {
+    const date = /^\d{4}-\d{2}-\d{2}$/;
+    const from = date.test(String(req.query.from || '')) ? String(req.query.from) : undefined;
+    const to = date.test(String(req.query.to || '')) ? String(req.query.to) : undefined;
+    res.json({ success: true, data: await listShiftCorrections(db, { from, to }) });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/:id/neighbors', requireAuth, requireOwnShiftOrAdmin, async (req: any, res) => {
   try {
     const options = normalizeShiftHistoryQuery(req.query as Record<string, unknown>);
@@ -380,7 +291,12 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         .orderBy('shift_review_events.id', 'asc')
       : [];
     const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
-    const shiftCredits = await db('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
+    // account_id tells a correction which customer the credit is on now.
+    const shiftCredits = await db('shift_credits')
+      .leftJoin('credits', 'shift_credits.credit_id', 'credits.id')
+      .where('shift_credits.shift_id', shift.id)
+      .whereNull('shift_credits.deleted_at')
+      .select('shift_credits.*', 'credits.account_id as account_id');
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
     const payrollPayments = await db('payroll_payments')
       .where({ shift_id: shift.id, status: 'posted' })
@@ -446,6 +362,23 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
     const viewer = (req as any).employee;
     const visiblePayments = viewer?.role === 'admin' ? payrollPayments : payrollPayments.filter(p => Number(p.employee_id) === Number(viewer?.id));
     const visibleReceipts = viewer?.role === 'admin' ? creditReceipts : creditReceipts.filter(p => p.account_type !== 'employee' || Number(p.account_employee_id) === Number(viewer?.id));
+    // The attendant sees what was corrected on their shift and what it did to
+    // their shortage; customers' balances stay with administrators.
+    const corrections = (shift.status === 'closed'
+      ? await listShiftCorrections(db, { shiftId: Number(shift.id) })
+      : []
+    ).map((row: any) => (viewer?.role === 'admin' ? row : {
+      id: row.id,
+      created_at: row.created_at,
+      posting_date: row.posting_date,
+      entry_type: row.entry_type,
+      correction_kind: row.correction_kind,
+      reason: row.reason,
+      variance_before: row.variance_before,
+      variance_after: row.variance_after,
+      approved_by_name: row.approved_by_name,
+      details: row.details ? { attendant: row.details.attendant } : null,
+    }));
     const activityTimeline = buildShiftTimeline({
       shift,
       closeReconciliation,
@@ -455,6 +388,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       expenses,
       payrollPayments: visiblePayments,
       reviewEvents,
+      corrections,
     });
 
     res.json({
@@ -464,6 +398,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         readings,
         collections: collections || null,
         close_reconciliation: closeReconciliation || null,
+        corrections,
         review: shiftReview || null,
         activity_timeline: activityTimeline,
         expenses,
@@ -1277,337 +1212,6 @@ async function getRetailPriceAsOf(
   return row ? Number(row.price_per_litre) : null;
 }
 
-export async function buildConsumptionCorrectionPreview(
-  trx: any,
-  shiftId: number,
-  entryId: number,
-  proposed: { litres: number; pump_id?: number | null; tank_id?: number | null },
-) {
-  const shift = await trx('shifts').where({ id: shiftId }).first();
-  if (!shift) throw Object.assign(new Error('Shift not found'), { http: 404 });
-  if (shift.status !== 'closed') {
-    throw Object.assign(
-      new Error('Use the normal edit action while the shift is open.'),
-      { http: 400 },
-    );
-  }
-
-  const entry = await trx('invoice_consumption')
-    .where({ id: entryId, shift_id: shiftId })
-    .whereNull('deleted_at')
-    .first();
-  if (!entry) throw Object.assign(new Error('Consumption entry not found'), { http: 404 });
-  if (entry.invoice_line_id) {
-    throw Object.assign(
-      new Error('Reserved or invoiced consumption must be corrected through the invoice document workflow.'),
-      { http: 400 },
-    );
-  }
-
-  const litres = Number(proposed.litres);
-  if (!Number.isFinite(litres) || litres <= 0) {
-    throw Object.assign(new Error('litres must be a positive number'), { http: 400 });
-  }
-
-  const source = await resolveConsumptionSource(trx, {
-    fuelType: entry.fuel_type,
-    pumpId: proposed.pump_id !== undefined
-      ? (proposed.pump_id ? Number(proposed.pump_id) : null)
-      : (entry.pump_id ? Number(entry.pump_id) : null),
-    tankId: proposed.tank_id !== undefined
-      ? (proposed.tank_id ? Number(proposed.tank_id) : null)
-      : (entry.tank_id ? Number(entry.tank_id) : null),
-  });
-  if (source.source_required) {
-    throw Object.assign(
-      new Error('Select the pump/nozzle source before correcting a closed-shift entry.'),
-      { http: 400 },
-    );
-  }
-
-  const readings = await trx('pump_readings')
-    .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-    .where('pump_readings.shift_id', shiftId)
-    .select('pump_readings.*', 'pumps.fuel_type');
-  const collections = await trx('shift_collections').where({ shift_id: shiftId }).first();
-  const expenses = await trx('shift_expenses').where({ shift_id: shiftId }).whereNull('deleted_at');
-  const shiftCredits = await trx('shift_credits').where({ shift_id: shiftId }).whereNull('deleted_at');
-  const creditReceipts = await trx('credit_payments')
-    .where({ shift_id: shiftId })
-    .where({ status: 'posted' })
-    .whereNull('deleted_at');
-  const payrollPayments = await trx('payroll_payments')
-    .where({ shift_id: shiftId, status: 'posted' })
-    .where((query: any) => {
-      query.whereNull('reference').orWhere('reference', 'not like', 'SHIFT-WAGE:%');
-    });
-  const activeConsumption = await trx('invoice_consumption')
-    .where({ shift_id: shiftId })
-    .whereNull('deleted_at')
-    .orderBy('id');
-
-  const replacement = {
-    account_id: entry.account_id,
-    shift_id: shiftId,
-    pump_id: source.pump_id,
-    tank_id: source.tank_id,
-    fuel_type: entry.fuel_type,
-    litres,
-    retail_price_at_time: Number(entry.retail_price_at_time),
-    retail_amount: roundMoney(litres * Number(entry.retail_price_at_time)),
-  };
-  const correctedConsumption = activeConsumption.map((row: any) => (
-    Number(row.id) === entryId ? replacement : row
-  ));
-  const litre_validation = validateInvoiceConsumptionAgainstReadings(
-    readings,
-    correctedConsumption,
-  );
-
-  const common = {
-    readings,
-    collections,
-    shiftCredits,
-    creditReceipts,
-    expenses,
-    employee_wage: Number(shift.wage_paid || 0),
-    payrollPayments,
-  };
-  const before = computeShiftAccountability({
-    ...common,
-    invoiceConsumption: activeConsumption,
-  });
-  const after = computeShiftAccountability({
-    ...common,
-    invoiceConsumption: correctedConsumption,
-  });
-  const deficitBefore = Math.max(0, roundMoney(-before.variance));
-  const deficitAfter = Math.max(0, roundMoney(-after.variance));
-  const deficitChange = roundMoney(deficitAfter - deficitBefore);
-  const amountDelta = roundMoney(replacement.retail_amount - Number(entry.retail_amount));
-
-  const revision = activeConsumption.map((row: any) => ({
-    id: Number(row.id),
-    updated_at: row.updated_at || row.created_at || null,
-    litres: Number(row.litres),
-    retail_amount: Number(row.retail_amount),
-    pump_id: row.pump_id ? Number(row.pump_id) : null,
-    deleted_at: row.deleted_at || null,
-  }));
-  const confirmationToken = crypto
-    .createHash('sha256')
-    .update(JSON.stringify({
-      shift_id: shiftId,
-      entry_id: entryId,
-      replacement,
-      variance_before: before.variance,
-      variance_after: after.variance,
-      revision,
-    }))
-    .digest('hex');
-
-  return {
-    shift,
-    entry,
-    replacement,
-    before,
-    after,
-    amount_delta: amountDelta,
-    deficit_before: deficitBefore,
-    deficit_after: deficitAfter,
-    deficit_change: deficitChange,
-    litre_validation,
-    confirmation_token: confirmationToken,
-  };
-}
-
-async function applyCorrectionDebtImpact(
-  trx: any,
-  preview: any,
-  accountabilityAdjustmentId: number,
-  reason: string,
-  actorId: number | null,
-) {
-  const deficitChange = roundMoney(Number(preview.deficit_change || 0));
-  const employeeId = Number(preview.shift.employee_id);
-  const adjustments: any[] = [];
-  let reviewRequired = 0;
-
-  if (deficitChange > 0) {
-    const [debtId] = await trx('staff_debts').insert({
-      employee_id: employeeId,
-      shift_id: preview.shift.id,
-      original_deficit: deficitChange,
-      deducted_from_wage: 0,
-      carried_forward: deficitChange,
-      balance: deficitChange,
-      status: 'outstanding',
-    });
-    const [adjustmentId] = await trx('staff_debt_adjustments').insert({
-      shift_id: preview.shift.id,
-      staff_debt_id: debtId,
-      accountability_adjustment_id: accountabilityAdjustmentId,
-      adjustment_type: 'increase',
-      amount: deficitChange,
-      balance_before: 0,
-      balance_after: deficitChange,
-      status: 'posted',
-      reason,
-      created_by_employee_id: actorId,
-    });
-    adjustments.push(await trx('staff_debt_adjustments').where({ id: adjustmentId }).first());
-  } else if (deficitChange < 0) {
-    let relief = Math.abs(deficitChange);
-    const debts = await trx('staff_debts')
-      .where({ shift_id: preview.shift.id, employee_id: employeeId })
-      .where('balance', '>', 0)
-      .orderBy('created_at', 'asc')
-      .orderBy('id', 'asc');
-    for (const debt of debts) {
-      if (relief <= 0) break;
-      const before = roundMoney(Number(debt.balance || 0));
-      const applied = Math.min(relief, before);
-      const after = roundMoney(before - applied);
-      await trx('staff_debts').where({ id: debt.id }).update({
-        balance: after,
-        status: after === 0 ? 'cleared' : 'outstanding',
-      });
-      const [adjustmentId] = await trx('staff_debt_adjustments').insert({
-        shift_id: preview.shift.id,
-        staff_debt_id: debt.id,
-        accountability_adjustment_id: accountabilityAdjustmentId,
-        adjustment_type: 'decrease',
-        amount: applied,
-        balance_before: before,
-        balance_after: after,
-        status: 'posted',
-        reason,
-        created_by_employee_id: actorId,
-      });
-      adjustments.push(await trx('staff_debt_adjustments').where({ id: adjustmentId }).first());
-      relief = roundMoney(relief - applied);
-    }
-
-    if (relief > 0) {
-      reviewRequired = relief;
-      const [adjustmentId] = await trx('staff_debt_adjustments').insert({
-        shift_id: preview.shift.id,
-        staff_debt_id: null,
-        accountability_adjustment_id: accountabilityAdjustmentId,
-        adjustment_type: 'employee_credit_review',
-        amount: relief,
-        balance_before: null,
-        balance_after: null,
-        status: 'review_required',
-        reason: `${reason} Existing debt or wage deduction was already settled; review employee reimbursement.`,
-        created_by_employee_id: actorId,
-      });
-      adjustments.push(await trx('staff_debt_adjustments').where({ id: adjustmentId }).first());
-    }
-  }
-
-  const employeeDebtBalance = await syncEmployeeDebt(employeeId, trx);
-  return {
-    adjustments,
-    employee_debt_balance: employeeDebtBalance,
-    review_required_amount: reviewRequired,
-  };
-}
-
-export async function postConsumptionCorrection(
-  conn: any,
-  input: {
-    shiftId: number;
-    entryId: number;
-    litres: number;
-    pumpId?: number | null;
-    tankId?: number | null;
-    reason: string;
-    confirmationToken: string;
-    actorId?: number | null;
-  },
-) {
-  const reason = String(input.reason || '').trim();
-  if (reason.length < 10) {
-    throw Object.assign(
-      new Error('A correction reason of at least 10 characters is required.'),
-      { http: 400 },
-    );
-  }
-  if (!input.confirmationToken) {
-    throw Object.assign(new Error('Preview this correction before posting it.'), { http: 400 });
-  }
-
-  return conn.transaction(async (trx: any) => {
-    const preview = await buildConsumptionCorrectionPreview(
-      trx,
-      input.shiftId,
-      input.entryId,
-      {
-        litres: input.litres,
-        pump_id: input.pumpId,
-        tank_id: input.tankId,
-      },
-    );
-    if (preview.confirmation_token !== input.confirmationToken) {
-      throw Object.assign(
-        new Error('The shift changed after the preview. Review the correction again before posting.'),
-        { http: 409 },
-      );
-    }
-
-    const actorId = input.actorId && input.actorId > 0 ? Number(input.actorId) : null;
-    const now = new Date().toISOString();
-    const [replacementId] = await trx('invoice_consumption').insert({
-      ...preview.replacement,
-      invoice_line_id: null,
-      correction_of_id: preview.entry.id,
-      entry_status: 'active',
-      correction_reason: reason,
-      created_by_employee_id: actorId,
-      created_at: now,
-    });
-    await trx('invoice_consumption').where({ id: preview.entry.id }).update({
-      entry_status: 'reversed',
-      reversed_at: now,
-      reversed_by_employee_id: actorId,
-      correction_reason: reason,
-      updated_at: now,
-      deleted_at: now,
-    });
-
-    const [accountabilityAdjustmentId] = await trx('shift_accountability_adjustments').insert({
-      shift_id: preview.shift.id,
-      adjustment_type: 'invoice_consumption_correction',
-      reference_id: replacementId,
-      amount_delta: preview.amount_delta,
-      variance_before: preview.before.variance,
-      variance_after: preview.after.variance,
-      reason,
-      created_by_employee_id: actorId,
-    });
-    const debtImpact = await applyCorrectionDebtImpact(
-      trx,
-      preview,
-      accountabilityAdjustmentId,
-      reason,
-      actorId,
-    );
-    const replacement = await trx('invoice_consumption').where({ id: replacementId }).first();
-
-    return {
-      replacement,
-      reversed_entry_id: preview.entry.id,
-      accountability_adjustment_id: accountabilityAdjustmentId,
-      amount_delta: preview.amount_delta,
-      variance_before: preview.before.variance,
-      variance_after: preview.after.variance,
-      deficit_change: preview.deficit_change,
-      debt_impact: debtImpact,
-    };
-  });
-}
-
 // POST /shifts/:id/invoice-consumption
 // Body: { account_id, tank_id?, fuel_type: 'petrol' | 'diesel', litres }
 router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
@@ -1860,80 +1464,61 @@ router.delete('/:id/invoice-consumption/:entryId', requireAdmin, async (req, res
   }
 });
 
-// Preview a closed-shift correction without changing any records.
-router.post('/:id/invoice-consumption/:entryId/correction-preview', requireAdmin, async (req: any, res) => {
+// Closed-shift fuel on account used to be corrected from the invoice customer
+// page. Corrections now start from the closed shift (POST /:id/corrections) so
+// credits, payments and litres share one audited path; old clients get a clear
+// answer instead of a silent 404.
+router.post(['/:id/invoice-consumption/:entryId/correction-preview', '/:id/invoice-consumption/:entryId/correct'], requireAdmin, (_req, res) => {
+  res.status(410).json({
+    success: false,
+    error: 'Correct fuel on account from the closed shift page: open the shift and use Correct next to the entry.',
+  });
+});
+
+/**
+ * Closed-shift corrections (services/shiftCorrections.ts). A closed record is
+ * never edited: the original is reversed and kept, a linked replacement is
+ * added when needed, and the attendant's shortage follows the change.
+ *
+ * POST /shifts/:id/corrections/preview  - changes nothing; returns the effects
+ *   and a confirmation_token.
+ * POST /shifts/:id/corrections          - posts it: needs that token and an
+ *   administrator's approval (their own session, or approval_token from
+ *   /auth/verify-pin with purpose 'shift_correction').
+ * Body: { entry_type: 'credit'|'payment'|'invoice_consumption', entry_id,
+ *         kind: 'wrong_customer'|'wrong_amount'|'not_valid',
+ *         account_id?, amount?, litres?, pump_id?, note? }
+ */
+router.post('/:id/corrections/preview', requireAdmin, async (req: any, res) => {
   try {
-    const preview = await db.transaction(async (trx) => buildConsumptionCorrectionPreview(
-      trx,
-      Number(req.params.id),
-      Number(req.params.entryId),
-      {
-        litres: Number(req.body.litres),
-        pump_id: req.body.pump_id,
-        tank_id: req.body.tank_id,
-      },
-    ));
-    res.json({
-      success: true,
-      data: {
-        original: preview.entry,
-        replacement: preview.replacement,
-        amount_delta: preview.amount_delta,
-        variance_before: preview.before.variance,
-        variance_after: preview.after.variance,
-        deficit_before: preview.deficit_before,
-        deficit_after: preview.deficit_after,
-        deficit_change: preview.deficit_change,
-        litre_validation: preview.litre_validation,
-        confirmation_token: preview.confirmation_token,
-      },
-    });
+    const request = parseCorrectionRequest(Number(req.params.id), req.body);
+    const recordedBy = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
+    res.json({ success: true, data: await previewShiftCorrection(db, request, recordedBy) });
   } catch (err: any) {
-    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message });
+    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
   }
 });
 
-// Correct a closed-shift, unreserved consumption row through reversal + replacement.
-router.post('/:id/invoice-consumption/:entryId/correct', requireAdmin, async (req: any, res) => {
+router.post('/:id/corrections', requireAdmin, async (req: any, res) => {
   try {
-    const reason = String(req.body.reason || '').trim();
-    if (reason.length < 10) {
-      return res.status(400).json({
-        success: false,
-        error: 'A correction reason of at least 10 characters is required.',
-      });
+    const request = parseCorrectionRequest(Number(req.params.id), req.body);
+    const confirmationToken = String(req.body?.confirmation_token || '');
+    if (!/^[0-9a-f]{64}$/.test(confirmationToken)) {
+      return res.status(400).json({ success: false, error: 'Preview this correction before posting it.' });
     }
-    if (!req.body.confirmation_token) {
-      return res.status(400).json({
-        success: false,
-        error: 'Preview this correction before posting it.',
-      });
-    }
-
-    const result = await postConsumptionCorrection(db, {
-      shiftId: Number(req.params.id),
-      entryId: Number(req.params.entryId),
-      litres: Number(req.body.litres),
-      pumpId: req.body.pump_id,
-      tankId: req.body.tank_id,
-      reason,
-      confirmationToken: req.body.confirmation_token,
-      actorId: req.employee?.id,
+    const sessionEmployeeId = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
+    const result = await db.transaction(async (trx) => {
+      const approver = await resolveApprover(
+        sessionEmployeeId,
+        req.body?.approval_token,
+        approvalBindings.shift_correction({ confirmation_token: confirmationToken }),
+        trx,
+      );
+      return postShiftCorrection(trx, request, { approver, recordedBy: sessionEmployeeId, confirmationToken });
     });
-
-    res.status(201).json({
-      success: true,
-      data: result,
-      ...(result.debt_impact.review_required_amount > 0
-        ? {
-            warnings: [
-              `KES ${result.debt_impact.review_required_amount.toFixed(2)} requires manager review because the related employee debt or wage deduction was already settled.`,
-            ],
-          }
-        : {}),
-    });
+    res.status(201).json({ success: true, data: result });
   } catch (err: any) {
-    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message });
+    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
   }
 });
 
@@ -2014,8 +1599,9 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
  * customer owes what they owed before, and the amount drops out of this
  * shift's expected drawer total (every drawer and report query counts posted
  * payments only). Once a shift closes its drawer is reconciled, so a payment
- * on a closed shift is corrected through a shift accounting correction
- * instead - the same rule employee debt receipts already follow.
+ * on a closed shift is corrected with POST /:id/corrections instead, which
+ * also settles the attendant's shortage - the same rule employee debt
+ * receipts follow.
  */
 router.post('/:id/credit-receipts/:paymentId/reverse', requireAdmin, async (req: any, res) => {
   if (!(await requireOpenShift(req, res))) return;
@@ -2036,7 +1622,7 @@ router.post('/:id/credit-receipts/:paymentId/reverse', requireAdmin, async (req:
       const shift = await trx('shifts').where({ id: shiftId }).first('status');
       if (shift?.status !== 'open') {
         throw Object.assign(
-          new Error('This shift has closed. Correct its payments through a shift accounting correction.'),
+          new Error('This shift has closed. Use Correct next to the payment on the shift instead.'),
           { http: 409 },
         );
       }

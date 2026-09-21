@@ -16,13 +16,10 @@ import {
   X,
 } from 'lucide-react';
 import {
-  correctInvoiceConsumption,
   getCreditAccount,
   getCustomerInvoices,
   getInvoiceCustomerConsumption,
   getInvoicePayments,
-  getShift,
-  previewInvoiceConsumptionCorrection,
   reverseInvoicePayment,
   updateCreditAccount,
 } from '../services/api';
@@ -124,11 +121,6 @@ export default function InvoiceCustomerWorkspace({
   const [account, setAccount] = useState<any>(null);
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [savingTerms, setSavingTerms] = useState(false);
-  const [correctionRow, setCorrectionRow] = useState<any | null>(null);
-  const [correctionSources, setCorrectionSources] = useState<any[]>([]);
-  const [correctionForm, setCorrectionForm] = useState({ litres: '', pump_id: '', reason: '' });
-  const [correctionPreview, setCorrectionPreview] = useState<any | null>(null);
-  const [correctionBusy, setCorrectionBusy] = useState(false);
   const [reversalPayment, setReversalPayment] = useState<any | null>(null);
   const [reversalForm, setReversalForm] = useState({ reason: '', reversal_date: kenyaToday() });
   const [reversalBusy, setReversalBusy] = useState(false);
@@ -315,76 +307,6 @@ export default function InvoiceCustomerWorkspace({
       setError(err?.message || 'Failed to prepare print view.');
     } finally {
       setHistoryLoading(false);
-    }
-  }
-
-  async function openCorrection(row: any) {
-    try {
-      setError('');
-      const response = await getShift(row.shift_id);
-      const readings = (response.data.data?.readings || [])
-        .filter((reading: any) => reading.fuel_type === row.fuel_type);
-      setCorrectionSources(readings);
-      setCorrectionRow(row);
-      setCorrectionForm({
-        litres: String(row.litres),
-        pump_id: row.pump_id ? String(row.pump_id) : readings.length === 1 ? String(readings[0].pump_id) : '',
-        reason: '',
-      });
-      setCorrectionPreview(null);
-    } catch (err: any) {
-      setError(err?.response?.data?.error || err?.message || 'Failed to load shift sources.');
-    }
-  }
-
-  async function previewCorrection() {
-    if (!correctionRow) return;
-    const value = Number(correctionForm.litres);
-    if (!Number.isFinite(value) || value <= 0) {
-      setError('Corrected litres must be greater than zero.');
-      return;
-    }
-    try {
-      setCorrectionBusy(true);
-      setError('');
-      const response = await previewInvoiceConsumptionCorrection(
-        correctionRow.shift_id,
-        correctionRow.id,
-        {
-          litres: value,
-          pump_id: correctionForm.pump_id ? Number(correctionForm.pump_id) : null,
-        },
-      );
-      setCorrectionPreview(response.data.data);
-    } catch (err: any) {
-      setError(err?.response?.data?.error || err?.message || 'Correction preview failed.');
-    } finally {
-      setCorrectionBusy(false);
-    }
-  }
-
-  async function postCorrection() {
-    if (!correctionRow || !correctionPreview) return;
-    if (correctionForm.reason.trim().length < 10) {
-      setError('Enter a correction reason of at least 10 characters.');
-      return;
-    }
-    try {
-      setCorrectionBusy(true);
-      setError('');
-      await correctInvoiceConsumption(correctionRow.shift_id, correctionRow.id, {
-        litres: Number(correctionForm.litres),
-        pump_id: correctionForm.pump_id ? Number(correctionForm.pump_id) : null,
-        reason: correctionForm.reason.trim(),
-        confirmation_token: correctionPreview.confirmation_token,
-      });
-      setCorrectionRow(null);
-      setCorrectionPreview(null);
-      await Promise.all([loadHistory(history?.pagination?.page || 1), loadDocuments(), onChanged()]);
-    } catch (err: any) {
-      setError(err?.response?.data?.error || err?.message || 'Failed to post correction.');
-    } finally {
-      setCorrectionBusy(false);
     }
   }
 
@@ -615,12 +537,9 @@ export default function InvoiceCustomerWorkspace({
                             {row.replacement_id && <p className="text-gray-400">Replaced by entry #{row.replacement_id}</p>}
                             {row.correction_of_id && <p className="text-gray-400">Corrects entry #{row.correction_of_id}</p>}
                           </td>
-                          <td className="px-3 py-2 text-right">
-                            {row.billing_status === 'unbilled' && row.shift_status === 'closed' && (
-                              <button onClick={() => openCorrection(row)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="Correct closed-shift entry">
-                                <Pencil size={15} />
-                              </button>
-                            )}
+                          <td className="px-3 py-2 text-right text-xs text-gray-400">
+                            {/* Closed-shift litres are corrected from the shift itself. */}
+                            {row.billing_status === 'unbilled' && row.shift_status === 'closed' && `Correct on shift #${row.shift_id}`}
                           </td>
                         </tr>
                       ))}
@@ -688,36 +607,6 @@ export default function InvoiceCustomerWorkspace({
           </div>
         )}
       </main>
-
-      {correctionRow && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-2xl shadow-xl">
-            <div className="px-5 py-4 border-b flex items-center justify-between">
-              <div><h3 className="font-bold text-gray-900">Correct Consumption Entry</h3><p className="text-xs text-gray-500">{correctionRow.shift_date} · Shift #{correctionRow.shift_id} · {correctionRow.fuel_type}</p></div>
-              <button onClick={() => setCorrectionRow(null)} className="p-1 text-gray-400 hover:text-gray-700"><X size={19} /></button>
-            </div>
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs text-gray-500 mb-1">Correct litres</label><input type="number" min="0.01" step="0.01" value={correctionForm.litres} onChange={(event) => { setCorrectionForm({ ...correctionForm, litres: event.target.value }); setCorrectionPreview(null); }} className="w-full border border-gray-300 rounded px-3 py-2" /></div>
-                <div><label className="block text-xs text-gray-500 mb-1">Pump / nozzle source</label><select value={correctionForm.pump_id} onChange={(event) => { setCorrectionForm({ ...correctionForm, pump_id: event.target.value }); setCorrectionPreview(null); }} className="w-full border border-gray-300 rounded px-3 py-2 bg-white"><option value="">Automatic source</option>{correctionSources.map((source) => <option key={source.pump_id} value={source.pump_id}>{source.pump_label} {source.nozzle_label} · {Number(source.litres_sold || 0).toFixed(2)} L sold</option>)}</select></div>
-              </div>
-              {!correctionPreview ? (
-                <button onClick={previewCorrection} disabled={correctionBusy} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium disabled:opacity-50">{correctionBusy ? <RefreshCw size={16} className="animate-spin" /> : <Check size={16} />} Preview impact</button>
-              ) : (
-                <>
-                  <div className="grid grid-cols-3 border border-gray-200 divide-x divide-gray-200">
-                    <div className="p-3"><p className="text-xs text-gray-500">Amount change</p><p className={`font-bold ${Number(correctionPreview.amount_delta) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(correctionPreview.amount_delta)}</p></div>
-                    <div className="p-3"><p className="text-xs text-gray-500">Shift variance</p><p className="font-bold text-gray-900">{fmt(correctionPreview.variance_before)} to {fmt(correctionPreview.variance_after)}</p></div>
-                    <div className="p-3"><p className="text-xs text-gray-500">Employee deficit change</p><p className={`font-bold ${Number(correctionPreview.deficit_change) > 0 ? 'text-red-600' : 'text-green-700'}`}>{fmt(correctionPreview.deficit_change)}</p></div>
-                  </div>
-                  <div><label className="block text-xs text-gray-500 mb-1">Correction reason</label><textarea rows={3} value={correctionForm.reason} onChange={(event) => setCorrectionForm({ ...correctionForm, reason: event.target.value })} className="w-full border border-gray-300 rounded px-3 py-2 text-sm" placeholder="Explain why this closed-shift record is being corrected" /></div>
-                  <div className="flex justify-end gap-2"><button onClick={() => setCorrectionRow(null)} className="px-4 py-2 border border-gray-300 rounded text-sm">Cancel</button><button onClick={postCorrection} disabled={correctionBusy || correctionForm.reason.trim().length < 10} className="px-4 py-2 bg-red-600 text-white rounded text-sm font-medium disabled:opacity-50">Post audited correction</button></div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {reversalPayment && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">

@@ -107,13 +107,10 @@ future approved workflow explicitly links that payment to the shift.
 While a shift is open, an unreserved and uninvoiced consumption row can be
 edited or soft-deleted through the normal shift workflow.
 
-For a closed shift:
-
-1. Open the consumption record and choose correction.
-2. Enter the corrected customer, fuel, source, and litres.
-3. Enter a meaningful reason of at least 10 characters.
-4. Preview the stock, customer, and accounting effect.
-5. Post only after the preview is correct.
+For a closed shift, open the shift and use the pencil next to the entry: choose
+wrong customer, wrong litres or pump, or never supplied, preview, and post with
+an administrator's approval. The customer page shows which shift to open. See
+[Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
 
 The correction reverses the original row and creates a replacement; it does
 not rewrite history. Reserved or invoiced consumption cannot be changed from a
