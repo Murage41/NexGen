@@ -3,9 +3,11 @@ import db from '../database';
 import {
   APPROVAL_TOKEN_TTL_MS,
   generateApprovalToken,
+  generateDeviceToken,
   generateToken,
   getSessionTtlMs,
   requireAuth,
+  verifyDeviceToken,
 } from '../middleware/requireAdmin';
 import { hashPin, isHashedPin, verifyPin } from '../services/pinSecurity';
 import {
@@ -16,17 +18,77 @@ import {
 } from '../services/approval';
 
 const router = Router();
-const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
-const LOGIN_LOCK_MINUTES = Number(process.env.LOGIN_LOCK_MINUTES || 15);
-const LOGIN_WINDOW_MINUTES = Number(process.env.LOGIN_WINDOW_MINUTES || 15);
-const LOGIN_LOCK_MS = (Number.isFinite(LOGIN_LOCK_MINUTES) && LOGIN_LOCK_MINUTES > 0 ? LOGIN_LOCK_MINUTES : 15) * 60 * 1000;
-const LOGIN_WINDOW_MS = (Number.isFinite(LOGIN_WINDOW_MINUTES) && LOGIN_WINDOW_MINUTES > 0 ? LOGIN_WINDOW_MINUTES : 15) * 60 * 1000;
-const loginAttempts = new Map<string, { failures: number; firstFailureAt: number; lockedUntil: number }>();
 
-function getLoginKey(req: any, employeeId: unknown): string {
-  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  const ip = forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
-  return `${ip}:${employeeId || 'unknown'}`;
+// Wrong-PIN limits. A 4-digit PIN has only 10,000 possibilities and the API is
+// reachable from the internet through ngrok, so guessing must be bounded per
+// account, never per client address. Through ngrok every request arrives from
+// the station PC itself; the only sign of the real client is X-Forwarded-For,
+// which the client can write. A limit keyed on it could be dodged by changing
+// that header on each guess - which is how this was broken before.
+//
+// Login:
+//  - A device that has signed in to this account before holds a device token
+//    (requireAdmin.ts). It may make LOGIN_MAX_ATTEMPTS wrong guesses in a row;
+//    after that its token is not trusted until it signs in again.
+//  - Every other device shares one allowance per account:
+//    LOGIN_UNTRUSTED_DAILY_MAX wrong guesses per rolling 24 hours, however many
+//    addresses they come from. Because it is separate from the known devices'
+//    allowances, using it up cannot lock anyone out of the phone they normally
+//    use.
+// Approvals (verify-pin): the caller is already signed in, so limits are kept
+// per approver and per caller (the desktop, or one signed-in employee):
+// LOGIN_MAX_ATTEMPTS within LOGIN_WINDOW_MINUTES locks for LOGIN_LOCK_MINUTES,
+// and APPROVAL_DAILY_MAX in 24 hours stops that caller. One attendant's
+// guessing then cannot block the owner's approvals at the desktop, and no
+// caller can keep guessing indefinitely.
+//
+// Counts live in memory and reset when the backend restarts.
+const positiveNumber = (value: unknown, fallback: number) =>
+  Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
+const LOGIN_MAX_ATTEMPTS = positiveNumber(process.env.LOGIN_MAX_ATTEMPTS, 5);
+const LOGIN_LOCK_MS = positiveNumber(process.env.LOGIN_LOCK_MINUTES, 15) * 60 * 1000;
+const LOGIN_WINDOW_MS = positiveNumber(process.env.LOGIN_WINDOW_MINUTES, 15) * 60 * 1000;
+const LOGIN_UNTRUSTED_DAILY_MAX = positiveNumber(process.env.LOGIN_UNTRUSTED_DAILY_MAX, 5);
+const APPROVAL_DAILY_MAX = positiveNumber(process.env.APPROVAL_DAILY_MAX, 20);
+const DAY_MS = 24 * 60 * 60 * 1000;
+const loginAttempts = new Map<string, { failures: number; firstFailureAt: number; lockedUntil: number }>();
+// Rolling 24-hour failure times, per account or per approver and caller.
+const dailyFailures = new Map<string, number[]>();
+// Wrong guesses in a row from each known device since it last signed in.
+const deviceFailures = new Map<string, number>();
+
+function dailyLockSeconds(key: string, max: number): number {
+  const now = Date.now();
+  const recent = (dailyFailures.get(key) || []).filter((at) => now - at < DAY_MS);
+  if (recent.length === 0) {
+    dailyFailures.delete(key);
+    return 0;
+  }
+  dailyFailures.set(key, recent);
+  if (recent.length < max) return 0;
+  // Open again once enough of the oldest failures are a day old.
+  return Math.max(1, Math.ceil((recent[recent.length - max] + DAY_MS - now) / 1000));
+}
+
+function recordDailyFailure(key: string) {
+  const recent = dailyFailures.get(key) || [];
+  recent.push(Date.now());
+  dailyFailures.set(key, recent);
+}
+
+function waitMessage(seconds: number) {
+  return seconds >= 2 * 60 * 60
+    ? `${Math.ceil(seconds / 3600)} hours`
+    : `${Math.ceil(seconds / 60)} minute(s)`;
+}
+
+// Where a wrong guess came from, for the station log only; never used to decide
+// anything (see above). The forwarded header is the client's own text.
+function logPinFailure(kind: string, employeeId: number, detail: string, req: any) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').slice(0, 100);
+  console.warn(
+    `[auth:${kind}] incorrect PIN for employee ${employeeId} (${detail}); peer ${req.socket?.remoteAddress || 'unknown'}, forwarded ${JSON.stringify(forwarded)}`,
+  );
 }
 
 function getLoginLockSeconds(key: string): number {
@@ -45,11 +107,10 @@ function recordLoginFailure(key: string) {
   const now = Date.now();
   const withinWindow = current && now - current.firstFailureAt <= LOGIN_WINDOW_MS;
   const failures = (withinWindow ? current.failures : 0) + 1;
-  const maxAttempts = Number.isFinite(LOGIN_MAX_ATTEMPTS) && LOGIN_MAX_ATTEMPTS > 0 ? LOGIN_MAX_ATTEMPTS : 5;
   loginAttempts.set(key, {
     failures,
     firstFailureAt: withinWindow ? current.firstFailureAt : now,
-    lockedUntil: failures >= maxAttempts ? Date.now() + LOGIN_LOCK_MS : 0,
+    lockedUntil: failures >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MS : 0,
   });
 }
 
@@ -60,33 +121,46 @@ function clearLoginFailures(key: string) {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
-    const { employee_id, pin } = req.body;
-    const loginKey = getLoginKey(req, employee_id);
-    const lockSeconds = getLoginLockSeconds(loginKey);
-    if (lockSeconds > 0) {
-      return res.status(429).json({
-        success: false,
-        error: `Too many failed PIN attempts. Try again in ${Math.ceil(lockSeconds / 60)} minute(s).`,
-        retry_after_seconds: lockSeconds,
-      });
-    }
-
+    const { employee_id, pin, device_token } = req.body || {};
+    const employeeId = Number(employee_id);
     const submittedPin = typeof pin === 'string' ? pin : '';
-    if (!employee_id || !submittedPin) {
+    if (!Number.isInteger(employeeId) || employeeId <= 0 || !submittedPin) {
       return res.status(400).json({ success: false, error: 'Employee ID and PIN are required' });
     }
 
+    // Which allowance this guess uses (see the top of this file).
+    const claim = verifyDeviceToken(device_token);
+    const trustedDevice = claim && claim.employee === employeeId
+      && (deviceFailures.get(claim.device) || 0) < LOGIN_MAX_ATTEMPTS
+      ? claim.device
+      : null;
+    const accountKey = `login:${employeeId}`;
+    if (!trustedDevice) {
+      // Refused before the PIN is checked, so a right guess cannot slip through.
+      const lockSeconds = dailyLockSeconds(accountKey, LOGIN_UNTRUSTED_DAILY_MAX);
+      if (lockSeconds > 0) {
+        return res.status(429).json({
+          success: false,
+          error: `Too many wrong PINs for this account from new devices. Sign in on a phone you have used before, or try again in ${waitMessage(lockSeconds)}.`,
+          retry_after_seconds: lockSeconds,
+        });
+      }
+    }
+
     const employee = await db('employees')
-      .where({ id: employee_id, active: true })
+      .where({ id: employeeId, active: true })
       .first();
 
+    // No account, nothing to guess. Counting only real accounts' failures also
+    // keeps the counters from growing with made-up IDs.
     if (!employee) {
-      recordLoginFailure(loginKey);
       return res.status(401).json({ success: false, error: 'Invalid employee or PIN' });
     }
 
     if (!verifyPin(submittedPin, employee.pin)) {
-      recordLoginFailure(loginKey);
+      if (trustedDevice) deviceFailures.set(trustedDevice, (deviceFailures.get(trustedDevice) || 0) + 1);
+      else recordDailyFailure(accountKey);
+      logPinFailure('login', employeeId, trustedDevice ? 'known device' : 'new device', req);
       return res.status(401).json({ success: false, error: 'Invalid employee or PIN' });
     }
 
@@ -94,8 +168,10 @@ router.post('/login', async (req, res) => {
       await db('employees').where({ id: employee.id }).update({ pin: hashPin(submittedPin) });
     }
 
-    // Return employee data without pin, plus a session token
-    clearLoginFailures(loginKey);
+    // Return employee data without pin, plus a session token. The new-device
+    // allowance is deliberately not reset by a sign-in: it only recovers with
+    // time, so a success anywhere never hands a guesser a fresh set.
+    if (trustedDevice) deviceFailures.delete(trustedDevice);
     const { pin: _pin, ...employeeData } = employee;
     const issuedAt = new Date();
     const ttlMs = getSessionTtlMs();
@@ -104,6 +180,8 @@ router.post('/login', async (req, res) => {
       success: true,
       data: employeeData,
       token,
+      // Marks this device as known for this employee from now on.
+      device_token: generateDeviceToken(employee.id),
       session: {
         issued_at: issuedAt.toISOString(),
         expires_at: new Date(issuedAt.getTime() + ttlMs).toISOString(),
@@ -153,9 +231,9 @@ router.get('/approvers', requireAuth, async (_req, res) => {
 // it (services/approval.ts). Checking the PIN here and trusting a client-side
 // "PIN ok" would be decoration.
 //
-// Failures lock the approver out like login does, but counted per approver
-// rather than per client address: every desktop request comes from the same
-// terminal, and the lock must hold however the request is sent.
+// Wrong PINs are limited per approver and per caller (see the top of this
+// file), never per client address: every desktop request comes from the same
+// terminal, and the limit must hold however the request is sent.
 // Wrong PINs answer 403, not 401, so a signed-in mobile client never mistakes a
 // mistyped approval PIN for an expired session and logs out.
 router.post('/verify-pin', requireAuth, async (req, res) => {
@@ -178,12 +256,17 @@ router.post('/verify-pin', requireAuth, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Select the approving administrator and enter their PIN.' });
     }
 
-    const attemptKey = `approval:${approverId}`;
-    const lockSeconds = getLoginLockSeconds(attemptKey);
+    const sessionId = Number((req as any).employee?.id);
+    const caller = sessionId > 0 ? `employee:${sessionId}` : 'desktop';
+    const attemptKey = `approval:${approverId}:${caller}`;
+    const lockSeconds = Math.max(
+      getLoginLockSeconds(attemptKey),
+      dailyLockSeconds(attemptKey, APPROVAL_DAILY_MAX),
+    );
     if (lockSeconds > 0) {
       return res.status(429).json({
         success: false,
-        error: `Too many incorrect PINs for this approver. Try again in ${Math.ceil(lockSeconds / 60)} minute(s).`,
+        error: `Too many incorrect PINs for this approver on this device. Try again in ${waitMessage(lockSeconds)}.`,
         retry_after_seconds: lockSeconds,
       });
     }
@@ -191,8 +274,14 @@ router.post('/verify-pin', requireAuth, async (req, res) => {
     const approver = await db('employees')
       .where({ id: approverId, active: true, role: 'admin' })
       .first();
-    if (!approver || !verifyPin(submittedPin, approver.pin)) {
+    if (!approver) {
+      // Not an active administrator: nothing to guess, nothing counted.
+      return res.status(403).json({ success: false, error: 'Incorrect PIN for the selected approver.' });
+    }
+    if (!verifyPin(submittedPin, approver.pin)) {
       recordLoginFailure(attemptKey);
+      recordDailyFailure(attemptKey);
+      logPinFailure('approval', approverId, `asked by ${caller}`, req);
       return res.status(403).json({ success: false, error: 'Incorrect PIN for the selected approver.' });
     }
     clearLoginFailures(attemptKey);

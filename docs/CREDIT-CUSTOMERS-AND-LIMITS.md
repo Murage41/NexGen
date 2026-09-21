@@ -53,7 +53,9 @@ and asks for an administrator's approval:
 
 An approval covers exactly that entry: the same customer, shift and amount (or
 fuel type and litres). Changing the entry withdraws it, and it expires after 10
-minutes. Five wrong PINs lock that administrator's approvals for 15 minutes.
+minutes. Five wrong PINs lock that administrator's approvals on that device for
+15 minutes, and 20 in a day stop them there until the next day. Other devices
+are not affected.
 
 If no administrator is present, the attendant cannot record the entry. An
 administrator can add it to the shift later from their own device.

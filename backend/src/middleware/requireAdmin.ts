@@ -130,6 +130,51 @@ export function verifyApprovalToken(token: unknown): { approver: number; binding
   }
 }
 
+// Device tokens mark a phone or browser that has signed in to one employee's
+// account before. They are never a login - the PIN is always checked - they
+// only decide which wrong-PIN limit applies (routes/auth.ts): a known device
+// gets its own allowance, so someone guessing an account's PIN from anywhere
+// else cannot lock that employee out of their own phone. Signed under their own
+// domain, so neither a session nor an approval token can pass for one.
+export const DEVICE_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+
+function deviceSignature(payload: string): string {
+  return crypto.createHmac('sha256', getSessionSecret()).update(`device.${payload}`).digest('hex');
+}
+
+export function generateDeviceToken(employeeId: number): string {
+  const payload = Buffer.from(JSON.stringify({ employee: employeeId, device: crypto.randomUUID(), ts: Date.now() })).toString('base64');
+  return `${payload}.${deviceSignature(payload)}`;
+}
+
+export function verifyDeviceToken(token: unknown): { employee: number; device: string; ts: number } | null {
+  try {
+    if (typeof token !== 'string' || token.length > 1000) return null;
+    const dotIndex = token.lastIndexOf('.');
+    if (dotIndex === -1) return null;
+
+    const payload = token.slice(0, dotIndex);
+    const sig = token.slice(dotIndex + 1);
+    if (!timingSafeStringEqual(sig, deviceSignature(payload))) return null;
+
+    const decoded = JSON.parse(Buffer.from(payload, 'base64').toString());
+    if (
+      typeof decoded.employee !== 'number' ||
+      typeof decoded.device !== 'string' ||
+      typeof decoded.ts !== 'number'
+    ) {
+      return null;
+    }
+
+    if (decoded.ts > Date.now() + 5 * 60 * 1000) return null;
+    if (Date.now() - decoded.ts > DEVICE_TOKEN_TTL_MS) return null;
+
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (isValidDesktopKey(req.headers['x-desktop-key'])) {
     (req as any).employee = { id: 0, role: 'admin' };

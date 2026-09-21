@@ -136,11 +136,29 @@ SESSION_TTL_HOURS=12
 LOGIN_MAX_ATTEMPTS=5
 LOGIN_WINDOW_MINUTES=15
 LOGIN_LOCK_MINUTES=15
+LOGIN_UNTRUSTED_DAILY_MAX=5
+APPROVAL_DAILY_MAX=20
 ```
 
 This covers a normal long shift while forcing a fresh login after the shift/day.
-Repeated wrong PINs lock that employee/IP combination briefly to slow brute-force
-attempts.
+
+Wrong PINs are limited per account, never per client address: through ngrok
+every request reaches the backend from the station PC itself, and the address a
+client claims can be forged.
+
+- A phone that has signed in to an account before keeps a device token and may
+  get `LOGIN_MAX_ATTEMPTS` wrong PINs in a row; after that it counts as a new
+  device until it signs in again.
+- All other devices share `LOGIN_UNTRUSTED_DAILY_MAX` wrong PINs per account per
+  24 hours. Someone guessing from elsewhere uses up only that shared allowance,
+  never the owner's phones.
+- Approval PINs (desktop and attendant phones) lock a device for
+  `LOGIN_LOCK_MINUTES` after `LOGIN_MAX_ATTEMPTS` wrong tries within
+  `LOGIN_WINDOW_MINUTES`, and stop it after `APPROVAL_DAILY_MAX` in a day. Each
+  device is counted separately.
+
+Counts reset when the backend restarts. Wrong PINs are written to the station
+log with the account and the address the client claimed, never the PIN.
 
 If `DESKTOP_KEY` is set, build the desktop app with the same value as
 `VITE_DESKTOP_KEY`.

@@ -47,7 +47,8 @@
     "test:closed-shift-variance": "tsx scripts/test_closed_shift_variance.ts",
     "test:payroll-report-integration": "tsx scripts/test_payroll_report_integration.ts",
     "test:recovery-approval": "tsx scripts/test_recovery_approval.ts",
-    "test:credit-limits": "tsx scripts/test_credit_limits.ts"
+    "test:credit-limits": "tsx scripts/test_credit_limits.ts",
+    "test:login-throttle": "tsx scripts/test_login_throttle.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

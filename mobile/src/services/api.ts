@@ -51,7 +51,41 @@ api.interceptors.response.use(
 
 // Auth
 export const getAuthEmployees = () => api.get('/auth/employees');
-export const login = (employee_id: number, pin: string) => api.post('/auth/login', { employee_id, pin });
+// A phone that has signed in to an employee's account keeps a device token for
+// that employee (one per employee, so a shared phone works for each of them).
+// It never replaces the PIN. It gives this phone its own allowance of wrong
+// PINs, separate from the stricter one shared by every unknown device, so a
+// stranger guessing an employee's PIN cannot lock them out of their own phone.
+// Kept on sign-out on purpose: it identifies the phone, not the session.
+const DEVICE_TOKENS_KEY = 'nexgen_device_tokens';
+
+function readDeviceTokens(): Record<string, string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DEVICE_TOKENS_KEY) || '{}');
+    return stored && typeof stored === 'object' ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
+function rememberDeviceToken(employeeId: number, token: unknown) {
+  if (typeof token !== 'string' || !token) return;
+  try {
+    localStorage.setItem(DEVICE_TOKENS_KEY, JSON.stringify({ ...readDeviceTokens(), [employeeId]: token }));
+  } catch {
+    // Storage unavailable (private mode): sign-in still works, just untrusted.
+  }
+}
+
+export const login = async (employee_id: number, pin: string) => {
+  const response = await api.post('/auth/login', {
+    employee_id,
+    pin,
+    device_token: readDeviceTokens()[employee_id],
+  });
+  rememberDeviceToken(employee_id, response.data?.device_token);
+  return response;
+};
 
 // Dashboard
 export const getDashboard = () => api.get('/dashboard');
