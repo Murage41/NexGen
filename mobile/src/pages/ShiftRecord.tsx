@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories, createOperationKey, attendantApproval } from '../services/api';
+import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, reverseShiftCreditReceipt, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories, createOperationKey, attendantApproval } from '../services/api';
 import { CreditLimitPrompt, isCreditLimitBreach } from '../../../shared/ui/CreditLimitPrompt';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
@@ -559,6 +559,19 @@ export default function ShiftRecord() {
   );
   const invoiceSources = readings.filter((reading) => reading.fuel_type === newInvoice.fuel_type);
 
+  async function handleRemoveReceipt(receipt: any) {
+    if (!confirm(`Remove this payment of KES ${Number(receipt.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })} from ${receipt.account_name}? They will owe it again and it leaves this shift's drawer total. It stays on record as reversed.`)) return;
+    setReceiptError('');
+    try {
+      await reverseShiftCreditReceipt(parseInt(id!), receipt.id);
+      // Balances shown when collecting a payment change too.
+      await loadShift();
+      await loadCreditAccounts();
+    } catch (err: any) {
+      setReceiptError(err?.response?.data?.error || err?.message || 'Failed to remove the payment');
+    }
+  }
+
   async function handleDeleteCredit(creditId: number) {
     setCreditError('');
     try {
@@ -913,9 +926,16 @@ export default function ShiftRecord() {
                       <p className="text-sm font-medium text-gray-800">{r.account_name}</p>
                       <p className="text-xs text-green-700 capitalize">{r.payment_method}</p>
                     </div>
-                    <span className="text-sm font-semibold text-green-700">
-                      KES {Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-green-700">
+                        KES {Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                      </span>
+                      {isAdmin && shiftStatus === 'open' && (
+                        <button onClick={() => handleRemoveReceipt(r)} className="text-red-400 p-1" aria-label="Remove payment">
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

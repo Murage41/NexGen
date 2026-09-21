@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   getShift, updateReadings, updateCollections, addShiftExpense,
-  deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit,
+  deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit, reverseShiftCreditReceipt,
   getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
   addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview, getShiftNeighbors, createOperationKey,
 } from '../services/api';
@@ -122,6 +122,7 @@ export default function ShiftDetail() {
   const [closeError, setCloseError] = useState('');
   const [closeWarnings, setCloseWarnings] = useState<string[]>([]);
   const [receiptError, setReceiptError] = useState('');
+  const [receiptListError, setReceiptListError] = useState('');
   const [reviewError, setReviewError] = useState('');
   // Current per-fuel-type prices, used to surface KES/L anomalies on the readings table.
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
@@ -576,6 +577,18 @@ export default function ShiftDetail() {
     }
   }
 
+  async function handleRemoveReceipt(receipt: any) {
+    if (!confirm(`Remove this payment of KES ${Number(receipt.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })} from ${receipt.account_name}? They will owe it again and it leaves this shift's drawer total. It stays on record as reversed.`)) return;
+    setReceiptListError('');
+    try {
+      await reverseShiftCreditReceipt(parseInt(id!), receipt.id);
+      // Balances shown when collecting a payment change too.
+      await Promise.all([loadShift(), loadCreditAccounts()]);
+    } catch (err: any) {
+      setReceiptListError(err?.response?.data?.error || err?.message || 'Failed to remove the payment');
+    }
+  }
+
   async function handleDeleteCredit(creditId: number) {
     setCreditError('');
     try {
@@ -638,7 +651,7 @@ export default function ShiftDetail() {
       setShowReceiptModal(false);
       setReceiptForm({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
       setReceiptAccountSearch('');
-      await loadShift();
+      await Promise.all([loadShift(), loadCreditAccounts()]);
     } catch (err: any) {
       if (err?.code === 'ECONNABORTED') {
         await loadShift();
@@ -1636,6 +1649,7 @@ export default function ShiftDetail() {
                 <th className="text-left p-2 font-medium text-gray-600">Customer</th>
                 <th className="text-left p-2 font-medium text-gray-600">Method</th>
                 <th className="text-right p-2 font-medium text-gray-600">Amount</th>
+                {isOpen && <th className="p-2"></th>}
               </tr>
             </thead>
             <tbody>
@@ -1648,6 +1662,13 @@ export default function ShiftDetail() {
                     </span>
                   </td>
                   <td className="p-2 text-right font-medium">{formatKES(Number(r.amount))}</td>
+                  {isOpen && (
+                    <td className="p-2 text-center">
+                      <button onClick={() => handleRemoveReceipt(r)} className="text-red-500 hover:text-red-700" title="Remove payment">
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -1655,12 +1676,14 @@ export default function ShiftDetail() {
               <tr>
                 <td colSpan={2} className="p-2 text-right">Total Collected:</td>
                 <td className="p-2 text-right">{formatKES(totalCreditReceipts)}</td>
+                {isOpen && <td></td>}
               </tr>
             </tfoot>
           </table>
         ) : (
           <p className="text-sm text-gray-400">No debt collections recorded for this shift</p>
         )}
+        {receiptListError && <p className="text-sm text-red-600 mt-2">{receiptListError}</p>}
       </div>
 
       {/* Close Shift */}

@@ -72,6 +72,16 @@ and by how much, who approved, and who was signed in when it was recorded.
 The customer list also shows each customer's limits, flagged **Over limit** or
 **Overdue** when a limit is broken right now.
 
+## Correcting a Payment Recorded on a Shift
+
+While the shift is still open, an administrator can remove a debt payment
+entered by mistake with the bin icon next to it under **Debt Collections**.
+Payments are never erased: the payment is marked reversed and kept on record,
+the customer owes that amount again, and it no longer counts toward the shift's
+cash. Attendants cannot remove payments. After the shift closes, its drawer has
+been reconciled, so a wrong payment is fixed with a shift accounting correction
+instead.
+
 ## Release Acceptance Test
 
 1. Add a money customer with a phone, KRA PIN, credit limit of 1,000 and

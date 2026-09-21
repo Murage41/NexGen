@@ -129,6 +129,10 @@ export const getStaffDebts = (employeeId: number) => api.get(`/shifts/staff-debt
 export const repayDebt = (shiftId: number, amount: number) => api.put(`/shifts/${shiftId}/repay-debt`, { amount });
 export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }, operationKey?: string) =>
   api.post(`/shifts/${shiftId}/credit-receipts`, data, operationConfig(operationKey));
+// Admin-only, open shift only. The payment is reversed (kept on record), not
+// deleted: the customer owes it again and it leaves the drawer total.
+export const reverseShiftCreditReceipt = (shiftId: number, paymentId: number) =>
+  api.post(`/shifts/${shiftId}/credit-receipts/${paymentId}/reverse`);
 export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; pump_id?: number | null; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }, operationKey?: string) =>
   api.post(`/shifts/${shiftId}/invoice-consumption`, data, operationConfig(operationKey));
 export const updateInvoiceConsumption = (shiftId: number, entryId: number, data: { litres?: number; pump_id?: number | null; tank_id?: number | null }) =>

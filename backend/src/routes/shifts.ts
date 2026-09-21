@@ -40,7 +40,9 @@ import {
 import {
   paymentHttpStatus,
   recordMoneyAccountPaymentInTransaction,
+  reverseMoneyAccountPaymentInTransaction,
 } from '../services/receivablePayments';
+import { reverseEmployeeDebtReceipt } from '../services/employeePay';
 import {
   resolveConsumptionSource,
   validateInvoiceConsumptionAgainstReadings,
@@ -1994,6 +1996,57 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
 
     if (result.replayed) res.set('Idempotency-Replayed', 'true');
     res.status(result.status).json(result.body);
+  } catch (err: any) {
+    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
+/**
+ * POST /shifts/:id/credit-receipts/:paymentId/reverse
+ *
+ * Takes back a debt payment recorded on this shift by mistake, while the shift
+ * is still open - the payment counterpart of deleting a shift credit, and
+ * admin-only like it.
+ *
+ * Payments are never deleted: the row is marked reversed, with who, when and
+ * why, so customer statements and the audit keep an honest history. Reversing
+ * restores exactly the credits (or employee debts) the payment settled, so the
+ * customer owes what they owed before, and the amount drops out of this
+ * shift's expected drawer total (every drawer and report query counts posted
+ * payments only). Once a shift closes its drawer is reconciled, so a payment
+ * on a closed shift is corrected through a shift accounting correction
+ * instead - the same rule employee debt receipts already follow.
+ */
+router.post('/:id/credit-receipts/:paymentId/reverse', requireAdmin, async (req: any, res) => {
+  if (!(await requireOpenShift(req, res))) return;
+  try {
+    const shiftId = Number(req.params.id);
+    const paymentId = Number(req.params.paymentId);
+    const actorId = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
+    const reason = String(req.body?.reason || '').trim() || `Removed from open shift #${shiftId}`;
+    await db.transaction(async (trx) => {
+      const payment = await trx('credit_payments')
+        .where({ id: paymentId, shift_id: shiftId })
+        .whereNull('deleted_at')
+        .first();
+      if (!payment) {
+        throw Object.assign(new Error('That payment is not on this shift.'), { http: 404 });
+      }
+      // Re-checked inside the transaction: the shift may have closed since.
+      const shift = await trx('shifts').where({ id: shiftId }).first('status');
+      if (shift?.status !== 'open') {
+        throw Object.assign(
+          new Error('This shift has closed. Correct its payments through a shift accounting correction.'),
+          { http: 409 },
+        );
+      }
+      if (payment.payment_type === 'staff_debt') {
+        await reverseEmployeeDebtReceipt(paymentId, reason, trx, actorId);
+      } else {
+        await reverseMoneyAccountPaymentInTransaction(trx, { paymentId, reason, actorId });
+      }
+    });
+    res.json({ success: true });
   } catch (err: any) {
     res.status(paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
   }

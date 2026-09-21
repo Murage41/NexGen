@@ -15,13 +15,16 @@ import {
 import PageHeader from '../components/PageHeader';
 import {
   correctInvoiceConsumption,
+  getCreditAccount,
   getCustomerInvoices,
   getInvoiceCustomerConsumption,
   getInvoiceCustomerMonitor,
   getInvoicePayments,
   getShift,
   previewInvoiceConsumptionCorrection,
+  updateCreditAccount,
 } from '../services/api';
+import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../shared/ui/CustomerAccountForm';
 
 type CustomerSummary = {
   id: number;
@@ -73,6 +76,9 @@ export default function InvoiceCustomerDetail() {
   const { id } = useParams();
   const accountId = Number(id);
   const [customer, setCustomer] = useState<CustomerSummary | null>(null);
+  // Full account record: KRA PIN, limits, live limit status, limit approvals.
+  const [account, setAccount] = useState<any>(null);
+  const [editing, setEditing] = useState(false);
   const [history, setHistory] = useState<any>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
@@ -117,6 +123,18 @@ export default function InvoiceCustomerDetail() {
     }
   }
 
+  async function loadAccount() {
+    const response = await getCreditAccount(accountId);
+    setAccount(response.data.data);
+  }
+
+  // Same form as the desktop workspace; the billing mode stays invoice.
+  async function saveCustomer(payload: Record<string, unknown>) {
+    await updateCreditAccount(accountId, payload);
+    setEditing(false);
+    await loadPage();
+  }
+
   async function loadPage() {
     try {
       setLoading(true);
@@ -126,6 +144,7 @@ export default function InvoiceCustomerDetail() {
         getInvoiceCustomerConsumption(accountId, historyParams(1)),
         getCustomerInvoices({ account_id: accountId }),
         getInvoicePayments({ account_id: accountId }),
+        loadAccount(),
       ]);
       const match = (monitorResponse.data.data?.customers || [])
         .find((row: CustomerSummary) => Number(row.id) === accountId);
@@ -253,18 +272,55 @@ export default function InvoiceCustomerDetail() {
         title={customer?.name || 'Invoice Customer'}
         back
         right={(
-          <button
-            onClick={loadPage}
-            disabled={loading || historyLoading}
-            className="p-2 text-gray-500 disabled:opacity-40"
-            aria-label="Refresh customer records"
-          >
-            <RefreshCw size={18} className={loading || historyLoading ? 'animate-spin' : ''} />
-          </button>
+          <div className="flex items-center">
+            <button
+              onClick={() => setEditing(true)}
+              disabled={!account}
+              className="p-2 text-gray-500 disabled:opacity-40"
+              aria-label="Edit customer"
+            >
+              <Pencil size={18} />
+            </button>
+            <button
+              onClick={loadPage}
+              disabled={loading || historyLoading}
+              className="p-2 text-gray-500 disabled:opacity-40"
+              aria-label="Refresh customer records"
+            >
+              <RefreshCw size={18} className={loading || historyLoading ? 'animate-spin' : ''} />
+            </button>
+          </div>
         )}
       />
 
-      {customer?.phone && <p className="-mt-3 mb-3 pl-8 text-xs text-gray-400">{customer.phone}</p>}
+      <div className="-mt-3 mb-3 pl-8 space-y-0.5">
+        {(account?.phone || customer?.phone || account?.kra_pin) && (
+          <p className="text-xs text-gray-400">
+            {[account?.phone || customer?.phone, account?.kra_pin && `KRA PIN ${account.kra_pin}`].filter(Boolean).join(' · ')}
+          </p>
+        )}
+        {account && <CreditLimitSummary account={account} />}
+      </div>
+
+      {editing && account && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center">
+          <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-800">Edit invoice customer</h2>
+              <button onClick={() => setEditing(false)} className="p-1 text-gray-400" aria-label="Close"><X size={20} /></button>
+            </div>
+            <CustomerAccountForm
+              key={account.id}
+              account={account}
+              lockBillingMode="invoice"
+              onSubmit={saveCustomer}
+              onCancel={() => setEditing(false)}
+              inputClassName="w-full border border-gray-300 rounded-lg p-3 text-sm bg-white"
+            />
+            <div className="text-sm"><CreditLimitDetails account={account} /></div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm mb-3 flex items-start justify-between gap-2">

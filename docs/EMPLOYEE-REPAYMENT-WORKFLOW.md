@@ -62,9 +62,11 @@ its work date. Include the money in recorded drawer collections. NexGen counts
 it as debt receipts, separately from fuel sales. A receipt without a shift is a
 direct receipt and is included in cash reporting once.
 
-Use **Reverse** with a reason to correct an erroneous receipt. Payments tied to
-a closed drawer require a shift accounting correction, since changing them
-would change an already reconciled drawer. Reversing a wage payment does not
+Use **Reverse** with a reason to correct an erroneous receipt. A receipt taken
+in a shift that is still open can also be removed from that shift's **Debt
+Collections** list by an administrator; it is reversed and kept on record the
+same way. Payments tied to a closed drawer require a shift accounting
+correction, since changing them would change an already reconciled drawer. Reversing a wage payment does not
 reverse a debt offset; voiding payroll restores its debt allocations after
 ordinary payroll payments have been reversed.
 
