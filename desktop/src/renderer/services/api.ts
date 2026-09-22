@@ -292,18 +292,18 @@ function financialConfig(path: string, data: any, suppliedKey?: string) {
   return { headers: { 'Idempotency-Key': suppliedKey || financialKeys.get(fingerprint)! } };
 }
 function financialPost(path: string, data: any, key?: string) { return api.post(path, data, financialConfig(path, data, key)); }
-export const savePayrollRecovery = (runId: number, lineId: number, data: any, operationKey?: string) => { const path = `/payroll/runs/${runId}/lines/${lineId}/recovery`; return api.put(path, data, financialConfig(path, data, operationKey)); };
 export const getMyPay = () => api.get('/payroll/me');
 export const getEmployeePay = (id: number) => api.get(`/payroll/employees/${id}`);
 export const recordDebtReceipt = (id: number, data: any, key: string) => financialPost(`/payroll/employees/${id}/receipts`, data, key);
 export const reverseDebtReceipt = (id: number, reason: string) => financialPost(`/payroll/receipts/${id}/reverse`, { reason });
-export const setRecoveryLimit = (id: number, percent: number) => api.put(`/payroll/employees/${id}/recovery-limit`, { percent });
-export const reviewEmployeeDebt = (id: number, data: any) => api.put(`/payroll/debts/${id}/review`, data);
+// Attendant variances (Employees, Variances): statement, write-off, pay back.
+export const getEmployeeVariances = (id: number) => api.get(`/payroll/employees/${id}/variances`);
+export const waiveVariance = (id: number, data: Record<string, unknown>, key: string) => financialPost(`/payroll/employees/${id}/variances/waivers`, data, key);
+export const refundVariance = (id: number, data: Record<string, unknown>, key: string) => financialPost(`/payroll/employees/${id}/variances/refunds`, data, key);
+export const varianceActions = { repay: recordDebtReceipt, reverseRepayment: reverseDebtReceipt, waive: waiveVariance, refund: refundVariance };
 // Money owed back to an employee after a closed-shift correction.
-export const settleEmployeeRefund = (id: number, data: Record<string, unknown>) => financialPost(`/payroll/refunds/${id}/settle`, data);
 // Paying a customer back credit they hold on account after a correction.
 export const refundCustomerCredit = (id: number, data: Record<string, unknown>) => financialPost(`/credit-accounts/${id}/refunds`, data);
-export const previewShiftRecovery = (id: number, wage_paid: number) => api.post(`/shifts/${id}/recovery-preview`, { wage_paid });
 
 // ============ Approvals ============
 // This terminal has no signed-in person, so a decision that needs an approver

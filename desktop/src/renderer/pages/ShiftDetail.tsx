@@ -1,9 +1,8 @@
-import { DailyRecovery } from '../../../../shared/ui/DailyRecovery';
 import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/CreditLimitPrompt';
 import { ShiftCorrectionForm, ShiftCorrectionList, describeShiftBalance, type CorrectionEntry } from '../../../../shared/ui/ShiftCorrection';
-import { desktopApproval, previewShiftRecovery, shiftCorrectionApi } from '../services/api';
+import { desktopApproval, shiftCorrectionApi } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   getShift, updateReadings, updateCollections, addShiftExpense,
   deleteShiftExpense, closeShift, addShiftCredit, deleteShiftCredit, reverseShiftCreditReceipt,
@@ -100,8 +99,6 @@ export default function ShiftDetail() {
   const creditOperation = useRef<PendingOperation | null>(null);
   const invoiceOperation = useRef<PendingOperation | null>(null);
   const receiptOperation = useRef<PendingOperation | null>(null);
-  const [recoveryDecision, setRecoveryDecision] = useState<any>(null);
-  const [recoveryReady, setRecoveryReady] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [reviewAction, setReviewAction] = useState<'reviewed' | 'flagged' | null>(null);
@@ -604,7 +601,6 @@ export default function ShiftDetail() {
 
   async function handleCloseShift() {
     setCloseError('');
-    if (!recoveryReady) { setCloseError('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
     if (!closeReviewComplete) {
       setCloseError('Complete the reconciliation review and record a variance reason when required.');
       return;
@@ -616,7 +612,6 @@ export default function ShiftDetail() {
     try {
       const res = await closeShift(parseInt(id!), {
         notes,
-        recovery_decision: recoveryDecision || undefined,
         wage_paid: parseFloat(wagePaid) || 0,
         reconciliation: {
           readings_reviewed: true,
@@ -955,15 +950,11 @@ export default function ShiftDetail() {
           <div className="flex items-center gap-2">
             <DollarSign size={18} className="text-orange-600" />
             <div>
-              <p className="text-sm font-semibold text-orange-800">Outstanding Staff Debt</p>
-              <p className="text-xs text-orange-600">{shift.employee_name} owes {formatKES(totalOutstandingDebt)} from previous shifts</p>
+              <p className="text-sm font-semibold text-orange-800">Owes on variances</p>
+              <p className="text-xs text-orange-600">{shift.employee_name} owes {formatKES(totalOutstandingDebt)} from earlier shifts. It is repaid separately, never taken from pay.</p>
             </div>
           </div>
-          {compensationPlan?.pay_schedule === 'daily' ? (
-            <p className="text-sm text-orange-700">Review recovery when closing the shift</p>
-          ) : (
-            <span className="text-xs font-medium text-orange-700">Recover through payroll</span>
-          )}
+          <Link to={`/employees/${shift.employee_id}/variances`} className="text-sm text-orange-700 underline">Variances</Link>
         </div>
       )}
 
@@ -1825,7 +1816,7 @@ export default function ShiftDetail() {
                   className="w-full border border-gray-300 rounded-lg p-2"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Enter the full wage — any debt recovery below is handled separately and won't reduce this.
+                  Pay the full wage. Shortages are repaid separately under Employees, Variances, never taken from pay.
                 </p>
               </div>
             ) : (
@@ -1835,7 +1826,6 @@ export default function ShiftDetail() {
               </div>
             )}
 
-            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} approval={desktopApproval} onDecision={setRecoveryDecision} onReady={setRecoveryReady} revision={JSON.stringify([readings, collections, expenses, shiftCredits, invoiceConsumption, creditReceipts, totalPayrollPayments, readingSync, collectionSync])} />
 
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
@@ -1869,7 +1859,7 @@ export default function ShiftDetail() {
               <button onClick={() => setShowCloseModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                 Cancel
               </button>
-              <button onClick={handleCloseShift} disabled={hasUnsyncedDraft || !closeReviewComplete || !recoveryReady} title={hasUnsyncedDraft ? 'Sync readings and collections before closing' : !recoveryReady ? 'Review debt recovery before closing' : !closeReviewComplete ? 'Complete the reconciliation review' : undefined} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleCloseShift} disabled={hasUnsyncedDraft || !closeReviewComplete} title={hasUnsyncedDraft ? 'Sync readings and collections before closing' : !closeReviewComplete ? 'Complete the reconciliation review' : undefined} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
                 Close Shift
               </button>
             </div>

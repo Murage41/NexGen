@@ -11,7 +11,8 @@ A closed shift is never edited, and nothing on it is deleted. A correction:
   amounts;
 - adds the right entry, linked to the original, when there is one;
 - is dated the day it is made and records who approved it and why;
-- recalculates the attendant's shortage for that shift.
+- moves the shift's shortage or surplus on the attendant's variances by exactly
+  what it changes (see [Attendant Variances](ATTENDANT-VARIANCES.md)).
 
 This is how professional accounting systems work. Microsoft Dynamics 365
 Business Central corrects a posted invoice with a linked credit note instead of
@@ -63,24 +64,20 @@ between them. It never changes sales or profit.
   shortage is charged back to the attendant on that shift.
 - **Wrong amount:** the shortage is recalculated by the difference.
 
-If a correction reduces a shortage the attendant has **already repaid**, the
-repaid part is owed back to them. A shortage that was written off, not repaid,
-is not refunded.
+The change is an entry on the attendant's variances, dated the day of the
+correction. What covered that shift is worked out again: if a correction
+reduces a shortage the attendant has **already repaid**, the repaid money no
+longer covers anything and can be paid back to them; it also covers their next
+shortage automatically. A shortage that was written off or covered by a surplus
+is not paid back.
 
-## Money Owed Back to an Employee
+## Paying an Employee Back
 
-It appears on the employee's pay statement under **Owed back after
-corrections**. An administrator settles it in full, with approval:
-
-- **Paid to them in cash or M-Pesa**: shown under **Refunds to Employees** in the
-  cash-flow report.
-- **Set off against what they owe now**, when that covers it.
-
-It is not paid through payroll. Payroll carries wages the employee earned, and
-money returned after a wrong recovery is not a wage. Kenya's Employment Act,
-section 19, allows deducting a cash shortage from pay only when the employee
-caused it through negligence or dishonesty and their job has them handling
-money, so a "shortage" that was a typing error must be returned.
+Open **Employees**, then their **Variances**, and use **Pay back** (cash or
+M-Pesa, with an administrator's approval). It appears under **Paid back to
+Employees** in the cash-flow report. It is never paid through payroll: payroll
+carries wages the employee earned, and money returned after a wrong shortage is
+not a wage.
 
 ## Where the Record Is Kept
 
@@ -94,8 +91,8 @@ money, so a "shortage" that was a typing error must be returned.
   corrections as their own lines, in the month of the correction.
 - **Customer statement:** the original entry stays and the reversal appears on
   the day of the correction.
-- **Employee pay statement:** shortage added or reduced by each correction, and
-  money owed back.
+- **Employee's Variances:** the shift's variance after corrections, what
+  recovered it, and anything that can be paid back.
 
 ## When a Customer Ends Up Paid Ahead
 
@@ -105,8 +102,9 @@ belongs to the customer: it stays on their account as **credit**. The preview
 says so before you post. See **Credit on Account** in
 [Credit Customers and Limits](CREDIT-CUSTOMERS-AND-LIMITS.md).
 
-An employee's repayment can't be moved to an employee who owes less than the
-payment; that correction is refused.
+An employee's repayment moved to an employee who owes less than the payment
+leaves them the rest as money that can be paid back, or that covers their next
+shortage.
 
 ## When a Correction Is Refused
 
@@ -123,8 +121,9 @@ Run on a test copy, never on the station's records.
    corrected.
 2. Void a credit that never happened. Confirm the attendant is charged.
 3. Void a payment that never came in, after the attendant repaid part of the
-   shortage. Confirm the unpaid part is cancelled and the repaid part is owed
-   back; settle it in cash and find it in the cash-flow report.
+   shortage. Confirm the unpaid part is cancelled and the repaid part can be
+   paid back; pay it back in cash from their Variances and find it in the
+   cash-flow report.
 4. Change a fuel-on-account entry's litres and confirm pump sales cap it.
 5. Correct a credit the customer already paid down to a smaller amount. Confirm
    the difference shows as credit on their account, is used when their next

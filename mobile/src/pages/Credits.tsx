@@ -31,7 +31,8 @@ export default function Credits() {
 
   async function loadAccounts() {
     try {
-      const res = await getCreditAccounts({ billing_mode: 'money' });
+      // Customers only: employees' variances are kept under Employees.
+      const res = await getCreditAccounts({ billing_mode: 'money', type: 'customer' });
       setAccounts(res.data.data || res.data);
     } catch (err) {
       console.error(err);
@@ -371,12 +372,6 @@ export default function Credits() {
   }
 
   // Accounts list view
-  const filterTabs: { key: FilterTab; label: string; icon: any }[] = [
-    { key: 'all', label: 'All', icon: CreditCard },
-    { key: 'customer', label: 'Customers', icon: Users },
-    { key: 'employee', label: 'Employees', icon: Briefcase },
-  ];
-
   const totalOutstanding = filtered.reduce((s: number, a: any) => s + Number(a.outstanding_balance || 0), 0);
 
   return (
@@ -399,21 +394,7 @@ export default function Credits() {
         <p className="text-xs text-gray-400 mt-1">{filtered.length} account{filtered.length !== 1 ? 's' : ''}</p>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex bg-gray-100 rounded-lg p-1 mb-4">
-        {filterTabs.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setFilter(t.key)}
-            className={`flex-1 py-2 text-xs font-medium rounded-md transition flex items-center justify-center gap-1 ${
-              filter === t.key ? 'bg-white shadow text-blue-600' : 'text-gray-500'
-            }`}
-          >
-            <t.icon size={14} />
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <p className="text-xs text-gray-500 mb-3">Employees' variances are kept under Employees.</p>
 
       {/* Accounts list */}
       {filtered.length === 0 ? (

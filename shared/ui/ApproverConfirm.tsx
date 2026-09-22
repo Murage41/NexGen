@@ -17,13 +17,13 @@ export type ApprovalApi = {
 };
 
 export type ApprovalPurpose =
-  | 'recovery'
   | 'deduction'
   | 'credit_override'
   | 'consumption_override'
   | 'shift_correction'
-  | 'refund_settlement'
-  | 'customer_refund';
+  | 'customer_refund'
+  | 'variance_waiver'
+  | 'variance_refund';
 
 export function useApprover(approval?: ApprovalApi) {
   const [approvers, setApprovers] = useState<{ id: number; name: string }[]>([]);

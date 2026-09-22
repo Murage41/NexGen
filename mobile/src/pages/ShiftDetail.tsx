@@ -1,8 +1,7 @@
-import { DailyRecovery } from '../../../shared/ui/DailyRecovery';
 import { ShiftCorrectionForm, ShiftCorrectionList, describeShiftBalance, type CorrectionEntry } from '../../../shared/ui/ShiftCorrection';
-import { previewShiftRecovery, shiftCorrectionApi } from '../services/api';
+import { shiftCorrectionApi } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
@@ -23,8 +22,6 @@ export default function ShiftDetail() {
   const { isAdmin } = useAuth();
   const [shift, setShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [recoveryDecision, setRecoveryDecision] = useState<any>(null);
-  const [recoveryReady, setRecoveryReady] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
   const [reviewAction, setReviewAction] = useState<'reviewed' | 'flagged' | null>(null);
@@ -114,7 +111,6 @@ export default function ShiftDetail() {
 
   async function handleClose() {
     setCloseError('');
-    if (!recoveryReady) { setCloseError('Wait for the recovery preview and confirm any debt recovery before closing.'); return; }
     if (!closeReviewComplete) {
       setCloseError('Complete the reconciliation review and record a variance reason when required.');
       return;
@@ -127,7 +123,6 @@ export default function ShiftDetail() {
     try {
       const res = await closeShift(parseInt(id!), {
         notes: closeNotes || undefined,
-        recovery_decision: recoveryDecision || undefined,
         wage_paid: parseFloat(wagePaid) || 0,
         reconciliation: {
           readings_reviewed: true,
@@ -417,17 +412,13 @@ export default function ShiftDetail() {
           <div className="flex items-center gap-2">
             <CreditCard size={16} className="text-orange-600" />
             <div>
-              <p className="text-sm font-semibold text-orange-800">Outstanding Debt</p>
-              <p className="text-xs text-orange-600">{debts.length} unpaid shift deficit{debts.length > 1 ? 's' : ''}</p>
+              <p className="text-sm font-semibold text-orange-800">Owes on variances</p>
+              <p className="text-xs text-orange-600">Repaid separately, never taken from pay</p>
             </div>
           </div>
           <div className="text-right">
             <p className="font-bold text-orange-700">{fmt(totalDebt)}</p>
-            {compensationPlan?.pay_schedule === 'daily' ? (
-              <p className="text-xs text-orange-700">Review recovery when closing the shift</p>
-            ) : (
-              <p className="text-xs text-orange-700 mt-0.5">Recover through payroll</p>
-            )}
+            <Link to={`/employees/${shift.employee_id}/variances`} className="text-xs text-orange-700 underline">Variances</Link>
           </div>
         </div>
       )}
@@ -710,26 +701,14 @@ export default function ShiftDetail() {
         </div>
       )}
 
-      {/* Staff Debts Detail (admin only, when debts exist) */}
+      {/* Shifts the attendant still owes on (admin only) */}
       {isAdmin && debts.length > 0 && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-          <p className="font-semibold text-gray-700 mb-2">Staff Debt History</p>
+          <p className="font-semibold text-gray-700 mb-2">Still owed on variances</p>
           {debts.map((d: any) => (
-            <div key={d.id} className="flex justify-between py-1.5 border-b border-gray-100 last:border-0 text-sm">
-              <div>
-                <p className="text-gray-600">Shift #{d.shift_id}</p>
-                <p className="text-xs text-gray-400">
-                  Deficit: {fmt(d.original_deficit)} · Deducted: {fmt(d.deducted_from_wage)}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className={`font-semibold ${d.status === 'cleared' ? 'text-green-600' : 'text-red-600'}`}>
-                  {fmt(d.balance)}
-                </p>
-                <p className={`text-xs ${d.status === 'cleared' ? 'text-green-500' : 'text-orange-500'}`}>
-                  {d.status}
-                </p>
-              </div>
+            <div key={d.shift_id} className="flex justify-between py-1.5 border-b border-gray-100 last:border-0 text-sm">
+              <p className="text-gray-600">Shift #{d.shift_id}{d.date ? ` · ${d.date}` : ''}</p>
+              <p className="font-semibold text-red-600">{fmt(d.balance)}</p>
             </div>
           ))}
         </div>
@@ -880,7 +859,7 @@ export default function ShiftDetail() {
                   onChange={e => setWagePaid(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg p-3 text-base" />
                 <p className="text-xs text-gray-400 mt-1">
-                  Enter the full wage — any debt recovery below is handled separately and won't reduce this.
+                  Pay the full wage. Shortages are repaid separately under Employees, Variances, never taken from pay.
                 </p>
               </div>
             ) : (
@@ -916,9 +895,6 @@ export default function ShiftDetail() {
               </div>
             </div>
 
-            {/* Deduction options — only when deficit */}
-            <DailyRecovery shiftId={Number(id)} wage={wagePaid} previewRequest={previewShiftRecovery} onDecision={setRecoveryDecision} onReady={setRecoveryReady} revision={JSON.stringify([shift.readings, shift.collections, shift.expenses, shift.shift_credits, shift.invoice_consumption, shift.credit_receipts, totalPayrollPayments])} />
-
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
               <div className="space-y-2 text-sm">
@@ -947,7 +923,7 @@ export default function ShiftDetail() {
 
             {closeError && <p className="text-sm text-red-600 mb-3">{closeError}</p>}
             {/* Confirm */}
-            <button onClick={handleClose} disabled={closing || !closeReviewComplete || !recoveryReady}
+            <button onClick={handleClose} disabled={closing || !closeReviewComplete}
               className="w-full bg-red-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50">
               {closing ? 'Closing...' : 'Confirm Close & Lock'}
             </button>

@@ -146,11 +146,10 @@ export const openShiftSchema = z.object({
 });
 
 export const closeShiftSchema = z.object({
-  // This validator strips unknown keys, so approval_token must be listed here or
-  // every desktop recovery would arrive without its approval.
-  // authorization_reference, reason and variance_reason are no longer collected;
-  // they stay accepted so a phone still running a cached older bundle can close.
-  recovery_decision: z.object({ version: z.string().length(64), amount: z.number().finite().min(0), approval_token: z.string().max(1000).optional(), authorization_reference: z.string().max(200).optional(), reason: z.string().max(1000).optional() }).optional(),
+  // This validator strips unknown keys: a recovery_decision sent by a phone on a
+  // cached older bundle is dropped, since close no longer recovers debt
+  // (services/employeeVariances.ts). variance_reason is no longer collected; it
+  // stays accepted so such a phone can still close.
   notes: optionalText(),
   deduct_amount: z.number().min(0, 'deduct_amount cannot be negative').nullish().optional(),
   wage_paid: z.number().min(0, 'wage_paid cannot be negative'),

@@ -11,6 +11,7 @@ import {
   previousCalendarDate,
 } from '../services/compensation';
 import { getKenyaDate } from '../utils/timezone';
+import { getVarianceTotals } from '../services/employeeVariances';
 
 const router = Router();
 router.use(requireAdmin);
@@ -39,7 +40,6 @@ async function attachCompensation<T extends { id: number }>(employees: T[]): Pro
   const employeeIds = employees.map((employee) => employee.id);
   const earningsByEmployee = new Map<number, number>();
   const payrollDueByEmployee = new Map<number, number>();
-  const debtByEmployee = new Map<number, number>();
   if (employeeIds.length > 0) {
     const earnings = await db('employee_earnings')
       .whereIn('employee_id', employeeIds)
@@ -60,14 +60,9 @@ async function attachCompensation<T extends { id: number }>(employees: T[]): Pro
       .groupBy('payroll_lines.employee_id');
     for (const row of payrollDue) payrollDueByEmployee.set(Number(row.employee_id), Number(row.total || 0));
 
-    const debts = await db('staff_debts')
-      .whereIn('employee_id', employeeIds)
-      .where({ status: 'outstanding' })
-      .select('employee_id')
-      .sum('balance as total')
-      .groupBy('employee_id');
-    for (const row of debts) debtByEmployee.set(Number(row.employee_id), Number(row.total || 0));
   }
+  // What each attendant owes on their variances, or has in their favour.
+  const variances = await getVarianceTotals(db);
 
   return Promise.all(employees.map(async (employee) => {
     const plan = await getCompensationPlan(employee.id, today);
@@ -77,7 +72,8 @@ async function attachCompensation<T extends { id: number }>(employees: T[]): Pro
       compensation_summary: describeCompensationPlan(plan),
       current_period_earnings: earningsByEmployee.get(employee.id) || 0,
       payroll_balance_due: payrollDueByEmployee.get(employee.id) || 0,
-      outstanding_staff_debt: debtByEmployee.get(employee.id) || 0,
+      outstanding_staff_debt: variances.get(employee.id)?.owes || 0,
+      variance_totals: variances.get(employee.id) || { owes: 0, surplus_available: 0, refundable: 0, net: 0, kept_by_station: 0 },
     };
   }));
 }

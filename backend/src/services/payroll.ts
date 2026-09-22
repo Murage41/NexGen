@@ -1,8 +1,9 @@
 import type { Knex } from 'knex';
 import Decimal, { Numeric } from 'decimal.js-light';
 import db from '../database';
-import { allocateEmployeeDebt, syncEmployeeDebt, settlementError, validateRecoveryDecision } from './employeeDebt';
-import { enrichPayrollLine, payrollRecoveryPreview, allocatePayrollSettlements } from './payrollDetails';
+import { settlementError } from './employeeDebt';
+import { enrichPayrollLine, allocatePayrollSettlements } from './payrollDetails';
+import { chargeLegacyReversal } from './employeeVariances';
 import {
   PaySchedule,
   PayrollPeriodError,
@@ -605,13 +606,6 @@ export async function getPayrollRun(runId: number, database: Knex = db): Promise
   return { ...run, lines };
 }
 
-export async function applyStaffDebtDeduction(
-  deduction: any,
-  trx: Knex.Transaction,
-): Promise<void> {
-  await allocateEmployeeDebt(Number(deduction.employee_id), Number(deduction.amount), { table: 'payroll_debt_allocations', fields: { deduction_id: deduction.id } }, trx);
-}
-
 export async function approvePayrollRun(
   runId: number,
   approvedByEmployeeId?: number | null,
@@ -622,15 +616,10 @@ export async function approvePayrollRun(
     if (!run) throw new Error('Payroll run not found');
     if (run.status !== 'calculated') throw new Error('Only a calculated payroll run can be approved');
 
+    // Pay is never reduced for variances: employees repay them separately
+    // (services/employeeVariances.ts), so no debt recovery is approved here.
     const lines = await trx('payroll_lines').where({ run_id: runId });
     for (const line of lines) {
-      const preview = await payrollRecoveryPreview(line.id, trx);
-      const draft = await trx('payroll_deductions').where({ payroll_line_id: line.id, deduction_type: 'staff_debt', status: 'draft' }).sum('amount as total').first();
-      if (preview.recoverable > 0 || Number(draft?.total || 0) > 0 || line.recovery_review) {
-        const decision = line.recovery_review ? JSON.parse(line.recovery_review) : null;
-        const amount = validateRecoveryDecision(preview, decision);
-        if (Math.abs(amount - Number(draft?.total || 0)) > 0.005) throw settlementError('Recovery changed. Review the debt deduction before approval.');
-      }
       if (Number(line.total_deductions) + Number(line.paid_amount) > Number(line.gross_earnings) + 0.005) throw settlementError('Payroll exceeds earned compensation. Reconcile it before approval.');
     }
     const deductions = await trx('payroll_deductions')
@@ -648,7 +637,7 @@ export async function approvePayrollRun(
         throw settlementError('This payroll run is already being approved. Refresh and try again.');
       }
       if (deduction.deduction_type === 'staff_debt') {
-        await applyStaffDebtDeduction(deduction, trx);
+        throw settlementError('This run still deducts debt from pay. Recalculate it: variances are repaid separately.');
       }
     }
     const runEarningIds = trx('payroll_line_earnings')
@@ -720,27 +709,23 @@ export async function voidPayrollRun(
       if (claimed !== 1) {
         throw settlementError('This payroll run is already being voided. Refresh and try again.');
       }
-      const debt = await trx('staff_debts').where({ id: allocation.staff_debt_id }).first();
-      if (debt) {
-        // Compare-and-swap on the balance just read, mirroring allocateEmployeeDebt.
-        const updated = await trx('staff_debts')
-          .where({ id: debt.id, balance: debt.balance })
-          .update({
-            balance: money(Number(debt.balance || 0) + Number(allocation.amount || 0)),
-            status: 'outstanding',
-          });
-        if (updated !== 1) {
-          throw settlementError('This debt was changed by another operation. Refresh and try again.');
-        }
-      }
+      // A recovery from before variances started: its effect is inside the
+      // carried-over balances, so undoing it is owed again as a new entry.
+      // The old debt records stay as they were.
       const employeeId = Number(allocation.employee_id);
       restoredByEmployee.set(
         employeeId,
         money((restoredByEmployee.get(employeeId) || 0) + Number(allocation.amount || 0)),
       );
     }
-    for (const [employeeId] of restoredByEmployee) {
-      await syncEmployeeDebt(employeeId, trx);
+    for (const [employeeId, amount] of restoredByEmployee) {
+      await chargeLegacyReversal(trx, {
+        employeeId,
+        amount,
+        reason: `Payroll run #${runId} voided: its debt recovery is owed again`,
+        actorId: null,
+        source: `payroll_runs:${runId}`,
+      });
     }
 
     const links = await trx('payroll_line_earnings')

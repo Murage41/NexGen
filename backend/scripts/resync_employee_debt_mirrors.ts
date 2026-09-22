@@ -37,6 +37,10 @@ function main() {
   (async () => {
     await run('BEGIN IMMEDIATE');
     try {
+      // Since migration 047 employee balances live in their variances and the
+      // old debt records are history: this repair must run before that update.
+      const ledger = await new Promise<any>((resolve, reject) => db.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'employee_variance_entries'", (err, row) => (err ? reject(err) : resolve(row))));
+      if (ledger) throw new Error('This database already keeps employee variances (update #7). This repair no longer applies. Nothing was changed.');
       const accounts = await all(
         `SELECT ca.id, ca.employee_id, ca.name, ca.balance,
                 (SELECT COALESCE(SUM(balance), 0) FROM staff_debts

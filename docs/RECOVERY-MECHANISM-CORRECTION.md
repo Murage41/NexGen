@@ -1,5 +1,7 @@
 # Shift-close debt recovery: mechanism correction (2026-09-10)
 
+> **Superseded 2026-09-22 (update #7).** Shift close no longer recovers debt; shortages are kept as attendant variances (docs/ATTENDANT-VARIANCES.md). This page is kept as history. The repair script below must run, if needed, before update #7: afterwards it refuses.
+
 ## What was wrong
 
 Debt recovery entered at shift close was recorded as **wage withholding**: the confirmed recovery amount reduced `wage_paid`/`direct_wage_cash_amount`, on the assumption that the employee received *less* than their full earnings. In practice, the owner's actual operating model is different: the employee is always paid their full earnings, and any debt recovery is a **separate cash repayment** handed back afterward. Recording a repayment as a wage reduction silently subtracted it from that same shift's own variance a second time — the repayment was never "missing" money in the first place, so removing it from `wage_paid` understated `total_accounted` by the repayment amount.

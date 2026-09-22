@@ -119,7 +119,7 @@ app.get('/api/health/db-stats', requireAdmin, async (_req, res) => {
       'invoice_payments', 'invoice_payment_allocations',
       'invoice_adjustment_notes', 'invoice_accounting_events', 'invoice_document_sequences',
       'shift_accountability_adjustments', 'staff_debt_adjustments',
-      'expenses', 'staff_debts',
+      'expenses', 'staff_debts', 'employee_variance_entries',
       'suppliers', 'supplier_invoices', 'supplier_payments',
       'supplier_payment_allocations',
       'tank_stock_adjustments', 'tank_adjustment_batches', 'tank_adjustment_batch_effects',

@@ -1,15 +1,20 @@
 import type { Knex } from 'knex';
 import {
   employeeDebtSummary,
-  allocateEmployeeDebt,
-  reverseDebtAllocations,
   settlementError,
-  positiveMoney,
-  syncEmployeeDebt,
   money,
 } from './employeeDebt';
 import { listCompensationPlans } from './compensation';
 import { getPayrollRun } from './payroll';
+import {
+  getVarianceStatement,
+  recordVarianceRepayment,
+  reverseVarianceRepayment,
+} from './employeeVariances';
+
+// The staff-debt records from before variances started (migration 047): kept
+// as history and shown under Earlier records. What an employee owes now comes
+// from their variances.
 
 export async function employeeDebtHistory(
   employeeId: number,
@@ -76,12 +81,20 @@ export async function employeeDebtHistory(
       Number(debt.balance) - (Number(debt.carried_forward) - recovered - corrected),
     );
   }
+  // Repayments recorded before variances started; later ones are variance
+  // entries of their own.
   const receipts = await db('credit_payments as p')
     .join('credit_accounts as a', 'p.account_id', 'a.id')
     .where({
       'a.employee_id': employeeId,
       'a.type': 'employee',
       'p.payment_type': 'staff_debt',
+    })
+    .whereNotExists(function () {
+      this.select(1)
+        .from('employee_variance_entries as v')
+        .whereRaw('v.payment_id = p.id')
+        .where('v.entry_type', 'repayment');
     })
     .select('p.*')
     .orderBy('p.id', 'desc');
@@ -176,59 +189,20 @@ export async function employeePayStatement(employeeId: number, db: Knex) {
     runs,
     accrued,
     accrued_shift_details: [...accruedGroups.values()],
+    variances: await getVarianceStatement(db, employeeId),
     debt: await employeeDebtHistory(employeeId, db),
   };
 }
 
+// A repayment of what the employee owes on their variances: into an open
+// shift's drawer (shift_id), or received directly.
 export async function recordEmployeeDebtReceipt(
   employeeId: number,
   input: any,
   actorId: number | null,
   db: Knex.Transaction,
 ) {
-  const amount = positiveMoney(input.amount);
-  if (!['cash', 'mpesa', 'bank_transfer'].includes(input.payment_method))
-    throw settlementError('Choose cash, M-Pesa or bank transfer.', 400);
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(input.date || '') ||
-    !String(input.reference || '').trim()
-  )
-    throw settlementError('A date and receipt reference are required.', 400);
-  if (input.shift_id) {
-    const shift = await db('shifts')
-      .where({ id: input.shift_id, status: 'open' })
-      .first();
-    if (!shift || !['cash', 'mpesa'].includes(input.payment_method))
-      throw settlementError(
-        'Drawer receipts require an open shift and cash or M-Pesa.',
-      );
-    if (String(shift.shift_date).slice(0, 10) !== input.date)
-      throw settlementError('The receipt date must match its receiving shift.');
-  }
-  await syncEmployeeDebt(employeeId, db);
-  const account = await db('credit_accounts')
-    .where({ employee_id: employeeId, type: 'employee' })
-    .first();
-  if (!account) throw settlementError('There is no employee debt to repay.');
-  const [id] = await db('credit_payments').insert({
-    account_id: account.id,
-    credit_id: null,
-    amount,
-    payment_method: input.payment_method,
-    payment_type: 'staff_debt',
-    date: input.date,
-    shift_id: input.shift_id || null,
-    notes: `${input.reference}: ${input.notes || ''}`,
-    status: 'posted',
-    created_by_employee_id: actorId,
-  });
-  await allocateEmployeeDebt(
-    employeeId,
-    amount,
-    { table: 'staff_debt_receipt_allocations', fields: { payment_id: id } },
-    db,
-  );
-  return db('credit_payments').where({ id }).first();
+  return recordVarianceRepayment(db, employeeId, input, actorId);
 }
 
 export async function reverseEmployeeDebtReceipt(
@@ -251,17 +225,5 @@ export async function reverseEmployeeDebtReceipt(
         'This receipt is on a closed shift. Use Correct next to it on the shift instead.',
       );
   }
-  await reverseDebtAllocations(
-    'staff_debt_receipt_allocations',
-    { payment_id: paymentId },
-    db,
-  );
-  await db('credit_payments')
-    .where({ id: paymentId })
-    .update({
-      status: 'reversed',
-      reversed_at: db.fn.now(),
-      reversal_reason: reason,
-      reversed_by_employee_id: actorId,
-    });
+  await reverseVarianceRepayment(db, paymentId, { reason: String(reason).trim(), actorId });
 }

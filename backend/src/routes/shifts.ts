@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import db from '../database';
 import { csvCell } from '../utils/csv';
-import { shiftRecoveryPreview, postShiftRecovery } from '../services/shiftSettlement';
+import { postShiftVariance, getVarianceStatement } from '../services/employeeVariances';
 import { approvalBindings, resolveApprover } from '../services/approval';
 import { authorizeCreditExtension, recordCreditOverride } from '../services/creditLimits';
 import { validate } from '../middleware/validate';
@@ -333,11 +333,13 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone', 'credit_accounts.type as account_type', 'credit_accounts.employee_id as account_employee_id')
       .orderBy('credit_payments.date', 'asc');
 
-    // Get employee's outstanding debt
-    const outstandingDebts = await db('staff_debts')
-      .where({ employee_id: shift.employee_id, status: 'outstanding' })
-      .orderBy('created_at', 'asc');
-    const total_outstanding_debt = outstandingDebts.reduce((sum: number, d: any) => sum + d.balance, 0);
+    // What the attendant owes on their variances (Employees -> Variances).
+    const variances = await getVarianceStatement(db, Number(shift.employee_id));
+    const outstandingDebts = variances.rows
+      .filter((row) => row.owed > 0)
+      .map((row) => ({ shift_id: row.shift_id, date: row.date, balance: row.owed }))
+      .reverse();
+    const total_outstanding_debt = variances.totals.owes;
 
     const grossEarningPreview = earningPreview.reduce(
       (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
@@ -420,6 +422,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         ),
         outstanding_debts: outstandingDebts,
         total_outstanding_debt,
+        attendant_variances: variances.totals,
         ...accountability,
       },
     });
@@ -1643,33 +1646,12 @@ router.post('/:id/credit-receipts/:paymentId/reverse', requireAdmin, async (req:
 });
 
 // Retired endpoints cannot change posted recovery independently of compensation.
-router.put('/:id/wage-deduction', requireAdmin, (_req, res) => res.status(409).json({ success: false, error: 'Review debt recovery when closing the shift or approving payroll.' }));
+router.put('/:id/wage-deduction', requireAdmin, (_req, res) => res.status(410).json({ success: false, error: 'Pay is never reduced for variances. Record repayments under Employees, Variances.' }));
 router.delete('/:id/wage-deduction', requireAdmin, (_req, res) => res.status(409).json({ success: false, error: 'A recorded wage recovery requires an audited reversal, not deletion.' }));
 
-router.post('/:id/recovery-preview', requireAdmin, async (req, res) => {
-  try {
-    const data = await db.transaction(async trx => {
-      const shift = await trx('shifts').where({ id: req.params.id, status: 'open' }).first();
-      if (!shift) throw new Error('Open shift not found.');
-      const cash = Number(req.body.wage_paid);
-      if (!Number.isFinite(cash) || cash < 0) throw new Error('Enter the actual non-negative cash wage payment.');
-      const readings = await trx('pump_readings').join('pumps', 'pump_readings.pump_id', 'pumps.id').where('pump_readings.shift_id', shift.id).where('pumps.active', true);
-      // The preview needs this shift's variance because a recovery confirmed at
-      // close can also settle this shift's own shortfall (see shiftSettlement.ts).
-      // Computed from the same inputs the close handler will use, so the two
-      // agree and the decision's version hash still matches at close.
-      const collections = await trx('shift_collections').where({ shift_id: shift.id }).first();
-      const expenses = await trx('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
-      const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
-      const creditReceipts = await trx('credit_payments').where({ shift_id: shift.id, status: 'posted' }).whereNull('deleted_at');
-      const payrollPayments = await trx('payroll_payments').where({ shift_id: shift.id, status: 'posted' });
-      const invoiceConsumption = await trx('invoice_consumption').where({ shift_id: shift.id }).whereNull('deleted_at');
-      const { variance } = computeShiftAccountability({ readings, collections, expenses, shiftCredits, creditReceipts, payrollPayments, invoiceConsumption, employee_wage: cash });
-      return shiftRecoveryPreview(shift, readings, variance, trx);
-    });
-    res.json({ success: true, data });
-  } catch (e: any) { res.status(e.httpStatus || 409).json({ success: false, error: e.message }); }
-});
+// Shift close no longer recovers debt: variances are repaid separately under
+// Employees -> Variances (services/employeeVariances.ts).
+router.post('/:id/recovery-preview', requireAdmin, (_req, res) => res.status(410).json({ success: false, error: 'Shift close no longer recovers debt. Record repayments under Employees, Variances.' }));
 
 // PUT close shift — with deduction options and debt carry-forward
 // Finalizes financials, stock snapshots, and FIFO costing, so it is admin-only.
@@ -1781,14 +1763,6 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
       // No written reason is required for a variance: closing a shift is routine
       // entry, and the shift notes carry any explanation. Reasons stay mandatory
       // only where something already posted is reversed, voided or amended.
-
-      // Settle debt only once variance is final. postShiftRecovery writes this
-      // shift's shortfall as standing debt and then allocates any confirmed
-      // repayment across everything owed, oldest first - so one payment can
-      // clear both older debt and tonight's shortfall. It must run while the
-      // shift is still 'open' (status flips further down), and it owns the
-      // shortfall insert: do not write staff_debts for the variance here too.
-      await postShiftRecovery(shift, readings, variance, req.body.recovery_decision, trx, req.employee?.id > 0 ? req.employee.id : null);
 
       // --- Litre accountability: computed book stock + FIFO costing ---
       const allTanks = await trx('tanks').select('id');
@@ -1911,6 +1885,15 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         approved_at: closeTime,
       });
 
+      // The attendant's over/short goes to their variances. Pay is never
+      // reduced for it: wage_paid below is whatever was paid in full.
+      await postShiftVariance(
+        trx,
+        { id: Number(shift.id), employee_id: Number(shift.emp_id), shift_date: shift.shift_date || String(shift.start_time).slice(0, 10) },
+        variance,
+        Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
+      );
+
       await trx('shift_reviews').insert({
         shift_id: shift.id,
         review_status: 'pending_review',
@@ -1923,8 +1906,8 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         end_time: closeTime,
         notes: notes || null,
         wage_paid: employee_wage,
-        // Always the full amount entered - recovery (if any) no longer reduces
-        // this, per the repayment-only redesign in shiftSettlement.ts.
+        // Always the full amount entered: variances are repaid separately and
+        // never reduce pay (services/employeeVariances.ts).
         direct_wage_cash_amount: employee_wage,
       });
 
@@ -1963,13 +1946,12 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
 router.get('/staff-debts/:employeeId', requireAuth, async (req: any, res) => {
   if (req.employee.role !== 'admin' && Number(req.params.employeeId) !== Number(req.employee.id)) return res.status(403).json({ success: false, error: 'You can only view your own debt.' });
   try {
-    const debts = await db('staff_debts')
-      .where({ employee_id: req.params.employeeId })
-      .orderBy('created_at', 'desc');
-    const total = debts
-      .filter((d: any) => d.status === 'outstanding')
-      .reduce((sum: number, d: any) => sum + d.balance, 0);
-    res.json({ success: true, data: { debts, total_outstanding: total } });
+    // Shortages still owed, from the attendant's variances.
+    const variances = await getVarianceStatement(db, Number(req.params.employeeId));
+    const debts = variances.rows
+      .filter((row) => row.owed > 0)
+      .map((row) => ({ shift_id: row.shift_id, date: row.date, balance: row.owed, status: 'outstanding' }));
+    res.json({ success: true, data: { debts, total_outstanding: variances.totals.owes } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1978,7 +1960,7 @@ router.get('/staff-debts/:employeeId', requireAuth, async (req: any, res) => {
 // PUT repay staff debt from wage (used when opening/during a shift to clear past debts)
 // Phase 3 fix: wrapped in transaction — writes staff_debts + credit_accounts + wage_deductions
 // Phase 5: require admin — adjusts financial records
-router.put('/:id/repay-debt', requireAdmin, (_req, res) => res.status(409).json({ success: false, error: 'Use Review debt recovery in shift close or payroll; repayment is posted with compensation approval.' }));
+router.put('/:id/repay-debt', requireAdmin, (_req, res) => res.status(410).json({ success: false, error: 'Record repayments under Employees, Variances.' }));
 
 // GET per-shift tank stock summary
 router.get('/:id/tank-summary', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {

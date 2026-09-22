@@ -8,7 +8,14 @@ async function main() {
   process.env.NEXGEN_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'nexgen-clearance-test-'));
   const {default: db} = await import('../src/database');
   try {
-    await db.migrate.latest();
+    // As before update #7 (migration 047): the command only applies there.
+    for (;;) {
+      const [, pending] = await db.migrate.list();
+      const next: any = pending[0];
+      const name = typeof next === 'string' ? next : next?.file || next?.name;
+      if (!name || String(name).includes('047_employee_variances')) break;
+      await db.migrate.up();
+    }
     const [person] = await db('employees').insert({name: 'Clearance test', pin: 'test', role: 'attendant', daily_wage: 800, active: true});
     const [other] = await db('employees').insert({name: 'Unrelated employee', pin: 'test', role: 'attendant', daily_wage: 800, active: true});
     const [shift] = await db('shifts').insert({employee_id: person, shift_date: '2026-08-01', start_time: '2026-08-01T06:00:00Z', status: 'closed', wage_paid: 800});
@@ -45,7 +52,10 @@ async function main() {
     assert.equal((await db('staff_debt_reviews')).length, 5);
     assert.equal((await clearRecordedEmployeeDebt(db, plan, true)).status, 'already_cleared');
     assert.equal((await db('staff_debt_reviews')).length, 5);
-    console.log('PASS: preview, stale debt refusal, new-debt refusal, rollback, exact clearance, unrelated-row preservation and repeat safety.');
+    // Once variances hold employee balances, the old records must not change.
+    await db.migrate.latest();
+    await assert.rejects(clearRecordedEmployeeDebt(db, plan, true), /kept as variances/);
+    console.log('PASS: preview, stale debt refusal, new-debt refusal, rollback, exact clearance, unrelated-row preservation, repeat safety, and refusal once variances start.');
   } finally { await db.destroy(); }
 }
 main().catch(error => {console.error(error); process.exitCode = 1;});

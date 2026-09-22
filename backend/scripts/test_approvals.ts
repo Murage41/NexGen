@@ -5,8 +5,9 @@ import path from 'node:path';
 import express from 'express';
 
 // Approvals are a verified administrator, not typed text (M3), and routine
-// decisions no longer demand written reasons (M4). Runs on a private temporary
-// database; never touches data/nexgen.db.
+// decisions no longer demand written reasons (M4). Writing off or paying back
+// an attendant's variance needs an approval bound to exactly that decision.
+// Runs on a private temporary database; never touches data/nexgen.db.
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexgen-approval-test-'));
   process.env.NEXGEN_DATA_DIR = directory;
@@ -15,15 +16,16 @@ async function main() {
   const { hashPin } = await import('../src/services/pinSecurity');
   const auth = await import('../src/middleware/requireAdmin');
   const { approvalBindings, resolveApprover } = await import('../src/services/approval');
-  const { shiftRecoveryPreview, postShiftRecovery } = await import('../src/services/shiftSettlement');
-  const { savePayrollRecovery, addPayrollDeduction } = await import('../src/services/payrollMutations');
-  const { payrollRecoveryPreview } = await import('../src/services/payrollDetails');
+  const { addPayrollDeduction } = await import('../src/services/payrollMutations');
   const { calculatePayrollRun, getPayrollRun, approvePayrollRun } = await import('../src/services/payroll');
   const { generateShiftEarnings } = await import('../src/services/compensation');
-  const { employeeDebtSummary } = await import('../src/services/employeeDebt');
+  const { getVarianceStatement, postShiftVariance } = await import('../src/services/employeeVariances');
+  const { getKenyaDate } = await import('../src/utils/timezone');
   const { closeShiftSchema, createPayrollDeductionSchema } = await import('../src/schemas');
   const { redactSensitiveValues } = await import('../src/utils/redact');
   const { default: authRouter } = await import('../src/routes/auth');
+  const { default: payrollRouter } = await import('../src/routes/payroll');
+  const { default: shiftsRouter } = await import('../src/routes/shifts');
 
   let server: ReturnType<express.Express['listen']> | undefined;
   try {
@@ -43,6 +45,8 @@ async function main() {
     const app = express();
     app.use(express.json());
     app.use('/auth', authRouter);
+    app.use('/payroll', payrollRouter);
+    app.use('/shifts', shiftsRouter);
     app.get('/probe', auth.requireAuth, (_req, res) => res.json({ ok: true }));
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>((r) => server!.once('listening', r));
@@ -54,8 +58,7 @@ async function main() {
         ...(options.body ? { body: JSON.stringify(options.body) } : {}),
       });
     const desktop = { 'x-desktop-key': process.env.DESKTOP_KEY! };
-    const version = 'a'.repeat(64);
-    const subject = { purpose: 'recovery', version, amount: 400 };
+    const subject = { purpose: 'variance_waiver', for_employee_id: attendant, shift_id: 0, amount: 400 };
     const verify = (body: any, headers: Record<string, string> = desktop) =>
       call('/auth/verify-pin', { method: 'POST', headers, body });
 
@@ -70,11 +73,13 @@ async function main() {
     assert.deepEqual(approvers.map((a: any) => a.name), ['Manager Admin', 'Owner Admin'], 'only active admins');
     assert(approvers.every((a: any) => Object.keys(a).sort().join() === 'id,name'), 'approvers expose id and name only');
 
-    assert.equal((await verify({ ...subject, employee_id: owner, pin: '4821' }, {})).status, 401, 'verify-pin needs a signed-in caller');
+    // employee_id names the approving admin; for_employee_id the attendant.
+    const pinFor = (who: number, pin: string) => ({ ...subject, employee_id: who, pin });
+    assert.equal((await verify(pinFor(owner, '4821'), {})).status, 401, 'verify-pin needs a signed-in caller');
     assert.equal(
-      (await verify({ ...subject, employee_id: owner, pin: '4821' }, attendantSession)).status,
+      (await verify(pinFor(owner, '4821'), attendantSession)).status,
       403,
-      'an attendant cannot request a recovery approval',
+      'an attendant cannot request a write-off approval',
     );
     const overrideSubject = { purpose: 'credit_override', account_id: 1, shift_id: 1, amount: 500 };
     assert.equal(
@@ -83,24 +88,26 @@ async function main() {
       'an attendant can have an admin confirm a credit override on their phone',
     );
     assert.equal((await verify({ ...subject, purpose: 'payout', employee_id: owner, pin: '4821' })).status, 400, 'unknown purpose');
-    assert.equal((await verify({ purpose: 'recovery', amount: 400, employee_id: owner, pin: '4821' })).status, 400, 'decision not described');
-    assert.equal((await verify({ ...subject, employee_id: attendant, pin: '9999' })).status, 403, 'an attendant cannot approve');
-    assert.equal((await verify({ ...subject, employee_id: retired, pin: '2468' })).status, 403, 'an inactive admin cannot approve');
+    assert.equal((await verify({ purpose: 'recovery', amount: 400, employee_id: owner, pin: '4821' })).status, 400, 'debt recovery is no longer approved');
+    assert.equal((await verify({ purpose: 'variance_refund', amount: 400, method: 'cash', employee_id: owner, pin: '4821' })).status, 400, 'decision not described');
+    assert.equal((await verify(pinFor(attendant, '9999'))).status, 403, 'an attendant cannot approve');
+    assert.equal((await verify(pinFor(retired, '2468'))).status, 403, 'an inactive admin cannot approve');
 
     for (let i = 0; i < 5; i += 1) {
-      assert.equal((await verify({ ...subject, employee_id: manager, pin: '0000' })).status, 403);
+      assert.equal((await verify(pinFor(manager, '0000'))).status, 403);
     }
-    assert.equal((await verify({ ...subject, employee_id: manager, pin: '1357' })).status, 429, 'the correct PIN is refused while locked');
+    assert.equal((await verify(pinFor(manager, '1357'))).status, 429, 'the correct PIN is refused while locked');
 
-    const ok = await verify({ ...subject, employee_id: owner, pin: '4821' });
+    const ok = await verify(pinFor(owner, '4821'));
     assert.equal(ok.status, 200, 'the lock is per approver; the owner is unaffected');
     const okBody = await ok.json();
     assert.equal(okBody.data.approver.name, 'Owner Admin');
     assert(!JSON.stringify(okBody).includes('scrypt'), 'the PIN hash never leaves the server');
     const token: string = okBody.data.approval_token;
-    assert.equal(auth.verifyApprovalToken(token)?.binding, approvalBindings.recovery({ version, amount: 400 }));
+    const binding400 = approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 400 });
+    assert.equal(auth.verifyApprovalToken(token)?.binding, binding400);
 
-    const mobileAdmin = await verify({ ...subject, employee_id: owner, pin: '4821' }, { Authorization: `Bearer ${auth.generateToken(owner, 'admin')}` });
+    const mobileAdmin = await verify(pinFor(owner, '4821'), { Authorization: `Bearer ${auth.generateToken(owner, 'admin')}` });
     assert.equal(mobileAdmin.status, 200, 'an admin session may also verify');
 
     // Tokens cannot cross over, be edited, or outlive their window.
@@ -108,7 +115,7 @@ async function main() {
     assert.equal(auth.verifyApprovalToken(auth.generateToken(owner, 'admin')), null, 'a session is not an approval');
     const dot = token.lastIndexOf('.');
     const claims = JSON.parse(Buffer.from(token.slice(0, dot), 'base64').toString());
-    const forged = Buffer.from(JSON.stringify({ ...claims, binding: approvalBindings.recovery({ version, amount: 9000 }) })).toString('base64');
+    const forged = Buffer.from(JSON.stringify({ ...claims, binding: approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 9000 }) })).toString('base64');
     assert.equal(auth.verifyApprovalToken(`${forged}.${token.slice(dot + 1)}`), null, 'editing the binding breaks the signature');
     const realNow = Date.now;
     Date.now = () => realNow() - auth.APPROVAL_TOKEN_TTL_MS - 1000;
@@ -118,7 +125,6 @@ async function main() {
     console.log('PASS approver list, PIN verification, per-approver lockout, token separation, tamper and expiry');
 
     // ---- B. Approver resolution rules ----
-    const binding400 = approvalBindings.recovery({ version, amount: 400 });
     assert.deepEqual(await resolveApprover(owner, undefined, binding400, db), { id: owner, name: 'Owner Admin' }, 'a signed-in admin approves as themselves');
     await assert.rejects(() => resolveApprover(attendant, undefined, binding400, db), /administrator must approve/, 'an attendant cannot approve for themselves');
     assert.deepEqual(
@@ -128,7 +134,7 @@ async function main() {
     );
     await assert.rejects(() => resolveApprover(null, undefined, binding400, db), /Select the approving administrator/);
     await assert.rejects(
-      () => resolveApprover(null, token, approvalBindings.recovery({ version, amount: 0 }), db),
+      () => resolveApprover(null, token, approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 0 }), db),
       /no longer matches/,
       'approval of KES 400 cannot approve KES 0',
     );
@@ -139,73 +145,73 @@ async function main() {
     await db('employees').where({ id: manager }).update({ active: true });
     console.log('PASS session approver, missing approval, mismatched decision, revoked approver');
 
-    // ---- C. Shift close recovery ----
-    const [dailyPlan] = await db('employee_compensation_plans').insert({
-      employee_id: attendant, name: 'Daily', pay_schedule: 'daily', effective_from: '2026-08-01', version: 1, status: 'active',
+    // ---- C. Writing off and paying back a variance ----
+    const today = getKenyaDate();
+    const [shiftId] = await db('shifts').insert({ employee_id: attendant, shift_date: today, start_time: `${today}T06:00:00Z`, status: 'closed', wage_paid: 0 });
+    await db.transaction((trx) => postShiftVariance(trx, { id: shiftId, employee_id: attendant, shift_date: today }, -300, owner));
+    const headers = (key: string, extra: Record<string, string> = desktop) => ({ ...extra, 'Idempotency-Key': key });
+    const waive = (body: any, key: string, extra?: Record<string, string>) =>
+      call(`/payroll/employees/${attendant}/variances/waivers`, { method: 'POST', headers: headers(key, extra), body });
+    let res = await waive({ amount: 100, shift_id: shiftId, reason: 'Meter fault' }, 'waiver-001');
+    assert.equal(res.status, 400, 'the desktop must name an approver');
+    const for100 = auth.generateApprovalToken(owner, approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: shiftId, amount: 100 }));
+    res = await waive({ amount: 150, shift_id: shiftId, reason: 'Meter fault', approval_token: for100 }, 'waiver-002');
+    assert.equal(res.status, 403, 'an approval of KES 100 cannot write off KES 150');
+    res = await waive({ amount: 100, reason: 'Meter fault', approval_token: for100 }, 'waiver-003');
+    assert.equal(res.status, 403, 'an approval for one shift cannot write off oldest first');
+    res = await waive({ amount: 100, shift_id: shiftId, reason: 'Meter fault', approval_token: for100 }, 'waiver-004');
+    assert.equal(res.status, 200);
+    let statement = await getVarianceStatement(db, attendant);
+    assert.equal(statement.totals.owes, 200);
+    const waiver = await db('employee_variance_entries').where({ entry_type: 'waiver' }).first();
+    assert.equal(waiver.approved_by_name, 'Owner Admin');
+    assert(!JSON.stringify(waiver).includes(for100), 'the approval token is never stored');
+    // A signed-in admin on the phone approves as themselves.
+    res = await waive({ amount: 50, reason: 'Customer drove off' }, 'waiver-005', { Authorization: `Bearer ${auth.generateToken(manager, 'admin')}` });
+    assert.equal(res.status, 200);
+    assert.equal((await db('employee_variance_entries').where({ entry_type: 'waiver' }).orderBy('id', 'desc').first()).approved_by_name, 'Manager Admin');
+    assert.equal((await getVarianceStatement(db, attendant)).totals.owes, 150);
+    // A write-off can never exceed what is owed.
+    const tooMuch = auth.generateApprovalToken(owner, approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 500 }));
+    res = await waive({ amount: 500, reason: 'All of it', approval_token: tooMuch }, 'waiver-006');
+    assert.equal(res.status, 409);
+
+    // Pay back: only money the attendant repaid that covers nothing.
+    const refund = (body: any, key: string) =>
+      call(`/payroll/employees/${attendant}/variances/refunds`, { method: 'POST', headers: headers(key), body });
+    const refundToken = (amount: number) =>
+      auth.generateApprovalToken(owner, approvalBindings.variance_refund({ for_employee_id: attendant, method: 'cash', amount }));
+    res = await refund({ amount: 10, method: 'cash', date: today, approval_token: refundToken(10) }, 'refund-001');
+    assert.equal(res.status, 409, 'nothing to pay back yet');
+    res = await call(`/payroll/employees/${attendant}/receipts`, {
+      method: 'POST', headers: headers('repayment-001'), body: { amount: 150, payment_method: 'cash', date: today },
     });
-    await db('employee_compensation_components').insert({ plan_id: dailyPlan, component_type: 'fixed_per_shift', amount: 500 });
-    const makeShift = async (date: string, status: string) => {
-      const [id] = await db('shifts').insert({
-        employee_id: attendant, compensation_plan_id: dailyPlan, shift_date: date, start_time: `${date}T06:00:00Z`, status, wage_paid: 0,
-      });
-      return db('shifts').where({ id }).first();
-    };
-    const oldShift = await makeShift('2026-09-01', 'closed');
-    await db('staff_debts').insert({
-      employee_id: attendant, shift_id: oldShift.id, original_deficit: 300, carried_forward: 300, balance: 300, status: 'outstanding', recovery_status: 'confirmed',
-    });
-    const tonight = await makeShift('2026-09-02', 'open');
-    const variance = -120;
-    const preview = await shiftRecoveryPreview(tonight, [], variance, db);
-    assert.equal(preview.outstanding, 420, "old debt plus tonight's shortage");
-    assert.equal(preview.proposed, 420);
-    const close = (decision: any, actor: number | null, shift = tonight, v = variance) =>
-      db.transaction((trx) => postShiftRecovery(shift, [], v, decision, trx, actor));
+    assert.equal(res.status, 200, 'a cash repayment needs no reference');
+    const correction = await db('shift_accountability_adjustments').insert({ shift_id: shiftId, adjustment_type: 'shift_correction', amount_delta: 0, variance_before: -300, variance_after: -240, reason: 'test' });
+    await db('employee_variance_entries').insert({ employee_id: attendant, entry_type: 'correction', entry_date: today, amount: -60, shift_id: shiftId, correction_id: correction[0] });
+    statement = await getVarianceStatement(db, attendant);
+    assert.equal(statement.totals.refundable, 60, 'the correction freed 60 of the repayment');
+    res = await refund({ amount: 60, method: 'cash', date: today, approval_token: refundToken(10) }, 'refund-002');
+    assert.equal(res.status, 403, 'bound to the amount');
+    res = await refund({ amount: 60, method: 'cash', date: today, approval_token: refundToken(60) }, 'refund-003');
+    assert.equal(res.status, 200);
+    assert.equal((await getVarianceStatement(db, attendant)).totals.refundable, 0);
+    console.log('PASS write-off and pay-back need an approval bound to employee, shift and amount');
 
-    await assert.rejects(() => close({ version: preview.version, amount: 420 }, null), /Select the approving administrator/, 'desktop close needs an approver');
-    assert.equal((await employeeDebtSummary(attendant, db)).outstanding, 300, 'a refused close writes nothing');
-    const for100 = auth.generateApprovalToken(owner, approvalBindings.recovery({ version: preview.version, amount: 100 }));
-    await assert.rejects(() => close({ version: preview.version, amount: 420, approval_token: for100 }, null), /no longer matches/);
-
-    // Reduced recovery, no written reason (M4), approved on the desktop.
-    const for250 = auth.generateApprovalToken(owner, approvalBindings.recovery({ version: preview.version, amount: 250 }));
-    await close({ version: preview.version, amount: 250, approval_token: for250 }, null);
-    assert.equal((await employeeDebtSummary(attendant, db)).outstanding, 170, '300 + 120 shortage - 250 repaid');
-    const receipt = await db('credit_payments').where({ payment_type: 'staff_debt' }).orderBy('id', 'desc').first();
-    assert.equal(receipt.created_by_employee_id, owner, 'the repayment is attributed to the approver');
-    assert.equal(receipt.notes, `Shift #${tonight.id} close recovery, approved by Owner Admin`);
-    assert.equal(receipt.shift_id, null, 'a repayment never enters a shift drawer');
-    const shiftReview = JSON.parse((await db('shifts').where({ id: tonight.id }).first()).recovery_review);
-    assert.equal(shiftReview.approved_by, owner);
-    assert.equal(shiftReview.approved_by_name, 'Owner Admin');
-    assert.equal(shiftReview.amount, 250);
-    assert(!('approval_token' in shiftReview) && !JSON.stringify(shiftReview).includes(for250), 'the approval token is never stored');
-
-    // Mobile: the signed-in admin approves; deferring recovery is attributed too.
-    const next = await makeShift('2026-09-03', 'open');
-    const nextPreview = await shiftRecoveryPreview(next, [], 0, db);
-    await close({ version: nextPreview.version, amount: 0 }, manager, next, 0);
-    const deferReview = JSON.parse((await db('shifts').where({ id: next.id }).first()).recovery_review);
-    assert.equal(deferReview.approved_by_name, 'Manager Admin');
-    assert.equal((await employeeDebtSummary(attendant, db)).outstanding, 170);
-    console.log('PASS shift close: approval required, bound to amount, attributed, token not stored, no reason needed');
-
-    // ---- D. Validators keep the token and still accept cached older clients ----
+    // ---- D. Validators, older clients, and log redaction ----
     const reviewed = { readings_reviewed: true, collections_reviewed: true, entries_reviewed: true };
-    const parsed = closeShiftSchema.safeParse({ wage_paid: 0, reconciliation: reviewed, recovery_decision: { version, amount: 1, approval_token: 'tok' } });
-    assert(parsed.success);
-    assert.equal(parsed.data.recovery_decision?.approval_token, 'tok', 'the close validator must not strip the approval');
-    assert(
-      closeShiftSchema.safeParse({ wage_paid: 0, variance_reason: 'older phone', reconciliation: reviewed, recovery_decision: { version, amount: 1, authorization_reference: 'Murage', reason: 'older phone' } }).success,
-      'a phone on a cached older bundle can still close',
-    );
+    const parsed = closeShiftSchema.safeParse({ wage_paid: 0, reconciliation: reviewed, recovery_decision: { version: 'a'.repeat(64), amount: 1, approval_token: 'tok' } });
+    assert(parsed.success, 'a phone on a cached older bundle can still close');
+    assert.equal((parsed.data as any).recovery_decision, undefined, 'a recovery sent by an older phone is ignored');
     const deductionParsed = createPayrollDeductionSchema.safeParse({ deduction_type: 'manual', amount: 10, approval_token: 'tok' });
     assert(deductionParsed.success && deductionParsed.data.approval_token === 'tok');
-    const logged = JSON.stringify(redactSensitiveValues({ employee_id: 1, pin: '4821', recovery_decision: { amount: 1, approval_token: 'secret-token' } }));
+    const logged = JSON.stringify(redactSensitiveValues({ employee_id: 1, pin: '4821', approval_token: 'secret-token' }));
     assert(!logged.includes('4821') && !logged.includes('secret-token'), 'PINs and tokens are redacted from request logs');
-    console.log('PASS validators preserve approvals, accept older clients, and logs redact PINs and tokens');
+    assert.equal((await call('/shifts/1/recovery-preview', { method: 'POST', headers: desktop, body: {} })).status, 410);
+    assert.equal((await call('/payroll/runs/1/lines/1/recovery', { method: 'PUT', headers: headers('recovery-001'), body: {} })).status, 410);
+    console.log('PASS validators keep approvals, older clients still close, retired recovery endpoints answer 410');
 
-    // ---- E. Payroll: deduction and recovery approvals survive to approval ----
+    // ---- E. Payroll: other deductions keep their approval; variances never ----
     const monthly = await person('Monthly Staff', 'attendant', '1111');
     const [monthlyPlan] = await db('employee_compensation_plans').insert({
       employee_id: monthly, name: 'Monthly', pay_schedule: 'monthly', effective_from: '2026-08-01', version: 1, status: 'active',
@@ -216,9 +222,7 @@ async function main() {
     });
     const worked = await db('shifts').where({ id: workedId }).first();
     await db.transaction((trx) => generateShiftEarnings(worked, [], '2026-09-01T06:00:00Z', trx));
-    await db('staff_debts').insert({
-      employee_id: monthly, shift_id: workedId, original_deficit: 500, carried_forward: 500, balance: 500, status: 'outstanding', recovery_status: 'confirmed',
-    });
+    await db.transaction((trx) => postShiftVariance(trx, { id: workedId, employee_id: monthly, shift_date: '2026-08-05' }, -500, owner));
     const runId = await calculatePayrollRun(
       { name: 'August', pay_schedule: 'monthly', period_start: '2026-08-01', period_end: '2026-08-31' },
       db,
@@ -226,6 +230,7 @@ async function main() {
     );
     const line = (await getPayrollRun(runId, db)).lines.find((l: any) => l.employee_id === monthly);
     assert(line, 'payroll line for the monthly employee');
+    assert.equal(line.recovery, undefined, 'payroll offers no debt recovery');
 
     const advanceBinding = approvalBindings.deduction({ payroll_line_id: line.id, deduction_type: 'advance', amount: 50 });
     await assert.rejects(
@@ -244,26 +249,17 @@ async function main() {
     assert.equal(advance.authorization_reference, 'Approved by Owner Admin');
     assert.equal(advance.created_by_employee_id, owner);
     assert.equal(advance.notes, 'Advance 3 Sept');
-
-    const payPreview = await payrollRecoveryPreview(line.id, db);
-    assert.equal(payPreview.proposed, 500);
     await assert.rejects(
-      () => db.transaction((trx) => savePayrollRecovery(runId, line.id, { version: payPreview.version, amount: 200 }, null, trx)),
-      /Select the approving administrator/,
+      () => db.transaction((trx) => addPayrollDeduction(runId, line.id, { deduction_type: 'staff_debt', amount: 100 }, null, trx)),
+      /not deducted from pay/,
+      'a variance can never be deducted from pay',
     );
-    const for200 = auth.generateApprovalToken(owner, approvalBindings.recovery({ version: payPreview.version, amount: 200 }));
-    await db.transaction((trx) => savePayrollRecovery(runId, line.id, { version: payPreview.version, amount: 200, approval_token: for200 }, null, trx));
-    const draft = await db('payroll_deductions').where({ payroll_line_id: line.id, deduction_type: 'staff_debt' }).first();
-    assert.equal(draft.authorization_reference, 'Approved by Owner Admin');
-    assert.equal(draft.created_by_employee_id, owner);
-    const lineReview = JSON.parse((await db('payroll_lines').where({ id: line.id }).first()).recovery_review);
-    assert.equal(lineReview.approved_by_name, 'Owner Admin');
-    assert(!JSON.stringify(lineReview).includes(for200), 'the approval token is never stored');
 
-    // Approval re-validates the saved decision long after its token expired.
     await approvePayrollRun(runId, null, db);
-    assert.equal((await employeeDebtSummary(monthly, db)).outstanding, 300, '500 - 200 recovered at approval');
-    console.log('PASS payroll deduction and reduced recovery need a matching approval, and approve without a reason');
+    const approvedLine = await db('payroll_lines').where({ id: line.id }).first();
+    assert.equal(Number(approvedLine.total_deductions), 50, 'only the advance');
+    assert.equal((await getVarianceStatement(db, monthly)).totals.owes, 500, 'the variance is untouched by payroll');
+    console.log('PASS payroll deductions need a matching approval; variances are never deducted from pay');
 
     assert.equal((await db.raw('PRAGMA integrity_check'))[0].integrity_check, 'ok');
     assert.deepEqual(await db.raw('PRAGMA foreign_key_check'), []);

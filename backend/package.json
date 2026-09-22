@@ -27,6 +27,7 @@
     "test:receivable-payments": "tsx scripts/test_receivable_payment_integrity.ts",
     "test:invoice-consumption": "tsx scripts/test_invoice_consumption_controls.ts",
     "test:shift-corrections": "tsx scripts/test_shift_corrections.ts",
+    "test:employee-variances": "tsx scripts/test_employee_variances.ts",
     "test:invoice-draft-reservations": "tsx scripts/test_invoice_draft_reservations.ts",
     "test:invoice-accounting": "tsx scripts/test_invoice_accounting_controls.ts",
     "test:receivable-reporting": "tsx scripts/test_receivable_reporting.ts",
@@ -46,7 +47,7 @@
     "test:employee-debt-clearance": "tsx scripts/test_employee_debt_clearance.ts",
     "test:closed-shift-variance": "tsx scripts/test_closed_shift_variance.ts",
     "test:payroll-report-integration": "tsx scripts/test_payroll_report_integration.ts",
-    "test:recovery-approval": "tsx scripts/test_recovery_approval.ts",
+    "test:approvals": "tsx scripts/test_approvals.ts",
     "test:credit-limits": "tsx scripts/test_credit_limits.ts",
     "test:login-throttle": "tsx scripts/test_login_throttle.ts",
     "test:shift-receipt-reversal": "tsx scripts/test_shift_receipt_reversal.ts"

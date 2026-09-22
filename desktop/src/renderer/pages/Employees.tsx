@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   BadgeDollarSign,
   CirclePlus,
+  ListOrdered,
   Pencil,
   Plus,
   Trash2,
@@ -17,6 +19,7 @@ import {
   getEmployees,
   updateEmployee,
 } from '../services/api';
+import { describeVarianceTotals } from '../../../../shared/ui/EmployeeVariances';
 
 type CompensationComponent = {
   component_type: 'fixed_per_shift' | 'fixed_periodic' | 'sales_percentage' | 'litre_rate';
@@ -278,7 +281,7 @@ export default function Employees() {
         <Metric label="Active employees" value={String(totals.active)} />
         <Metric label="Earnings this month" value={formatKES(totals.earnings)} />
         <Metric label="Payroll due" value={formatKES(totals.due)} />
-        <Metric label="Staff debt" value={formatKES(totals.debt)} />
+        <Metric label="Owed on variances" value={formatKES(totals.debt)} />
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
@@ -290,7 +293,7 @@ export default function Employees() {
               <th className="text-left p-3 font-medium">Compensation</th>
               <th className="text-right p-3 font-medium">Month earnings</th>
               <th className="text-right p-3 font-medium">Payroll due</th>
-              <th className="text-right p-3 font-medium">Staff debt</th>
+              <th className="text-right p-3 font-medium">Variance</th>
               <th className="text-left p-3 font-medium">Status</th>
               <th className="text-right p-3 font-medium">Actions</th>
             </tr>
@@ -314,8 +317,8 @@ export default function Employees() {
                 </td>
                 <td className="p-3 text-right tabular-nums">{formatKES(employee.current_period_earnings)}</td>
                 <td className="p-3 text-right tabular-nums">{formatKES(employee.payroll_balance_due)}</td>
-                <td className={`p-3 text-right tabular-nums ${Number(employee.outstanding_staff_debt) > 0 ? 'text-red-600' : ''}`}>
-                  {formatKES(employee.outstanding_staff_debt)}
+                <td className="p-3 text-right">
+                  <VarianceCell employee={employee} />
                 </td>
                 <td className="p-3">
                   <span className={`px-2 py-1 rounded text-xs font-medium ${employee.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -326,6 +329,7 @@ export default function Employees() {
                   <div className="flex justify-end gap-1">
                     <IconButton title="Edit profile" onClick={() => openEdit(employee)}><Pencil size={16} /></IconButton>
                     <IconButton title="Change compensation" onClick={() => openCompensation(employee)}><BadgeDollarSign size={17} /></IconButton>
+                    <Link to={`/employees/${employee.id}/variances`} title="Variances" aria-label="Variances" className="p-2 rounded-lg text-gray-600 hover:bg-gray-100"><ListOrdered size={17} /></Link>
                     {Boolean(employee.active) && (
                       <IconButton title="Deactivate" danger onClick={() => deactivate(employee)}><UserX size={17} /></IconButton>
                     )}
@@ -517,6 +521,17 @@ function PlanEditor({ plan, setPlan, updateComponent, allowEffectiveDate }: any)
         <textarea rows={2} value={plan.notes} onChange={(event) => setPlan({ ...plan, notes: event.target.value })} className="input" />
       </Field>
     </div>
+  );
+}
+
+// What the employee owes on their variances, or has in their favour; opens the list.
+function VarianceCell({ employee }: { employee: any }) {
+  const { text, tone } = describeVarianceTotals(employee.variance_totals);
+  const colour = tone === 'owes' ? 'text-red-600' : tone === 'favour' ? 'text-green-700' : 'text-gray-500';
+  return (
+    <Link to={`/employees/${employee.id}/variances`} className={`tabular-nums hover:underline ${colour}`}>
+      {text}
+    </Link>
   );
 }
 

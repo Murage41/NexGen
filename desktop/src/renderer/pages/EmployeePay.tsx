@@ -1,16 +1,7 @@
 import { useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { EmployeePayView } from '../../../../shared/ui/EmployeePayView';
-import {
-  getMyPay,
-  getEmployeePay,
-  recordDebtReceipt,
-  reverseDebtReceipt,
-  setRecoveryLimit,
-  reviewEmployeeDebt,
-  settleEmployeeRefund,
-  desktopApproval,
-} from '../services/api';
+import { getMyPay, getEmployeePay, varianceActions, desktopApproval } from '../services/api';
 export default function EmployeePay() {
   const { id } = useParams();
   const load = useCallback(
@@ -23,13 +14,7 @@ export default function EmployeePay() {
       load={load}
       admin={Boolean(id)}
       approval={desktopApproval}
-      actions={{
-        receipt: recordDebtReceipt,
-        reverseReceipt: reverseDebtReceipt,
-        limit: setRecoveryLimit,
-        review: reviewEmployeeDebt,
-        settleRefund: settleEmployeeRefund,
-      }}
+      actions={varianceActions}
     />
   );
 }

@@ -10,13 +10,14 @@ import {
   reverseMoneyAccountPaymentInTransaction,
 } from './receivablePayments';
 import { readAccountBalance } from './accountBalance';
+import { positiveMoney } from './employeeDebt';
 import {
-  allocateEmployeeDebt,
-  employeeDebtSummary,
-  positiveMoney,
-  reverseDebtAllocations,
-  syncEmployeeDebt,
-} from './employeeDebt';
+  getVarianceStatement,
+  postCorrectionVariance,
+  recordVarianceRepayment,
+  reverseVarianceRepayment,
+  syncVarianceAccount,
+} from './employeeVariances';
 import { resolveConsumptionSource, validateInvoiceConsumptionAgainstReadings } from './invoiceConsumption';
 import type { Approver } from './approval';
 
@@ -28,9 +29,11 @@ import type { Approver } from './approval';
 // invoices corrected by credit notes (Business Central "Correct"/"Cancel") and
 // reversal documents (SAP), rather than editing a closed record.
 //
-// It then settles the shift's accountability: whatever the correction changes
-// in what the attendant should have handed over becomes debt (more owed) or
-// relief (less owed; money already recovered from them is owed back to them).
+// It then follows the change through to the attendant: the shift's variance
+// moves by exactly what the correction changes, as a variance entry dated the
+// day of the correction (services/employeeVariances.ts). What recovered that
+// shift is recalculated from it: less owed, or repaid money freed to be paid
+// back to them.
 //
 // The preview runs the same code inside a transaction that is rolled back, so
 // what the administrator approves is exactly what is posted. Its confirmation
@@ -177,7 +180,7 @@ async function accountableVariance(trx: Trx, shift: any, headerId: number, live:
 
 async function owedNow(trx: Trx, account: any) {
   if (account.type === 'employee') {
-    return (await employeeDebtSummary(Number(account.employee_id), trx)).outstanding;
+    return (await getVarianceStatement(trx, Number(account.employee_id))).totals.owes;
   }
   if (account.billing_mode === 'invoice') {
     const row = await trx('invoice_consumption')
@@ -194,7 +197,7 @@ async function owedNow(trx: Trx, account: any) {
 
 async function refreshAccount(trx: Trx, account: any) {
   if (account.type === 'employee') {
-    await syncEmployeeDebt(Number(account.employee_id), trx);
+    await syncVarianceAccount(trx, Number(account.employee_id));
     return;
   }
   const balance = await readAccountBalance(Number(account.id), trx);
@@ -247,38 +250,22 @@ async function applyToCredits(
 async function postReplacementPayment(ctx: Context, payer: any, amount: number, original: any) {
   const { trx } = ctx;
   if (payer.type === 'employee') {
-    const employeeId = Number(payer.employee_id);
-    const summary = await employeeDebtSummary(employeeId, trx);
-    if (toCents(amount) > toCents(summary.recoverable)) {
-      fail(
-        `${payer.name} owes ${kes(summary.recoverable)} that a payment can clear, less than this ${kes(amount)}.`,
-        409,
-        'EMPLOYEE_OVERPAID',
-      );
-    }
-    await syncEmployeeDebt(employeeId, trx);
-    const account = await trx('credit_accounts').where({ employee_id: employeeId, type: 'employee' }).first();
-    const [id] = await trx('credit_payments').insert({
-      account_id: account.id,
-      credit_id: null,
-      amount,
-      payment_method: original.payment_method,
-      payment_type: 'staff_debt',
-      date: ctx.postingDate,
-      shift_id: original.shift_id,
-      notes: original.notes || null,
-      status: 'posted',
-      created_by_employee_id: ctx.approverId,
-      correction_of_id: original.id,
-      created_by_correction_id: ctx.headerId,
-    });
-    await allocateEmployeeDebt(
-      employeeId,
-      amount,
-      { table: 'staff_debt_receipt_allocations', fields: { payment_id: id } },
+    // The money was received: what the employee doesn't owe stays with them as
+    // refundable credit, like a customer's credit on account.
+    const payment = await recordVarianceRepayment(
       trx,
+      Number(payer.employee_id),
+      {
+        amount,
+        payment_method: original.payment_method,
+        date: ctx.postingDate,
+        notes: original.notes || null,
+        shift_id: original.shift_id,
+      },
+      ctx.approverId,
+      { correctionOfId: Number(original.id), correctionId: ctx.headerId, allowBeyondOwed: true },
     );
-    return Number(id);
+    return Number(payment.id);
   }
   if ((payer.billing_mode || 'money') !== 'money') {
     fail(`${payer.name} is an invoice customer; their payments are recorded against invoices.`);
@@ -467,13 +454,10 @@ async function correctPayment(ctx: Context): Promise<EntryOutcome> {
   }
 
   if (isEmployee) {
-    await reverseDebtAllocations('staff_debt_receipt_allocations', { payment_id: payment.id }, trx);
-    await trx('credit_payments').where({ id: payment.id }).update({
-      status: 'reversed',
-      reversed_at: ctx.now,
-      reversal_reason: summary,
-      reversed_by_employee_id: ctx.approverId,
-      reversed_by_correction_id: ctx.headerId,
+    await reverseVarianceRepayment(trx, Number(payment.id), {
+      reason: summary,
+      actorId: ctx.approverId,
+      correctionId: ctx.headerId,
     });
   } else {
     await reverseMoneyAccountPaymentInTransaction(trx, {
@@ -638,118 +622,6 @@ async function correctConsumption(ctx: Context): Promise<EntryOutcome> {
   };
 }
 
-// What the attendant is charged for, or relieved of, by the correction.
-async function settleAttendant(
-  ctx: Context,
-  deficitChange: number,
-  reason: string,
-) {
-  const { trx, shift } = ctx;
-  const employeeId = Number(shift.employee_id);
-  const effect = { debt_added: 0, debt_reduced: 0, refund_owed: 0, not_refunded: 0 };
-
-  if (deficitChange > 0) {
-    const [debtId] = await trx('staff_debts').insert({
-      employee_id: employeeId,
-      shift_id: shift.id,
-      original_deficit: deficitChange,
-      deducted_from_wage: 0,
-      carried_forward: deficitChange,
-      balance: deficitChange,
-      status: 'outstanding',
-      // Approved with the correction itself.
-      recovery_status: 'confirmed',
-    });
-    await trx('staff_debt_adjustments').insert({
-      shift_id: shift.id,
-      employee_id: employeeId,
-      staff_debt_id: debtId,
-      accountability_adjustment_id: ctx.headerId,
-      adjustment_type: 'increase',
-      amount: deficitChange,
-      balance_before: 0,
-      balance_after: deficitChange,
-      status: 'posted',
-      reason,
-      created_by_employee_id: ctx.approverId,
-    });
-    effect.debt_added = deficitChange;
-    return effect;
-  }
-  if (deficitChange === 0) return effect;
-
-  // Relief: first whatever of this shift's shortage is still unpaid.
-  let relief = Math.abs(deficitChange);
-  const debts = await trx('staff_debts')
-    .where({ shift_id: shift.id, employee_id: employeeId, status: 'outstanding' })
-    .where('balance', '>', 0)
-    .orderBy('created_at', 'asc')
-    .orderBy('id', 'asc');
-  for (const debt of debts) {
-    if (relief <= 0) break;
-    const before = roundMoney(Number(debt.balance));
-    const applied = roundMoney(Math.min(relief, before));
-    const after = roundMoney(before - applied);
-    await trx('staff_debts').where({ id: debt.id }).update({
-      balance: after,
-      status: after === 0 ? 'cleared' : 'outstanding',
-    });
-    await trx('staff_debt_adjustments').insert({
-      shift_id: shift.id,
-      employee_id: employeeId,
-      staff_debt_id: debt.id,
-      accountability_adjustment_id: ctx.headerId,
-      adjustment_type: 'decrease',
-      amount: applied,
-      balance_before: before,
-      balance_after: after,
-      status: 'posted',
-      reason,
-      created_by_employee_id: ctx.approverId,
-    });
-    effect.debt_reduced = roundMoney(effect.debt_reduced + applied);
-    relief = roundMoney(relief - applied);
-  }
-  if (relief <= 0) return effect;
-
-  // The rest was already recovered from the attendant: owed back to them, but
-  // only what they actually paid. A shortage that was written off, not paid,
-  // is not refunded.
-  const debtIds = await trx('staff_debts').where({ shift_id: shift.id, employee_id: employeeId }).pluck('id');
-  let recovered = 0;
-  if (debtIds.length) {
-    for (const table of ['payroll_debt_allocations', 'shift_staff_debt_allocations', 'staff_debt_receipt_allocations']) {
-      if (!(await trx.schema.hasTable(table))) continue;
-      const row = await trx(table).whereIn('staff_debt_id', debtIds).whereNull('reversed_at').sum({ total: 'amount' }).first();
-      recovered += Number((row as any)?.total || 0);
-    }
-  }
-  const owedRow = await trx('staff_debt_adjustments')
-    .where({ shift_id: shift.id, adjustment_type: 'employee_credit_review' })
-    .sum({ total: 'amount' })
-    .first();
-  const refundable = Math.max(0, roundMoney(recovered - Number((owedRow as any)?.total || 0)));
-  const refund = roundMoney(Math.min(relief, refundable));
-  if (refund > 0) {
-    await trx('staff_debt_adjustments').insert({
-      shift_id: shift.id,
-      employee_id: employeeId,
-      staff_debt_id: null,
-      accountability_adjustment_id: ctx.headerId,
-      adjustment_type: 'employee_credit_review',
-      amount: refund,
-      balance_before: null,
-      balance_after: null,
-      status: 'review_required',
-      reason: `${reason} Already recovered from ${shift.employee_name}: owed back to them.`,
-      created_by_employee_id: ctx.approverId,
-    });
-  }
-  effect.refund_owed = refund;
-  effect.not_refunded = roundMoney(relief - refund);
-  return effect;
-}
-
 async function runShiftCorrection(
   trx: Trx,
   request: CorrectionRequest,
@@ -797,7 +669,7 @@ async function runShiftCorrection(
     before.set(Number(account.id), await owedNow(trx, account));
     if (isMoneyCustomer(account)) creditBefore.set(Number(account.id), await customerCreditBalance(Number(account.id), trx));
   }
-  const attendantBefore = (await employeeDebtSummary(Number(shift.employee_id), trx)).outstanding;
+  const attendantBefore = (await getVarianceStatement(trx, Number(shift.employee_id))).totals;
 
   const outcome = request.entryType === 'credit'
     ? await correctCredit(ctx)
@@ -807,11 +679,16 @@ async function runShiftCorrection(
 
   const liveAfter = await liveVariance(trx, shift);
   const varianceAfter = roundMoney(varianceBefore + (liveAfter - liveBefore));
-  const deficitBefore = Math.max(0, roundMoney(-varianceBefore));
-  const deficitAfter = Math.max(0, roundMoney(-varianceAfter));
-  const deficitChange = roundMoney(deficitAfter - deficitBefore);
   const reason = `Correction #${ctx.headerId} to shift #${shift.id}: ${outcome.summary}.`;
-  const attendantEffect = await settleAttendant(ctx, deficitChange, reason);
+  await postCorrectionVariance(trx, {
+    shift: { id: Number(shift.id), employee_id: Number(shift.employee_id) },
+    correctionId: ctx.headerId,
+    varianceBefore,
+    varianceAfter,
+    postingDate,
+    reason,
+    actorId: approverId,
+  });
 
   const accounts = [];
   for (const id of outcome.accountIds) {
@@ -827,23 +704,32 @@ async function runShiftCorrection(
       name: account.name,
       type: account.type,
       measure: account.type === 'employee'
-        ? 'employee_debt'
+        ? 'employee_variance'
         : account.billing_mode === 'invoice' ? 'uninvoiced_fuel' : 'credit',
       owed_before: roundMoney(before.get(id) || 0),
       owed_after: roundMoney(await owedNow(trx, account)),
+      // Customers: credit on account. Employees: repaid money that can be paid
+      // back to them.
       credit_before: roundMoney(creditBefore.get(id) || 0),
-      credit_after: isMoneyCustomer(account) ? await customerCreditBalance(id, trx) : 0,
+      credit_after: isMoneyCustomer(account)
+        ? await customerCreditBalance(id, trx)
+        : account.type === 'employee'
+          ? (await getVarianceStatement(trx, Number(account.employee_id))).totals.refundable
+          : 0,
     });
   }
-  await syncEmployeeDebt(Number(shift.employee_id), trx);
+  const attendantAfter = (await getVarianceStatement(trx, Number(shift.employee_id))).totals;
   const attendant = {
     employee_id: Number(shift.employee_id),
     name: shift.employee_name,
-    deficit_before: deficitBefore,
-    deficit_after: deficitAfter,
-    ...attendantEffect,
-    owed_before: attendantBefore,
-    owed_after: (await employeeDebtSummary(Number(shift.employee_id), trx)).outstanding,
+    variance_before: varianceBefore,
+    variance_after: varianceAfter,
+    owes_before: attendantBefore.owes,
+    owes_after: attendantAfter.owes,
+    refundable_before: attendantBefore.refundable,
+    refundable_after: attendantAfter.refundable,
+    surplus_before: attendantBefore.surplus_available,
+    surplus_after: attendantAfter.surplus_available,
   };
 
   const result = {
@@ -874,8 +760,8 @@ async function runShiftCorrection(
       original: outcome.original,
       replacement: outcome.replacement ? { ...outcome.replacement, credit_id: undefined, shift_credit_id: undefined, payment_id: undefined, entry_id: undefined } : null,
       accounts: accounts.map((a) => [a.account_id, a.owed_before, a.owed_after, a.credit_before, a.credit_after]),
-      attendant: [attendant.deficit_before, attendant.deficit_after, attendant.debt_added,
-        attendant.debt_reduced, attendant.refund_owed, attendant.not_refunded, attendant.owed_before],
+      attendant: [attendant.variance_before, attendant.variance_after, attendant.owes_before, attendant.owes_after,
+        attendant.refundable_before, attendant.refundable_after, attendant.surplus_before, attendant.surplus_after],
       variance: [varianceBefore, varianceAfter],
     }))
     .digest('hex');

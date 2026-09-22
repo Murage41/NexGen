@@ -31,6 +31,9 @@ export async function clearRecordedEmployeeDebt(db: Knex, input: DebtClearance, 
   requireCondition(input.expectedDebts.length > 0 && new Set(input.expectedDebts.map(d => d.id)).size === input.expectedDebts.length, 'Expected debt IDs must be nonempty and unique.');
   requireCondition(input.expectedDebts.every(d => Number.isInteger(d.id) && d.id > 0 && Number.isFinite(d.balance) && d.balance > 0 && Math.abs(cents(d.balance) / 100 - d.balance) < 0.000001), 'Invalid expected debt amounts.');
   return db.transaction(async trx => {
+    // Since migration 047 what an employee owes lives in their variances; the
+    // old debt records are history and must not change.
+    requireCondition(!(await trx.schema.hasTable('employee_variance_entries')), 'Employee balances are now kept as variances. Write off under Employees, Variances instead. Nothing was changed.');
     const integrity = await trx.raw('PRAGMA integrity_check');
     requireCondition(integrity.length === 1 && integrity[0].integrity_check === 'ok', 'Database integrity check failed.');
     requireCondition((await trx.raw('PRAGMA foreign_key_check')).length === 0, 'Foreign-key check failed.');

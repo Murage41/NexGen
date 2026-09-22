@@ -25,18 +25,18 @@ import {
   normalizeIdempotencyKey,
 } from '../services/idempotency';
 import {
-  savePayrollRecovery,
   addPayrollDeduction,
   recordPayrollPayment,
   editablePayrollLine,
 } from '../services/payrollMutations';
 import {
   employeePayStatement,
+  employeeDebtHistory,
   recordEmployeeDebtReceipt,
   reverseEmployeeDebtReceipt,
 } from '../services/employeePay';
 import { settlementError, positiveMoney } from '../services/employeeDebt';
-import { owedRefund, settleEmployeeRefund, type RefundMethod } from '../services/employeeRefunds';
+import { getVarianceStatement, refundVariance, waiveVariance } from '../services/employeeVariances';
 import { approvalBindings, resolveApprover } from '../services/approval';
 
 const router = Router();
@@ -115,70 +115,53 @@ router.post(
       ),
     ),
 );
-// Settle money owed back to an employee after a closed-shift correction:
-// { method: 'cash'|'mpesa'|'offset', date?, reference?, approval_token? }.
-router.post('/refunds/:id/settle', (req: any, res) =>
-  mutate(req, res, `refund-settle:${req.params.id}`, async (trx) => {
-    const method = String(req.body?.method || '') as RefundMethod;
-    if (!['cash', 'mpesa', 'offset'].includes(method)) {
-      throw settlementError('Choose how the refund was settled.', 400);
-    }
-    const { amount } = await owedRefund(trx, Number(req.params.id));
+// Attendant variances (services/employeeVariances.ts): the statement, and
+// writing off or paying back. Repayments use /employees/:id/receipts above.
+router.get('/employees/:id/variances', async (req, res) => {
+  try {
+    const asOf = typeof req.query.as_of === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.as_of)
+      ? req.query.as_of
+      : undefined;
+    const statement = await getVarianceStatement(db, Number(req.params.id), { asOf });
+    // The staff-debt records from before variances started, shown as history.
+    res.json({ success: true, data: { ...statement, earlier: await employeeDebtHistory(Number(req.params.id), db) } });
+  } catch (e) {
+    fail(res, e);
+  }
+});
+// { amount, shift_id?, reason, approval_token? }
+router.post('/employees/:id/variances/waivers', (req: any, res) =>
+  mutate(req, res, `variance-waiver:${req.params.id}`, async (trx) => {
     const approver = await resolveApprover(
       actor(req),
       req.body?.approval_token,
-      approvalBindings.refund_settlement({ adjustment_id: Number(req.params.id), method, amount }),
+      approvalBindings.variance_waiver({ for_employee_id: Number(req.params.id), shift_id: req.body?.shift_id, amount: req.body?.amount }),
       trx,
     );
-    return settleEmployeeRefund(trx, {
-      adjustmentId: Number(req.params.id),
-      method,
-      date: req.body?.date || null,
-      reference: req.body?.reference || null,
-      approver,
-    });
+    await waiveVariance(trx, Number(req.params.id), req.body || {}, approver, actor(req));
+    return getVarianceStatement(trx, Number(req.params.id));
   }),
 );
-router.put('/employees/:id/recovery-limit', async (req, res) => {
-  try {
-    const percent = positiveMoney(req.body.percent, true);
-    if (percent > 100)
-      throw settlementError('Limit must be between 0 and 100 percent.', 400);
-    await db('employees')
-      .where({ id: req.params.id })
-      .update({ recovery_limit_percent: percent });
-    res.json({ success: true });
-  } catch (e) {
-    fail(res, e);
-  }
-});
-router.put('/debts/:id/review', async (req, res) => {
-  try {
-    if (
-      !['confirmed', 'disputed', 'pending'].includes(req.body.status) ||
-      String(req.body.reason || '').trim().length < 3
-    )
-      throw settlementError('Choose a review status and enter a reason.', 400);
-    await db.transaction(async (trx) => {
-      const debt = await trx('staff_debts')
-        .where({ id: req.params.id })
-        .first();
-      if (!debt) throw settlementError('Debt not found.', 404);
-      await trx('staff_debts')
-        .where({ id: debt.id })
-        .update({ recovery_status: req.body.status });
-      await trx('staff_debt_reviews').insert({
-        staff_debt_id: debt.id,
-        status: req.body.status,
-        reason: req.body.reason,
-        actor_id: actor(req),
-      });
-    });
-    res.json({ success: true });
-  } catch (e) {
-    fail(res, e);
-  }
-});
+// { amount, method: 'cash'|'mpesa', date, reference?, approval_token? }
+router.post('/employees/:id/variances/refunds', (req: any, res) =>
+  mutate(req, res, `variance-refund:${req.params.id}`, async (trx) => {
+    const approver = await resolveApprover(
+      actor(req),
+      req.body?.approval_token,
+      approvalBindings.variance_refund({ for_employee_id: Number(req.params.id), method: req.body?.method, amount: req.body?.amount }),
+      trx,
+    );
+    await refundVariance(trx, Number(req.params.id), req.body || {}, approver, actor(req));
+    return getVarianceStatement(trx, Number(req.params.id));
+  }),
+);
+// Retired with debt recovery: variances are repaid separately and never taken
+// from pay.
+const retired = (_req: any, res: any) =>
+  res.status(410).json({ success: false, error: 'Debt recovery has been replaced by Employees, Variances.' });
+router.post('/refunds/:id/settle', retired);
+router.put('/employees/:id/recovery-limit', retired);
+router.put('/debts/:id/review', retired);
 router.get('/runs', async (req, res) => {
   try {
     const query = db('payroll_runs as r')
@@ -234,17 +217,7 @@ router.post(
     }
   },
 );
-router.put('/runs/:runId/lines/:lineId/recovery', (req, res) =>
-  mutate(req, res, `recovery:${req.params.runId}:${req.params.lineId}`, (trx) =>
-    savePayrollRecovery(
-      Number(req.params.runId),
-      Number(req.params.lineId),
-      req.body,
-      actor(req),
-      trx,
-    ),
-  ),
-);
+router.put('/runs/:runId/lines/:lineId/recovery', retired);
 router.post(
   '/runs/:runId/lines/:lineId/deductions',
   validate(createPayrollDeductionSchema),

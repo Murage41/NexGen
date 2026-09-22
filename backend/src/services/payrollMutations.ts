@@ -3,9 +3,7 @@ import {
   money,
   positiveMoney,
   settlementError,
-  validateRecoveryDecision,
 } from './employeeDebt';
-import { payrollRecoveryPreview } from './payrollDetails';
 import { refreshPayrollLine, refreshPayrollRun } from './payroll';
 import { approvalBindings, resolveApprover } from './approval';
 
@@ -24,61 +22,6 @@ export async function editablePayrollLine(
   return line;
 }
 
-export async function savePayrollRecovery(
-  runId: number,
-  lineId: number,
-  decision: any,
-  actorId: number | null,
-  db: Knex.Transaction,
-) {
-  const line = await editablePayrollLine(runId, lineId, db);
-  const preview = await payrollRecoveryPreview(lineId, db);
-  const amount = validateRecoveryDecision(preview, decision);
-  const approver = await resolveApprover(
-    actorId,
-    decision.approval_token,
-    approvalBindings.recovery(decision),
-    db,
-  );
-  await db('payroll_deductions')
-    .where({
-      payroll_line_id: lineId,
-      deduction_type: 'staff_debt',
-      status: 'draft',
-    })
-    .delete();
-  if (amount > 0)
-    await db('payroll_deductions').insert({
-      payroll_line_id: lineId,
-      employee_id: line.employee_id,
-      deduction_type: 'staff_debt',
-      amount,
-      // A verified approver, not typed text. Rows written before this carry
-      // whatever was typed; payroll displays read both the same way.
-      authorization_reference: `Approved by ${approver.name}`,
-      notes: decision.reason || null,
-      status: 'draft',
-      created_by_employee_id: approver.id,
-    });
-  await db('payroll_lines')
-    .where({ id: lineId })
-    .update({
-      // Named fields only: the decision carries an approval token that must
-      // not be stored. approvePayrollRun re-validates version and amount.
-      recovery_review: JSON.stringify({
-        version: preview.version,
-        amount,
-        reason: decision.reason || '',
-        outstanding_before: preview.outstanding,
-        reviewed_by: approver.id,
-        approved_by_name: approver.name,
-        reviewed_at: new Date().toISOString(),
-      }),
-    });
-  await refreshPayrollLine(lineId, db);
-  await refreshPayrollRun(runId, db);
-}
-
 export async function addPayrollDeduction(
   runId: number,
   lineId: number,
@@ -87,9 +30,10 @@ export async function addPayrollDeduction(
   db: Knex.Transaction,
 ) {
   const line = await editablePayrollLine(runId, lineId, db);
+  // Pay is never reduced for variances: employees repay them separately.
   if (input.deduction_type === 'staff_debt')
     throw settlementError(
-      'Use Review debt recovery to select and authorize staff debt repayment.',
+      'Variances are not deducted from pay. Record repayments under Employees, Variances.',
       400,
     );
   await refreshPayrollLine(lineId, db);

@@ -8,6 +8,7 @@ import {
   getUnmirroredShiftWagesPaid,
 } from '../services/payrollAccounting';
 import { getCurrentReceivableTotals } from '../services/receivableReporting';
+import { totalOwedByAttendants } from '../services/employeeVariances';
 import { decorateShiftStaleness, listStaleOpenShifts } from '../services/shiftOperations';
 
 const router = Router();
@@ -265,13 +266,8 @@ router.get('/', async (req: any, res) => {
     const receivables = await getCurrentReceivableTotals(db);
     const totalOutstandingCredits = receivables.total_receivables;
 
-    // ── Outstanding staff debts (unrecovered losses) ──
-    const staffDebtResult = await db('staff_debts')
-      .where('status', 'outstanding')
-      .where('balance', '>', 0)
-      .sum('balance as total')
-      .first();
-    const totalOutstandingStaffDebts = Number((staffDebtResult as any)?.total) || 0;
+    // ── Owed by attendants on their variances (unrecovered losses) ──
+    const totalOutstandingStaffDebts = await totalOwedByAttendants(db);
 
     // ── Phase 1B: EPRA compliance ──
     const epraAlerts: any[] = [];

@@ -9,7 +9,14 @@ async function main() {
   process.env.NEXGEN_DATA_DIR = directory;
   const {default: db} = await import('../src/database');
   try {
-    await db.migrate.latest();
+    // As before update #7 (migration 047): the command only applies there.
+    for (;;) {
+      const [, pending] = await db.migrate.list();
+      const next: any = pending[0];
+      const name = typeof next === 'string' ? next : next?.file || next?.name;
+      if (!name || String(name).includes('047_employee_variances')) break;
+      await db.migrate.up();
+    }
     await db('employees').insert({id: 3, name: 'Ema Kasyoka', role: 'attendant', pin: 'test', active: true});
     await db('credit_accounts').insert({id: 13, employee_id: 3, type: 'employee', name: 'Ema Kasyoka', balance: 4741.52});
     for (const [id, shiftId, balance] of [[11,78,1.26],[12,81,428.56],[13,86,40.31],[15,88,74.47],[17,92,4196.92]]) {
@@ -44,6 +51,8 @@ async function main() {
     assert.ok(fs.existsSync(audit.backup.path));
     assert.match(run(['--apply']), /already_cleared/);
     assert.deepEqual(fs.readdirSync(path.join(directory, 'backups')), files);
+    await db.migrate.latest();
+    assert.match(run(['--apply'], 1), /kept as variances/);
     console.log('PASS: Emma command preview, identity/shift/new-debt guards, backup, audited clearance, unchanged shifts and safe repeat.');
   } finally {await db.destroy();}
 }

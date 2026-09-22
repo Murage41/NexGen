@@ -106,23 +106,18 @@ be opened inside a period that has already been calculated.
 
 Void an incorrect run before calculating a corrected replacement.
 
-## Deductions and Staff Debt
+## Deductions
 
 Deductions are added while a run is calculated and still editable.
 
 - Every deduction records the administrator who approved it. On the desktop,
   choose the approver and enter their PIN; on mobile, the signed-in
-  administrator approves. Staff debt is taken through debt recovery, not as a
-  manual deduction.
-- Recovery is reviewed explicitly and cannot exceed compensation remaining
-  after actual payments and other deductions.
-- A staff debt deduction cannot exceed the employee's outstanding staff debt.
-- Staff debt is reduced only when payroll is approved.
-- Voiding the run restores approved staff-debt allocations.
+  administrator approves.
 - Statutory, advance, and manually authorized deductions remain separate types.
-
-Payroll deductions do not change how the original staff debt or shift deficit
-was recorded. They create an auditable allocation against that existing debt.
+- Attendant variances are never deducted from pay, on any plan. Employees are
+  paid in full and repay shortages separately; see
+  [Attendant Variances](ATTENDANT-VARIANCES.md). Debt recovery saved on payroll
+  runs before that change shows as history only.
 
 ## Payments and Shift Accountability
 
@@ -181,8 +176,7 @@ periods that also contain migrated employee earnings.
 2. Select **Calculate Payroll**.
 3. Choose the schedule and period start. NexGen derives the valid period end.
 4. Review eligible employees, gross earnings, prior shift payments, and balance.
-5. Review and save the debt recovery decision for each employee; add any other
-   authorized deductions while the run is calculated.
+5. Add any other authorized deductions while the run is calculated.
 6. Approve the run.
 7. Record one or more payments until the balance is zero.
 8. Expand an employee line to review earnings, deductions, and payments.
@@ -193,7 +187,8 @@ Use reversal and void actions instead of deleting financial records.
 
 Admin users can open **More**, then **Employees** or **Payroll**.
 
-- Employees shows compensation, approved earnings, payroll due, and staff debt.
+- Employees shows compensation, approved earnings, payroll due, and what each
+  employee owes on their variances (tap it for the list).
 - Employee profiles and future compensation plans can be maintained on mobile.
 - Payroll runs can be calculated, reviewed, and approved.
 - Approved payroll can be paid directly or from an open shift when eligible.

@@ -67,9 +67,9 @@ async function main() {
     assert.equal((await db('shift_collections').where({shift_id: modern}).first()).cash_amount, 9200);
     assert.equal((await db('wage_deductions').where({shift_id: modern}).first()).deduction_amount, 356.86);
     const [staffAccount] = await db('credit_accounts').insert({name: 'Employee debt', type: 'employee', employee_id: employee, balance: 75});
-    await db('staff_debts').insert({employee_id: employee, shift_id: modern, original_deficit: 75, deducted_from_wage: 0, carried_forward: 75, balance: 75, status: 'outstanding'});
+    await db('employee_variance_entries').insert({employee_id: employee, entry_type: 'shift', entry_date: '2026-08-01', amount: 75, shift_id: modern});
     const {detectDrift} = await import('../src/services/driftDetector');
-    assert.equal((await detectDrift()).accounts.drift_count, 0, 'Employee balances must be checked against staff debt, not customer credit.');
+    assert.equal((await detectDrift()).accounts.drift_count, 0, 'Employee balances must be checked against their variances, not customer credit.');
     await db('credit_accounts').where({id: staffAccount}).update({balance: 74});
     assert.equal((await detectDrift()).accounts.drift_count, 1, 'Real account drift must still be detected.');
     assert.equal((await db('credit_accounts').where({id: staffAccount}).first()).balance, 74, 'Drift checking is read-only.');

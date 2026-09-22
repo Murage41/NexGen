@@ -21,6 +21,7 @@ import Suppliers from './pages/Suppliers';
 import SettingsPage from './pages/Settings';
 import Payroll from './pages/Payroll';
 import EmployeePay from './pages/EmployeePay';
+import EmployeeVariances from './pages/EmployeeVariances';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -104,6 +105,7 @@ export default function App() {
             <Route path="/shifts/:id" element={<ShiftDetail />} />
             <Route path="/pumps" element={<Pumps />} />
             <Route path="/employees" element={<Employees />} />
+            <Route path="/employees/:id/variances" element={<EmployeeVariances />} />
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/employee-pay/:id" element={<EmployeePay />} />
             <Route path="/fuel-pricing" element={<FuelPricing />} />

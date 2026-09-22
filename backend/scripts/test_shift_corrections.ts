@@ -19,7 +19,7 @@ async function main() {
   const { hashPin } = await import('../src/services/pinSecurity');
   const { getKenyaDate } = await import('../src/utils/timezone');
   const { computeShiftAccountability } = await import('../src/services/shiftAccountability');
-  const { syncEmployeeDebt, employeeDebtSummary } = await import('../src/services/employeeDebt');
+  const { getVarianceStatement, postShiftVariance } = await import('../src/services/employeeVariances');
   const { recordEmployeeDebtReceipt, employeePayStatement } = await import('../src/services/employeePay');
   const { readAccountBalance } = await import('../src/services/accountBalance');
   const { customerCreditBalance, applyCustomerCreditForShift } = await import('../src/services/receivablePayments');
@@ -99,13 +99,11 @@ async function main() {
         variance_type: a.variance < 0 ? 'deficit' : a.variance > 0 ? 'surplus' : 'balanced', approved_at: new Date().toISOString(),
       });
       const shift = await db('shifts').where({ id: shiftId }).first();
-      if (a.variance < 0) {
-        await db('staff_debts').insert({ employee_id: shift.employee_id, shift_id: shiftId, original_deficit: -a.variance, deducted_from_wage: 0, carried_forward: -a.variance, balance: -a.variance, status: 'outstanding', recovery_status: 'confirmed' });
-      }
       await db('shifts').where({ id: shiftId }).update({ status: 'closed', end_time: new Date().toISOString(), direct_wage_cash_amount: 0 });
       await db.transaction(async (trx) => {
-        await syncEmployeeDebt(Number(shift.employee_id), trx);
-        // As the close route does once the shift is closed.
+        // As the close route does: the over/short goes to the attendant's
+        // variances, then credit a customer holds pays this shift's credits.
+        await postShiftVariance(trx, { id: shiftId, employee_id: Number(shift.employee_id), shift_date: shift.shift_date }, a.variance, null);
         await applyCustomerCreditForShift(trx, shiftId);
       });
       return a.variance;
@@ -158,7 +156,7 @@ async function main() {
     const owed = (accountId: number) => readAccountBalance(accountId, db);
     const customerCredit = (accountId: number) => customerCreditBalance(accountId, db);
     const cached = async (accountId: number) => Number((await db('credit_accounts').where({ id: accountId }).first()).balance);
-    const outstanding = async (employeeId: number) => (await employeeDebtSummary(employeeId, db)).outstanding;
+    const outstanding = async (employeeId: number) => (await getVarianceStatement(db, employeeId)).totals.owes;
     const corrections = () => db('shift_accountability_adjustments').where({ adjustment_type: 'shift_correction' });
 
     // S0: older credits that customers owe.
@@ -176,7 +174,7 @@ async function main() {
 
     const moved = await correct(s1, { entry_type: 'credit', entry_id: kauCredit.shiftCreditId, kind: 'wrong_customer', account_id: diwafa, note: 'Driver confirmed it was the Diwafa lorry' });
     assert.deepEqual(moved.accounts.map((a: any) => [a.name, a.owed_before, a.owed_after]), [['Kau', 13000, 12000], ['Diwafa', 5000, 6000]]);
-    assert.deepEqual([moved.variance_before, moved.variance_after, moved.attendant.debt_added, moved.attendant.debt_reduced], [0, 0, 0, 0], 'the fuel was really sold on credit: the attendant is unaffected');
+    assert.deepEqual([moved.variance_before, moved.variance_after, moved.attendant.owes_before, moved.attendant.owes_after], [0, 0, 0, 0], 'the fuel was really sold on credit: the attendant is unaffected');
     const original = await db('credits').where({ id: kauCredit.creditId }).first();
     assert.equal(original.status, 'reversed');
     assert.equal(Number(original.amount), 1000, 'the original keeps its amount');
@@ -221,12 +219,11 @@ async function main() {
     assert.equal(await close(s2), 0, 'the fake credit made the drawer balance');
     const voidedCredit = await correct(s2, { entry_type: 'credit', entry_id: fake.shiftCreditId, kind: 'not_valid' });
     assert.deepEqual([voidedCredit.variance_before, voidedCredit.variance_after], [0, -2000]);
-    assert.equal(voidedCredit.attendant.debt_added, 2000, 'the money should have been in the drawer');
+    assert.deepEqual([voidedCredit.attendant.owes_before, voidedCredit.attendant.owes_after], [0, 2000], 'the money should have been in the drawer');
     assert.equal(await outstanding(day), 2000);
     assert.equal(await owed(kau), 12000);
-    const added = await db('staff_debts').where({ shift_id: s2 }).first();
-    assert.deepEqual([Number(added.balance), added.recovery_status], [2000, 'confirmed']);
-    assert(await db('staff_debt_adjustments').where({ staff_debt_id: added.id, adjustment_type: 'increase', accountability_adjustment_id: voidedCredit.correction_id }).first());
+    const added = await db('employee_variance_entries').where({ shift_id: s2, entry_type: 'correction' }).first();
+    assert.deepEqual([Number(added.amount), added.correction_id, added.entry_date], [2000, voidedCredit.correction_id, today], 'a variance entry dated the day of the correction');
     console.log('PASS voiding a credit that never happened charges the attendant who recorded it');
 
     // ---- C. A payment that never came in: the attendant was charged for it ----
@@ -240,45 +237,46 @@ async function main() {
     const voidedPayment = await correct(s3, { entry_type: 'payment', entry_id: typed.body.data.id, kind: 'not_valid' });
     assert.deepEqual([voidedPayment.variance_before, voidedPayment.variance_after], [-1000, 0]);
     assert.deepEqual(
-      [voidedPayment.attendant.debt_reduced, voidedPayment.attendant.refund_owed, voidedPayment.attendant.not_refunded],
-      [400, 600, 0],
-      'the unpaid 400 is cancelled and the 600 they paid is owed back',
+      [voidedPayment.attendant.owes_before, voidedPayment.attendant.owes_after, voidedPayment.attendant.refundable_after],
+      [400, 0, 600],
+      'the unpaid 400 is cancelled and the 600 they paid can be paid back',
     );
     assert.equal(await owed(kau), 12000, 'Kau owes the 1,000 again');
     assert.equal((await db('credit_payments').where({ id: typed.body.data.id }).first()).status, 'reversed');
     assert.equal(await outstanding(night), 0);
     const pay = await employeePayStatement(night, db as any);
-    assert.equal(pay.debt.owed_to_employee, 600);
-    const refundRow = pay.debt.refunds[0];
-    assert.equal(refundRow.status, 'review_required');
+    assert.equal(pay.variances.totals.refundable, 600);
 
     // Paid back to them, with the admin's PIN: a cash outflow.
-    const settleBody = { method: 'cash', date: today, reference: 'Handed over at the office' };
-    const settleHeaders = (key: string) => ({ ...desktop, 'Idempotency-Key': key });
-    const unapproved = await call('POST', `/payroll/refunds/${refundRow.id}/settle`, settleHeaders(crypto.randomUUID()), settleBody);
+    const payBackBody = { amount: 600, method: 'cash', date: today, reference: 'Handed over at the office' };
+    const keyed = (key: string) => ({ ...desktop, 'Idempotency-Key': key });
+    const unapproved = await call('POST', `/payroll/employees/${night}/variances/refunds`, keyed(crypto.randomUUID()), payBackBody);
     assert.equal(unapproved.status, 400, 'the desktop needs an approver');
-    const refundToken = await approval('refund_settlement', { adjustment_id: refundRow.id, method: 'cash', amount: 600 });
-    const settled = await call('POST', `/payroll/refunds/${refundRow.id}/settle`, settleHeaders(crypto.randomUUID()), { ...settleBody, approval_token: refundToken });
-    assert.equal(settled.status, 200, JSON.stringify(settled.body));
-    assert.deepEqual([settled.body.data.status, settled.body.data.settlement_method, settled.body.data.settled_by_name], ['settled', 'cash', 'Owner Admin']);
-    const again = await call('POST', `/payroll/refunds/${refundRow.id}/settle`, settleHeaders(crypto.randomUUID()), { ...settleBody, approval_token: refundToken });
-    assert.equal(again.status, 409, 'a refund is settled once');
+    const refundToken = await approval('variance_refund', { for_employee_id: night, method: 'cash', amount: 600 });
+    const paidBack = await call('POST', `/payroll/employees/${night}/variances/refunds`, keyed(crypto.randomUUID()), { ...payBackBody, approval_token: refundToken });
+    assert.equal(paidBack.status, 200, JSON.stringify(paidBack.body));
+    assert.equal(paidBack.body.data.totals.refundable, 0);
+    assert.equal(paidBack.body.data.events.find((e: any) => e.type === 'refund').approved_by_name, 'Owner Admin');
+    const again = await call('POST', `/payroll/employees/${night}/variances/refunds`, keyed(crypto.randomUUID()), { ...payBackBody, approval_token: refundToken });
+    assert.equal(again.status, 409, 'paid back once');
     const cashFlow = (await call('GET', `/reports/cash-flow?from=${today}&to=${today}`, desktop)).body.data;
     assert.equal(cashFlow.outflows.employee_refunds, 600);
-    assert.equal((await employeePayStatement(night, db as any)).debt.owed_to_employee, 0);
-    console.log('PASS voiding a payment that never came in relieves the attendant; what they already repaid is owed back and paid with approval');
+    assert.equal((await employeePayStatement(night, db as any)).variances.totals.refundable, 0);
+    console.log('PASS voiding a payment that never came in relieves the attendant; what they already repaid is paid back with approval');
 
     // A shortage that was written off, not repaid, is not refunded.
-    const s3b = await openShift('2026-09-11', night);
+    const s3b = await openShift(today, night);
     await sales(s3b, 1000, 1000);
     const typedAgain = await call('POST', `/shifts/${s3b}/credit-receipts`, nightSession, { account_id: kau, amount: 500, payment_method: 'cash' });
     assert.equal(await close(s3b), -500);
-    await db('staff_debts').where({ shift_id: s3b }).update({ balance: 0, status: 'cleared' });
+    const waiveToken = await approval('variance_waiver', { for_employee_id: night, shift_id: s3b, amount: 500 });
+    const waived = await call('POST', `/payroll/employees/${night}/variances/waivers`, keyed(crypto.randomUUID()), { amount: 500, shift_id: s3b, reason: 'Written off', approval_token: waiveToken });
+    assert.equal(waived.status, 200, JSON.stringify(waived.body));
     const writtenOff = await correct(s3b, { entry_type: 'payment', entry_id: typedAgain.body.data.id, kind: 'not_valid' });
     assert.deepEqual(
-      [writtenOff.attendant.debt_reduced, writtenOff.attendant.refund_owed, writtenOff.attendant.not_refunded],
-      [0, 0, 500],
-      'nothing was paid, so nothing is owed back',
+      [writtenOff.attendant.owes_before, writtenOff.attendant.owes_after, writtenOff.attendant.refundable_after],
+      [0, 0, 0],
+      'nothing was paid, so nothing is paid back',
     );
     console.log('PASS relief for a shortage that was written off, not repaid, owes nothing back');
 
@@ -299,7 +297,7 @@ async function main() {
     assert.equal(await outstanding(day), 11000);
     const fixedAmount = await correct(s4, { entry_type: 'payment', entry_id: typo.body.data.id, kind: 'wrong_amount', amount: 1000 });
     assert.deepEqual(fixedAmount.accounts.map((a: any) => [a.name, a.owed_before, a.owed_after]), [['Kau', 2000, 11000]]);
-    assert.deepEqual([fixedAmount.variance_before, fixedAmount.variance_after, fixedAmount.attendant.debt_reduced, fixedAmount.attendant.refund_owed], [-9000, 0, 9000, 0]);
+    assert.deepEqual([fixedAmount.variance_before, fixedAmount.variance_after, fixedAmount.attendant.owes_before, fixedAmount.attendant.owes_after], [-9000, 0, 11000, 2000]);
     const replacedPayment = await db('credit_payments').where({ correction_of_id: typo.body.data.id }).first();
     assert.deepEqual([Number(replacedPayment.amount), replacedPayment.shift_id, replacedPayment.date, replacedPayment.status], [1000, s4, today, 'posted']);
     assert.equal(await outstanding(day), 2000);
@@ -311,7 +309,7 @@ async function main() {
     const litres = await fuelOnAccount(s5, blossom, 50);
     assert.equal(await close(s5), 0);
     const fewer = await correct(s5, { entry_type: 'invoice_consumption', entry_id: litres, kind: 'wrong_amount', litres: 40 });
-    assert.deepEqual([fewer.variance_after, fewer.attendant.debt_added], [-2000, 2000]);
+    assert.deepEqual([fewer.variance_after, fewer.attendant.owes_after - fewer.attendant.owes_before], [-2000, 2000]);
     const replacementEntry = await db('invoice_consumption').where({ correction_of_id: litres }).first();
     const toMugendi = await correct(s5, { entry_type: 'invoice_consumption', entry_id: replacementEntry.id, kind: 'wrong_customer', account_id: mugendi });
     assert.deepEqual(toMugendi.accounts.map((a: any) => [a.name, a.owed_before, a.owed_after]), [['Blossom', 8000, 0], ['Mugendi Stores', 0, 8000]]);
@@ -328,7 +326,7 @@ async function main() {
     assert.equal(onInvoice.body.code, 'CONSUMPTION_INVOICED');
     await db('invoice_consumption').where({ id: mugendiEntry.id }).update({ invoice_line_id: null });
     const notSupplied = await correct(s5, { entry_type: 'invoice_consumption', entry_id: mugendiEntry.id, kind: 'not_valid' });
-    assert.deepEqual([notSupplied.variance_after, notSupplied.attendant.debt_added], [-10000, 8000]);
+    assert.deepEqual([notSupplied.variance_after, notSupplied.attendant.owes_after - notSupplied.attendant.owes_before], [-10000, 8000]);
     const history = await db('invoice_consumption').where({ shift_id: s5 }).orderBy('id');
     assert.deepEqual(history.map((e: any) => e.entry_status), ['reversed', 'reversed', 'reversed'], 'every version is kept');
     console.log('PASS fuel on account: litres, customer and void, bounded by pump sales; invoiced litres go through the invoice');
@@ -370,7 +368,7 @@ async function main() {
     assert.equal((await db('credits').where({ id: zawadiCredit.creditId }).first()).status, 'paid', 'a preview changes nothing');
     assert.deepEqual(await corrections().count({ n: 'id' }).first(), before, 'and leaves no record');
     const lowered = await correct(s7, lowerBody);
-    assert.equal(lowered.attendant.debt_added, 300, 'the overstated 300 should have been in the drawer');
+    assert.equal(lowered.attendant.owes_after - lowered.attendant.owes_before, 300, 'the overstated 300 should have been in the drawer');
     assert.equal(await customerCredit(zawadi), 300);
     assert.equal(Number((await db('credit_payments').where({ id: zawadiPaid.body.data.id }).first()).unapplied_amount), 300, 'held on the payment that overpaid');
 
@@ -456,7 +454,8 @@ async function main() {
     const attendantView = (await call('GET', `/shifts/${s2}`, attendantSession)).body.data;
     assert.equal(attendantView.corrections.length, 1);
     assert.equal(attendantView.corrections[0].details.accounts, undefined, "customers' balances stay with administrators");
-    assert.equal(attendantView.corrections[0].details.attendant.debt_added, 2000, 'the attendant sees what it did to their shortage');
+    const seen = attendantView.corrections[0].details.attendant;
+    assert.deepEqual([seen.owes_before, seen.owes_after], [0, 2000], 'the attendant sees what it did to what they owe');
     console.log('PASS only administrators correct, only closed shifts, only with an approval for exactly that correction');
 
     // ---- J. Everything still adds up ----

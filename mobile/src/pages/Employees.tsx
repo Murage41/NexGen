@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   BadgeDollarSign,
   CirclePlus,
@@ -258,7 +259,9 @@ export default function Employees() {
               <div className="grid grid-cols-3 gap-2 mt-3 text-center">
                 <Metric label="Earned" value={kes(employee.current_period_earnings)} />
                 <Metric label="Due" value={kes(employee.payroll_balance_due)} />
-                <Metric label="Debt" value={kes(employee.outstanding_staff_debt)} alert={Number(employee.outstanding_staff_debt) > 0} />
+                <Link to={`/employees/${employee.id}/variances`} className="block rounded-lg active:bg-gray-100">
+                  <VarianceMetric totals={employee.variance_totals} />
+                </Link>
               </div>
             </div>
           ))}
@@ -414,6 +417,20 @@ function Select({ label, value, onChange, options, disabled = false }: {
         {options.map(([optionValue, text]: string[]) => <option key={optionValue} value={optionValue}>{text}</option>)}
       </select>
     </label>
+  );
+}
+
+// Tapping it opens the employee's Variances.
+function VarianceMetric({ totals }: { totals: any }) {
+  const owes = Number(totals?.owes || 0);
+  const favour = Number(totals?.surplus_available || 0) + Number(totals?.refundable || 0);
+  return (
+    <div>
+      <p className="text-[10px] uppercase text-blue-600">{owes > 0 ? 'Owes' : favour > 0 ? 'In favour' : 'Variances'}</p>
+      <p className={`text-xs font-semibold mt-1 truncate ${owes > 0 ? 'text-red-600' : favour > 0 ? 'text-green-700' : 'text-gray-700'}`}>
+        {owes > 0 ? kes(owes) : favour > 0 ? kes(favour) : 'Nil'}
+      </p>
+    </div>
   );
 }
 

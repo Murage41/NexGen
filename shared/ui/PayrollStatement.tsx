@@ -1,154 +1,10 @@
-import { newOperationKey } from './operationKey';
-import { useRef, useState } from 'react';
-import { ApproverFields, useApprover } from './ApproverConfirm';
 import { Link } from 'react-router-dom';
 
 export const kes = (value: any) =>
   `KES ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const field =
-  'w-full border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-900';
-
-export function RecoveryEditor({
-  preview,
-  saved,
-  onSave,
-  onDirty,
-  approval,
-  label = 'Save recovery decision',
-  savedMessage = 'Recovery decision saved. It takes effect when compensation is approved.',
-}: any) {
-  const [amount, setAmount] = useState(
-    String(
-      saved?.version === preview.version ? saved.amount : preview.proposed,
-    ),
-  );
-  const approver = useApprover(approval);
-  const [confirmedBy, setConfirmedBy] = useState('');
-  const [busy, setBusy] = useState(false);
-  const operationKey = useRef(newOperationKey());
-  const [error, setError] = useState('');
-  async function save() {
-    setBusy(true);
-    setError('');
-    try {
-      const approved = await approver.confirm('recovery', {
-        version: preview.version,
-        amount: Number(amount),
-      });
-      await onSave(
-        {
-          version: preview.version,
-          amount: Number(amount),
-          ...(approved.approval_token
-            ? { approval_token: approved.approval_token }
-            : {}),
-        },
-        operationKey.current,
-      );
-      setConfirmedBy(approved.name || '');
-      operationKey.current = newOperationKey();
-    } catch (e: any) {
-      setError(
-        e.response?.data?.error || e.message || 'Recovery could not be saved.',
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-  const valid =
-    amount !== '' &&
-    Number(amount) >= 0 &&
-    Number(amount) <= preview.proposed &&
-    approver.ready;
-  const approvedBy = saved?.approved_by_name || confirmedBy;
-  return (
-    <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3 print:hidden">
-      <p className="font-semibold text-gray-900">Review debt recovery</p>
-      <p className="text-sm">
-        Outstanding {kes(preview.outstanding)}
-        {preview.shortage > 0 && (
-          <span className="text-gray-600">
-            {' '}— including {kes(preview.shortage)} short on this shift
-          </span>
-        )}
-      </p>
-      <p className="text-sm text-gray-600">
-        Settles oldest debt first. Proposed: {kes(preview.proposed)}.
-        {preview.limit_percent < 100
-          ? ` Capped at ${preview.limit_percent}% of ${preview.gross != null ? 'what is owed' : 'available compensation'}.`
-          : ''}
-      </p>
-      {preview.available === 0 && (
-        <p className="text-sm text-amber-800">
-          No further recovery is available against this period right now.
-        </p>
-      )}
-      <div className="space-y-1 text-sm">
-        {preview.debts
-          ?.filter((d: any) => Number(d.balance) > 0)
-          .map((d: any) => (
-            <div key={d.id} className="flex justify-between gap-3">
-              <span>
-                Shift #{d.shift_id} ·{' '}
-                {String(d.created_at || 'Current shift').slice(0, 10)} ·{' '}
-                {d.recovery_status || 'confirmed'}
-              </span>
-              <span>{kes(d.balance)}</span>
-            </div>
-          ))}
-      </div>
-      <label className="block text-sm">
-        Recover now (KES)
-        <input
-          className={field}
-          type="number"
-          min="0"
-          max={preview.proposed}
-          step="0.01"
-          value={amount}
-          onChange={(e) => { setAmount(e.target.value); onDirty?.(); }}
-        />
-      </label>
-      <ApproverFields
-        state={approver}
-        inputClassName={field}
-        onApproverChange={() => onDirty?.()}
-      />
-      {preview.gross != null && (
-        <p className="text-sm text-gray-600">
-          This shift's earnings: {kes(preview.gross)}, paid in full. Anything
-          recovered here is cash handed back separately — it never reduces the
-          wage or changes this shift's variance.
-        </p>
-      )}
-      <p className="text-sm">
-        Remaining debt:{' '}
-        {kes(Math.max(0, preview.outstanding - Number(amount || 0)))}
-      </p>
-      {saved?.version === preview.version && Number(amount) === Number(saved.amount) && (
-        <p className="text-sm text-green-800">
-          {savedMessage}
-          {approvedBy ? ` Approved by ${approvedBy}.` : ''}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="text-sm text-red-700">
-          {error}
-        </p>
-      )}
-      <button
-        type="button"
-        disabled={busy || !valid}
-        onClick={save}
-        className="bg-blue-700 text-white rounded-lg px-4 py-2 disabled:opacity-50"
-      >
-        {busy ? 'Saving…' : label}
-      </button>
-    </section>
-  );
-}
-
-export function PayrollStatement({ line, run, onRecovery, approval }: any) {
+// Pay is never reduced for variances: employees repay them separately
+// (Employees, Variances). Recovery decisions saved before that show as history.
+export function PayrollStatement({ line, run }: any) {
   const provisional = run.status === 'calculated';
   return (
     <section className="space-y-4 text-gray-800">
@@ -241,15 +97,6 @@ export function PayrollStatement({ line, run, onRecovery, approval }: any) {
         Payment allocations show which earnings a payment settles. Payment dates
         below show when money was recorded as paid.
       </p>
-      {provisional && onRecovery && line.recovery && (
-        <RecoveryEditor
-          key={line.recovery.version}
-          preview={line.recovery}
-          saved={line.recovery_review}
-          onSave={onRecovery}
-          approval={approval}
-        />
-      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <p className="font-semibold mb-2">Deductions and debt origins</p>

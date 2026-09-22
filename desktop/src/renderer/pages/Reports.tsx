@@ -263,7 +263,7 @@ export default function Reports() {
                     {dailyData.unrecovered_losses > 0 && (
                       <div className="mx-4 mt-3 p-2 bg-amber-50 rounded border border-amber-200">
                         <p className="text-xs text-amber-700 font-medium">
-                          Unrecovered losses: {kes(dailyData.unrecovered_losses)} (outstanding staff debts)
+                          Unrecovered losses: {kes(dailyData.unrecovered_losses)} (shortages attendants still owe)
                         </p>
                       </div>
                     )}
@@ -549,8 +549,25 @@ export default function Reports() {
                     {monthlyData.unrecovered_losses > 0 && (
                       <div className="mx-4 mt-3 p-2 bg-amber-50 rounded border border-amber-200">
                         <p className="text-xs text-amber-700 font-medium">
-                          Unrecovered staff deficits: {kes(monthlyData.unrecovered_losses)}
+                          Shortages attendants still owe: {kes(monthlyData.unrecovered_losses)}
                         </p>
+                      </div>
+                    )}
+                    {monthlyData.attendant_variances && (
+                      <div className="border-t border-gray-200 mt-3 pt-1">
+                        <p className="px-4 pt-2 text-xs font-semibold uppercase text-gray-500">Attendant variances (repaid separately, not from pay)</p>
+                        <PnLRow label="Shortages" value={monthlyData.attendant_variances.shortages} indent color="text-red-600" />
+                        <PnLRow label="Surpluses" value={monthlyData.attendant_variances.surpluses} indent color="text-green-700" />
+                        {Number(monthlyData.attendant_variances.corrections || 0) !== 0 && (
+                          <PnLRow label="Changed by corrections" value={monthlyData.attendant_variances.corrections} indent />
+                        )}
+                        <PnLRow label="Repaid by attendants" value={monthlyData.attendant_variances.repaid} indent />
+                        <PnLRow label="Written off (station loss)" value={monthlyData.attendant_variances.waived} indent color="text-red-600" />
+                        <PnLRow label="Surplus kept by the station" value={monthlyData.attendant_variances.kept_by_station} indent color="text-green-700" />
+                        {Number(monthlyData.attendant_variances.refunded || 0) > 0 && (
+                          <PnLRow label="Paid back to attendants" value={monthlyData.attendant_variances.refunded} indent />
+                        )}
+                        <PnLRow label="Owed by attendants at month end" value={monthlyData.attendant_variances.owed_at_end} bold border />
                       </div>
                     )}
                   </div>
@@ -1022,7 +1039,7 @@ export default function Reports() {
                     <PnLRow label="Shift Expenses" value={cfData.outflows.shift_expenses} color="text-red-600" />
                     <PnLRow label="General Expenses" value={cfData.outflows.general_expenses} color="text-red-600" />
                     {Number(cfData.outflows.employee_refunds || 0) > 0 && (
-                      <PnLRow label="Refunds to Employees" value={cfData.outflows.employee_refunds} color="text-red-600" />
+                      <PnLRow label="Paid back to Employees" value={cfData.outflows.employee_refunds} color="text-red-600" />
                     )}
                     {Number(cfData.outflows.customer_refunds || 0) > 0 && (
                       <PnLRow label="Refunds to Customers" value={cfData.outflows.customer_refunds} color="text-red-600" />

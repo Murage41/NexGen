@@ -1,39 +1,5 @@
 import type { Knex } from 'knex';
-import { money, recoveryPreview, employeeDebtSummary } from './employeeDebt';
-
-export async function payrollRecoveryPreview(
-  lineId: number,
-  db: Knex | Knex.Transaction,
-) {
-  const line = await db('payroll_lines').where({ id: lineId }).first();
-  const deductions = await db('payroll_deductions')
-    .where({ payroll_line_id: lineId })
-    .whereNot({ status: 'reversed' });
-  const payments = await db('payroll_payments').where({
-    payroll_line_id: lineId,
-    status: 'posted',
-  });
-  const other = money(
-    deductions
-      .filter(
-        (d) => !(d.deduction_type === 'staff_debt' && d.status === 'draft'),
-      )
-      .reduce((s, d) => s + Number(d.amount), 0),
-  );
-  const paid = money(payments.reduce((s, p) => s + Number(p.amount), 0));
-  return recoveryPreview(
-    Number(line.employee_id),
-    money(Number(line.gross_earnings) - other - paid),
-    db,
-    {
-      line: line.id,
-      other: deductions
-        .filter((d) => d.deduction_type !== 'staff_debt')
-        .map((d) => [d.id, d.amount, d.status]),
-      payments: payments.map((p) => [p.id, p.amount]),
-    },
-  );
-}
+import { money } from './employeeDebt';
 
 // Allocations describe how a recorded payment/offset settles earnings, not cash handed over on each source shift.
 export async function allocatePayrollSettlements(
@@ -222,7 +188,7 @@ export async function enrichPayrollLine(
       Number(a.shift_id || 0) - Number(b.shift_id || 0),
   );
   line.shift_count = line.shift_details.filter((r: any) => r.shift_id).length;
-  line.recovery = await payrollRecoveryPreview(line.id, db);
+  // Payroll no longer recovers debt; a decision saved before is history only.
   line.recovery_review = line.recovery_review
     ? JSON.parse(line.recovery_review)
     : null;

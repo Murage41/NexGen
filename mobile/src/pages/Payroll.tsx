@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { PayrollStatement } from '../../../shared/ui/PayrollStatement';
-import { savePayrollRecovery, createPayrollSupplement, createOperationKey } from '../services/api';
+import { createPayrollSupplement, createOperationKey } from '../services/api';
 import { useEffect, useState } from 'react';
 import { BadgeCheck, Calculator, CircleDollarSign, WalletCards, X } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
@@ -290,7 +290,7 @@ export default function Payroll() {
                   <Metric label="Due" value={kes(payrollLine.balance_due)} small />
                 </div>
                 <Link to={`/employee-pay/${payrollLine.employee_id}`} className="text-blue-700 underline text-sm inline-block mt-3">Full pay and debt statement</Link>
-                <details className="mt-3" open={run.status === 'calculated'}><summary className="font-medium cursor-pointer py-2">Shifts, rates and recovery</summary><PayrollStatement line={payrollLine} run={run} onRecovery={async (value: any, key: string) => { await savePayrollRecovery(run.id, payrollLine.id, value, key); const response = await getPayrollRun(run.id); setRun(response.data.data); }} /></details>
+                <details className="mt-3" open={run.status === 'calculated'}><summary className="font-medium cursor-pointer py-2">Shifts and rates</summary><PayrollStatement line={payrollLine} run={run} /></details>
                 {['approved', 'partially_paid'].includes(run.status) && Number(payrollLine.balance_due) > 0 && (
                   <button onClick={() => openPayment(payrollLine)}
                     className="w-full mt-3 border border-blue-200 text-blue-700 py-2 rounded-xl text-sm font-medium flex justify-center items-center gap-2">

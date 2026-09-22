@@ -1,17 +1,15 @@
+import { Link } from 'react-router-dom';
 import { useState, useEffect, Fragment } from 'react';
 import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, desktopApproval } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 import { CustomerCreditPanel } from '../../../../shared/ui/CustomerCredit';
 import { Users, X, Banknote, Trash2, ChevronDown, ChevronUp, Search, Plus, Pencil } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
-import EmployeeDebtHistory from '../components/EmployeeDebtHistory';
 
-type FilterTab = 'all' | 'customer' | 'employee';
 
 export default function CreditAccounts() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<FilterTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedAccount, setExpandedAccount] = useState<any>(null);
@@ -39,7 +37,8 @@ export default function CreditAccounts() {
       // Only load money-mode and legacy accounts — invoice-mode customers
       // are managed exclusively from the Customer Invoices page so the two
       // workflows never bleed into each other.
-      const res = await getCreditAccounts({ billing_mode: 'money' });
+      // Customers only: employees' variances are kept under Employees.
+      const res = await getCreditAccounts({ billing_mode: 'money', type: 'customer' });
       setAccounts(res.data.data || res.data);
     } catch (err) {
       console.error('Failed to load credit accounts:', err);
@@ -134,8 +133,6 @@ export default function CreditAccounts() {
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
 
   const filtered = accounts.filter(a => {
-    if (filter === 'customer' && a.type !== 'customer') return false;
-    if (filter === 'employee' && a.type !== 'employee') return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return a.name?.toLowerCase().includes(q) || a.phone?.toLowerCase().includes(q);
@@ -145,7 +142,6 @@ export default function CreditAccounts() {
 
   const totalOutstanding = accounts.reduce((s: number, a: any) => s + (parseFloat(a.outstanding_balance) || 0), 0);
   const customerCount = accounts.filter(a => a.type === 'customer').length;
-  const employeeCount = accounts.filter(a => a.type === 'employee').length;
 
   function typeBadge(type: string) {
     if (type === 'employee') {
@@ -196,7 +192,7 @@ export default function CreditAccounts() {
         </button>
       </div>
       <p className="text-sm text-gray-500 mb-6">
-        Money-mode customers and employees. Invoice-mode customers (Diwafa, Mugendi Kamuwongo) are managed from the Customer Invoices page.
+        Money-mode customers. Invoice-mode customers are managed from Customer Invoices, and employees' variances under Employees.
       </p>
       {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
@@ -212,27 +208,15 @@ export default function CreditAccounts() {
           <p className="text-xs text-gray-500 uppercase font-semibold">Customer Accounts</p>
           <p className="text-2xl font-bold mt-1 text-blue-600">{customerCount}</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-xs text-gray-500 uppercase font-semibold">Employee Accounts</p>
-          <p className="text-2xl font-bold mt-1 text-orange-600">{employeeCount}</p>
-        </div>
+        <Link to="/employees" className="bg-white rounded-lg shadow p-4 hover:bg-gray-50">
+          <p className="text-xs text-gray-500 uppercase font-semibold">Employee variances</p>
+          <p className="text-sm mt-2 text-blue-700 underline">Kept under Employees</p>
+        </Link>
       </div>
 
       {/* Filter Tabs + Search */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-          {([['all', 'All'], ['customer', 'Customers'], ['employee', 'Employees']] as [FilterTab, string][]).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setFilter(key)}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
-                filter === key ? 'bg-white shadow text-gray-800' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <div />
         <div className="relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
@@ -327,7 +311,6 @@ export default function CreditAccounts() {
                           <p className="text-gray-400 text-sm">Loading details...</p>
                         ) : expandedAccount ? (
                           <div className="space-y-4">
-                            {expandedAccount.type === 'employee' && <EmployeeDebtHistory account={expandedAccount} />}
                             {expandedAccount.type === 'customer' && <CreditLimitDetails account={expandedAccount} />}
                             {expandedAccount.type === 'customer' && (
                               <CustomerCreditPanel

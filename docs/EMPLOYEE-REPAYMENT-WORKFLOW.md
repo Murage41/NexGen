@@ -1,78 +1,15 @@
 # Employee repayments and detailed pay statements
 
-This release applies one debt-recovery process to daily, weekly, fortnightly
-(`biweekly`) and monthly plans. It supports per-shift wages, periodic salary,
-sales commission, litre commission and combinations.
+Since update #7 (22 Sep 2026) employees are paid their full compensation on
+every plan, and shift close and payroll no longer recover debt. Shortages are
+kept as the attendant's variances and repaid separately: see
+[Attendant Variances](ATTENDANT-VARIANCES.md) for closing a shift, recording a
+repayment (directly or into an open shift's drawer), writing off, and paying an
+employee back.
 
-## Daily shift close
-
-1. Check the readings, collections and expenses.
-2. Enter **cash actually paid** to the employee. This is money removed from the
-   drawer, not the gross wage or the amount you intended to pay.
-3. Review the proposed recovery. It covers the employee's older confirmed debt
-   and any shortage on this shift, oldest first, within their recovery limit.
-4. Enter the amount being repaid now. Reducing or deferring it needs no reason.
-   On the desktop, choose the approving administrator and enter their PIN; on
-   mobile, the signed-in administrator is the approver. Confirm recovery, then
-   close the shift. Explain a shortage or surplus in the shift notes if it helps;
-   no separate variance reason is required.
-
-The close records this shift's shortage and the repayment together, attributed
-to the approver. A repayment is cash the employee hands back separately: it
-never reduces the wage paid and never changes the shift's variance. Confirming
-a preview alone does not reduce debt. Unpaid compensation remains available for
-payroll.
-
-Example: an employee owes KES 300 from an earlier shift and is KES 120 short
-tonight, so the proposal is KES 420. If they hand back KES 250, the close
-records the KES 120 shortage, applies the KES 250 to the oldest debt first and
-leaves KES 170 owing. Their wage and tonight's variance are unchanged.
-
-## Weekly, fortnightly and monthly payroll
-
-1. Calculate the completed payroll period.
-2. Expand each employee's **Shifts, rates and recovery** section.
-3. Check every included shift, the historical plan version and component amounts.
-4. Review debt recovery. The proposal pays confirmed debts oldest first and is
-   limited by unpaid compensation, other deductions and the employee's recovery
-   limit. Enter the amount to recover; reducing or deferring the proposal needs
-   no reason. On the desktop, choose the approving administrator and enter their
-   PIN, then save the decision.
-5. Approve payroll. This posts the approved debt offset; the remaining net wages
-   can then be paid in one or more installments.
-
-If another receipt, deduction or recovery changed the balance after review,
-approval requires a refreshed decision. Neither calculation nor saving a draft
-decision changes the debt balance. Cash already paid and prior shift deductions
-are recognized once.
-
-The recovery percentage is a configurable operational limit, initially 100% of
-available unpaid compensation. It does not establish authorization to deduct.
-Use the agreed limit for the employee concerned. Pending and disputed debts are
-excluded from recovery until reviewed and confirmed.
-
-## Separate repayments
-
-From payroll, open the employee's full pay and debt statement. Administrators
-can record a cash, M-Pesa or bank repayment with a date and receipt reference.
-This clears debt without deducting wages again.
-
-For cash or M-Pesa received in an open drawer shift, specify that shift and use
-its work date. Include the money in recorded drawer collections. NexGen counts
-it as debt receipts, separately from fuel sales. A receipt without a shift is a
-direct receipt and is included in cash reporting once.
-
-Use **Reverse** with a reason to correct an erroneous receipt. A receipt taken
-in a shift that is still open can also be removed from that shift's **Debt
-Collections** list by an administrator; it is reversed and kept on record the
-same way. A receipt on a closed shift is corrected from the shift with the
-pencil next to it, since changing it changes an already reconciled drawer; see
-[Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md). A correction that
-reduces a shortage the employee already repaid shows the repaid part under
-**Owed back after corrections** on their statement, to be paid to them or set
-off against what they owe. Reversing a wage payment does not
-reverse a debt offset; voiding payroll restores its debt allocations after
-ordinary payroll payments have been reversed.
+A repayment taken on a closed shift is corrected from the shift with the pencil
+next to it, since changing it changes an already reconciled drawer; see
+[Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
 
 ## What employees and administrators can see
 
@@ -86,8 +23,9 @@ employee statement from payroll. Both see:
 - Each payment's date, method, reference and drawer where applicable.
 - The earnings covered by new payroll payments and deductions, including
   partial settlements and remaining amounts.
-- Debt-origin shifts, recoveries, separate repayment receipts, review changes
-  and remaining balances.
+- Their variances: every shift's over or short, what recovered it, repayments,
+  write-offs and pay-backs, and the staff-debt records from before variances
+  started under Earlier records.
 - Earnings not yet in payroll, including recorded shift cash and deductions.
 
 **Print statement** prints the current statement. Employees cannot change pay,
@@ -165,9 +103,9 @@ and prepare a reconciled corrective update instead of restoring over them.
 
 ## Verification
 
-`test:employee-settlement` covers explicit review, prior payments, stale
-balances, partial and excess recoveries, all schedules, hybrid components,
-prorated capped salary, supplemental shifts, prior daily deductions, separate
-receipts and reversals, employee privacy, concurrent requests, transaction
-rollback and verified backups. Run it together with the existing payroll,
-compensation, shift debt, cancellation and receivable accounting suites.
+`test:employee-settlement` covers full pay on every schedule, hybrid
+components, prorated capped salary, supplemental shifts, repayments and
+reversals, employee privacy, concurrent requests, transaction rollback and
+verified backups; `test:employee-variances` covers netting and the carry-over of
+old staff debt. Run them together with the existing payroll, compensation,
+shift, cancellation and receivable accounting suites.

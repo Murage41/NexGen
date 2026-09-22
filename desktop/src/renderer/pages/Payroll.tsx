@@ -2,7 +2,7 @@ import { ReasonDialog } from '../../../../shared/ui/ReasonDialog';
 import { Link } from 'react-router-dom';
 import { PayrollStatement } from '../../../../shared/ui/PayrollStatement';
 import { ApproverFields, useApprover } from '../../../../shared/ui/ApproverConfirm';
-import { savePayrollRecovery, createPayrollSupplement, createOperationKey, desktopApproval } from '../services/api';
+import { createPayrollSupplement, createOperationKey, desktopApproval } from '../services/api';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   BadgeCheck,
@@ -424,7 +424,7 @@ export default function Payroll() {
                     <tr className={`border-t border-gray-100 ${selectedLine?.id === line.id ? 'bg-blue-50' : ''}`}>
                       <td className="p-3">
                         <button onClick={() => setSelectedLine(selectedLine?.id === line.id ? null : line)}
-                          className="font-medium text-gray-900 hover:text-blue-700">{line.employee_name}</button><p className="text-xs text-gray-500 mt-1">{line.shift_count} shifts · debt {kes(line.recovery?.outstanding)}</p><Link to={`/employee-pay/${line.employee_id}`} className="text-xs text-blue-700 underline">Full statement</Link>
+                          className="font-medium text-gray-900 hover:text-blue-700">{line.employee_name}</button><p className="text-xs text-gray-500 mt-1">{line.shift_count} shifts</p><Link to={`/employee-pay/${line.employee_id}`} className="text-xs text-blue-700 underline">Full statement</Link>
                       </td>
                       <td className="p-3 text-right tabular-nums">{kes(line.gross_earnings)}</td>
                       <td className="p-3 text-right tabular-nums">{kes(line.total_deductions)}</td>
@@ -445,7 +445,7 @@ export default function Payroll() {
                     {selectedLine?.id === line.id && (
                       <tr key={`${line.id}-details`} className="bg-gray-50 border-t border-gray-100">
                         <td colSpan={7} className="p-4">
-                          <PayrollStatement line={line} run={selectedRun} approval={desktopApproval} onRecovery={async (value: any, key: string) => { await savePayrollRecovery(selectedRun.id, line.id, value, key); const response = await getPayrollRun(selectedRun.id); setSelectedRun(response.data.data); }} />
+                          <PayrollStatement line={line} run={selectedRun} />
                               <LineDetails line={line} run={selectedRun} removeDeduction={removeDeduction} reversePayment={reversePayment} />
                         </td>
                       </tr>

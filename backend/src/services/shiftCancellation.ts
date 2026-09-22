@@ -1,6 +1,7 @@
 import type { Knex } from 'knex';
 import db from '../database';
 import { reverseEmployeeDebtReceipt } from './employeePay';
+import { chargeLegacyReversal } from './employeeVariances';
 import { recomputeAccountBalance } from './accountBalance';
 import { refreshPayrollLine, refreshPayrollRun } from './payroll';
 import { applyCustomerCredit, reverseMoneyAccountPaymentInTransaction } from './receivablePayments';
@@ -51,13 +52,18 @@ async function restoreStaffDebtAllocations(
     .whereNull('reversed_at')
     .orderBy('id', 'desc');
 
+  // Old wage recoveries (before variances started) are inside the carried-over
+  // balances: undoing one is owed again as a variance entry. The old debt
+  // records stay as they were.
   for (const allocation of allocations) {
     const debt = await trx('staff_debts').where({ id: allocation.staff_debt_id }).first();
     if (!debt) throw httpError('A staff debt allocation is missing its debt record.', 409);
-    const restored = Number(debt.balance || 0) + Number(allocation.amount || 0);
-    await trx('staff_debts').where({ id: debt.id }).update({
-      balance: restored,
-      status: 'outstanding',
+    await chargeLegacyReversal(trx, {
+      employeeId: Number(debt.employee_id),
+      amount: Number(allocation.amount || 0),
+      reason: `Shift #${shiftId} cancelled: its wage recovery is owed again`,
+      shiftId: Number(debt.shift_id),
+      source: `shift_staff_debt_allocations:${allocation.id}`,
     });
   }
 
@@ -68,17 +74,6 @@ async function restoreStaffDebtAllocations(
       .update({ reversed_at: reversedAt });
   }
   return allocations.length;
-}
-
-async function refreshEmployeeDebtAccount(trx: Knex.Transaction, employeeId: number) {
-  const total = await trx('staff_debts')
-    .where({ employee_id: employeeId, status: 'outstanding' })
-    .sum('balance as total')
-    .first();
-  await trx('credit_accounts')
-    .where({ employee_id: employeeId, type: 'employee' })
-    .whereNull('deleted_at')
-    .update({ balance: Number(total?.total || 0) });
 }
 
 export async function cancelOpenShift(
@@ -199,7 +194,6 @@ export async function cancelOpenShift(
       .where({ shift_id: shiftId })
       .whereNull('deleted_at')
       .update({ deleted_at: reversedAt });
-    if (debtAllocationCount > 0) await refreshEmployeeDebtAccount(trx, Number(shift.employee_id));
 
     const payrollPayments = await trx('payroll_payments')
       .join('payroll_lines', 'payroll_payments.payroll_line_id', 'payroll_lines.id')

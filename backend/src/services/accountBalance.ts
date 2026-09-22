@@ -1,4 +1,4 @@
-import { syncEmployeeDebt } from './employeeDebt';
+import { getVarianceStatement, syncVarianceAccount } from './employeeVariances';
 import db from '../database';
 import type { Knex } from 'knex';
 
@@ -6,8 +6,8 @@ import type { Knex } from 'knex';
 export async function readAccountBalance(accountId: number, qb: Knex = db): Promise<number> {
   const account = await qb('credit_accounts').where({id: accountId}).first();
   if (account?.type === 'employee') {
-    const row = await qb('staff_debts').where({employee_id: account.employee_id}).sum('balance as total').first();
-    return Math.round(Number(row?.total || 0) * 100) / 100;
+    // What the employee owes on their variances (services/employeeVariances.ts).
+    return (await getVarianceStatement(qb, Number(account.employee_id))).totals.owes;
   }
   if (account?.billing_mode === 'invoice') {
     const row = await qb('customer_invoices').where({account_id: accountId}).whereNull('deleted_at').whereIn('status', ['issued', 'partial']).sum('balance as total').first();
@@ -49,7 +49,7 @@ export async function recomputeAccountBalance(
 
   // Invoice-mode truth is the sum of each open invoice's remaining balance.
   const acct = await qb('credit_accounts').where({ id: accountId }).first();
-  if (acct?.type === 'employee') return syncEmployeeDebt(Number(acct.employee_id), qb);
+  if (acct?.type === 'employee') return (await syncVarianceAccount(qb, Number(acct.employee_id))).owes;
   const balance = await readAccountBalance(accountId, qb);
 
   const before = await qb('credit_accounts').where({ id: accountId }).first('balance');

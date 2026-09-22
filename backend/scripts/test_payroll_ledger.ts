@@ -1,5 +1,4 @@
 import { up as migrateSettlement } from '../migrations/20260906_043_employee_settlement';
-import { payrollRecoveryPreview } from '../src/services/payrollDetails';
 import assert from 'node:assert/strict';
 import knexFactory from 'knex';
 import { up as migrateCompensation } from '../migrations/20260728_032_employee_compensation_plans';
@@ -165,10 +164,24 @@ async function main() {
       'calculated',
     );
 
-    const [deductionId] = await db('payroll_deductions').insert({
+    // Debt recovery drafted before variances started is refused at approval:
+    // variances are repaid separately, never taken from pay.
+    const [staleDraft] = await db('payroll_deductions').insert({
       payroll_line_id: line.id,
       employee_id: employeeId,
       deduction_type: 'staff_debt',
+      amount: 1000,
+      authorization_reference: 'AUTH-001',
+      status: 'draft',
+    });
+    await assert.rejects(() => approvePayrollRun(runId, null, db), /variances are repaid separately/);
+    await db('payroll_deductions').where({ id: staleDraft }).delete();
+
+    // Other deductions, such as an advance, are still taken at approval.
+    await db('payroll_deductions').insert({
+      payroll_line_id: line.id,
+      employee_id: employeeId,
+      deduction_type: 'advance',
       amount: 1000,
       authorization_reference: 'AUTH-001',
       status: 'draft',
@@ -177,20 +190,14 @@ async function main() {
       await refreshPayrollLine(line.id, trx);
       await refreshPayrollRun(runId, trx);
     });
-    const recovery = await payrollRecoveryPreview(line.id, db);
-    await db('payroll_lines').where({ id: line.id }).update({ recovery_review: JSON.stringify({ version: recovery.version, amount: 1000, authorization_reference: 'AUTH-001', reason: 'Agreed instalment' }) });
     await approvePayrollRun(runId, null, db);
     assert.equal(
       (await db('employee_earnings').where({ component_id: salaryComponentId }).first()).status,
       'approved',
     );
-
-    assert.equal(Number((await db('staff_debts').where({ id: debtId }).first()).balance), 1000);
-    assert.equal(Number((await db('credit_accounts').where({ employee_id: employeeId }).first()).balance), 1000);
-    assert.equal(
-      Number((await db('payroll_debt_allocations').where({ deduction_id: deductionId }).first()).amount),
-      1000,
-    );
+    assert.equal(Number((await db('payroll_lines').where({ id: line.id }).first()).total_deductions), 1000);
+    assert.equal(Number((await db('staff_debts').where({ id: debtId }).first()).balance), 2000, 'payroll never touches staff debt');
+    assert.equal(Number((await db('payroll_debt_allocations').count('* as count').first())?.count || 0), 0);
 
     const [paymentId] = await db('payroll_payments').insert({
       payroll_line_id: line.id,
@@ -219,7 +226,6 @@ async function main() {
     });
     await voidPayrollRun(runId, 'Incorrect period', db);
     assert.equal(Number((await db('staff_debts').where({ id: debtId }).first()).balance), 2000);
-    assert.equal(Number((await db('credit_accounts').where({ employee_id: employeeId }).first()).balance), 2000);
 
     const periodicEarning = await db('employee_earnings')
       .where({ component_id: salaryComponentId, source_type: 'pay_period' })
@@ -236,7 +242,7 @@ async function main() {
     assert.equal(Number(rerunLine.gross_earnings), 16483.87);
 
     console.log('PASS payroll proration, earnings aggregation, and duplicate-period protection');
-    console.log('PASS debt allocation, payment tracking, reversal guard, void, and corrected rerun');
+    console.log('PASS deductions, payment tracking, reversal guard, void, and corrected rerun; debt never taken from pay');
   } finally {
     await db.destroy();
   }

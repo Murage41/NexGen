@@ -20,6 +20,7 @@ import {
   previousBusinessDate,
 } from '../services/receivableReporting';
 import { listShiftCorrections } from '../services/shiftCorrections';
+import { owedOnShifts, varianceActivity, varianceRefundsPaid } from '../services/employeeVariances';
 
 const router = Router();
 
@@ -288,17 +289,9 @@ router.get('/daily', requireAdmin, async (req, res) => {
       marginPerLitre['diesel'] = dieselRevPerLitre - (avgCosts['diesel'] || 0);
     }
 
-    // Unrecovered losses: outstanding staff debts from today's shifts
+    // Unrecovered losses: shortages on today's shifts that attendants still owe.
     const shiftIds = shifts.map((s: any) => s.id);
-    let unrecoveredLosses = 0;
-    if (shiftIds.length > 0) {
-      const debtResult = await db('staff_debts')
-        .whereIn('shift_id', shiftIds)
-        .where('status', 'outstanding')
-        .sum('balance as total')
-        .first();
-      unrecoveredLosses = Number((debtResult as any)?.total) || 0;
-    }
+    const unrecoveredLosses = await owedOnShifts(db, shiftIds);
 
     // Collection rate excludes old-debt receipts and includes invoice retail
     // as an on-account sale for current pump-sales accountability.
@@ -648,15 +641,14 @@ async function computeMonthlyReport(month: string) {
     const closingReceivables = await getReceivablePositionAsOf(db, endDate);
     const receivableActivity = await getReceivableActivity(db, startDate, endDate);
 
-    // Outstanding staff debts for the period
-    const staffDebtResult = await db('staff_debts')
-      .join('shifts', 'staff_debts.shift_id', 'shifts.id')
-      .where('shifts.shift_date', '>=', startDate)
-      .where('shifts.shift_date', '<=', endDate)
-      .where('staff_debts.status', 'outstanding')
-      .sum('staff_debts.balance as total')
-      .first();
-    const unrecoveredLosses = Number((staffDebtResult as any)?.total) || 0;
+    // Shortages on the period's shifts that attendants still owe, and the
+    // period's variance activity (services/employeeVariances.ts).
+    const periodShiftIds = await db('shifts')
+      .where('shift_date', '>=', startDate)
+      .where('shift_date', '<=', endDate)
+      .pluck('id');
+    const unrecoveredLosses = await owedOnShifts(db, periodShiftIds);
+    const attendantVariances = await varianceActivity(db, startDate, endDate);
 
     // Daily breakdown
     const closedShifts = await db('shifts')
@@ -825,6 +817,7 @@ async function computeMonthlyReport(month: string) {
       invoice_receivables_issued: receivableActivity.invoice_receivables_issued,
       invoice_receivable_adjustments: receivableActivity.invoice_adjustments,
       unrecovered_losses: unrecoveredLosses,
+      attendant_variances: attendantVariances,
       // Breakdown
       daily_breakdown: dailyBreakdown,
     };
@@ -1085,15 +1078,17 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     const drawerPayouts = roundMoney(Number(drawerPayroll?.total || 0) + directShiftCash + totalShiftExpenses);
     const totalInflows = roundMoney(recordedInflows + drawerPayouts);
 
-    // Money paid back to employees after a correction reduced a shortage they
-    // had already repaid (services/employeeRefunds.ts). Set-offs move no cash.
+    // Money paid back to employees: repaid money a correction freed
+    // (services/employeeVariances.ts), and refunds settled before variances
+    // started. Set-offs moved no cash.
     const refundRow = await db('staff_debt_adjustments')
       .where({ adjustment_type: 'employee_credit_review', status: 'settled' })
       .whereIn('settlement_method', ['cash', 'mpesa'])
       .whereBetween('settlement_date', [from, to])
       .sum('amount as total')
       .first();
-    const employeeRefunds = roundMoney(Number((refundRow as any)?.total || 0));
+    const varianceRefunds = await varianceRefundsPaid(db, from, to);
+    const employeeRefunds = roundMoney(Number((refundRow as any)?.total || 0) + varianceRefunds.total);
     // Credit on account paid back to customers (receivablePayments.ts).
     const customerRefundRow = await db('customer_refunds')
       .where({ status: 'posted' })

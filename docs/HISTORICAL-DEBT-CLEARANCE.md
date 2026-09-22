@@ -1,5 +1,7 @@
 # Historical employee debt clearance
 
+> **Update #7 (2026-09-22):** employee balances are now kept as variances. These commands refuse to run on a database that has them; write off under Employees, Variances instead.
+
 ## Emma's reviewed historical settlement
 
 The station-specific command contains the reviewed employee name/ID and five debt IDs, originating shifts and balances totalling KES 4,741.52. Run it on the station; do not transfer the development database.

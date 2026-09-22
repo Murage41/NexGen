@@ -240,7 +240,7 @@ export default function Reports() {
               <p className="text-sm text-amber-700 font-medium">
                 Unrecovered losses: {kes(report.unrecovered_losses)}
               </p>
-              <p className="text-xs text-amber-600 mt-0.5">Outstanding staff debts not yet deducted</p>
+              <p className="text-xs text-amber-600 mt-0.5">Shortages attendants still owe (repaid separately)</p>
             </div>
           )}
 

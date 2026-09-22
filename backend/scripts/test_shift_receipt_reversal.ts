@@ -17,7 +17,7 @@ async function main() {
   const auth = await import('../src/middleware/requireAdmin');
   const { getKenyaDate } = await import('../src/utils/timezone');
   const { recordEmployeeDebtReceipt } = await import('../src/services/employeePay');
-  const { employeeDebtSummary, syncEmployeeDebt } = await import('../src/services/employeeDebt');
+  const { getVarianceStatement, postShiftVariance } = await import('../src/services/employeeVariances');
   const { default: shiftsRouter } = await import('../src/routes/shifts');
   const { default: creditAccountsRouter } = await import('../src/routes/creditAccounts');
 
@@ -97,20 +97,19 @@ async function main() {
     assert.equal(await cached(), 0);
     console.log('PASS the correct payment can be recorded afterwards');
 
-    // ---- Employee debt collected on the shift ----
+    // ---- A variance repayment taken into the drawer ----
     const [debtShift] = await db('shifts').insert({ employee_id: attendant, shift_date: '2026-09-02', start_time: '2026-09-02T06:00:00Z', status: 'closed' });
-    await db('staff_debts').insert({ employee_id: attendant, shift_id: debtShift, original_deficit: 400, carried_forward: 400, balance: 400, status: 'outstanding', recovery_status: 'confirmed' });
-    await db.transaction((trx) => syncEmployeeDebt(attendant, trx));
+    await db.transaction((trx) => postShiftVariance(trx, { id: debtShift, employee_id: attendant, shift_date: '2026-09-02' }, -400, null));
     const staffReceipt = await db.transaction((trx) =>
       recordEmployeeDebtReceipt(attendant, { amount: 250, payment_method: 'cash', date: today, reference: 'R-1', shift_id: open }, null, trx),
     );
-    assert.equal((await employeeDebtSummary(attendant, db)).outstanding, 150);
+    assert.equal((await getVarianceStatement(db, attendant)).totals.owes, 150);
     const staffRemoved = await call('POST', `/shifts/${open}/credit-receipts/${staffReceipt.id}/reverse`, desktop);
     assert.equal(staffRemoved.status, 200, JSON.stringify(staffRemoved.body));
-    assert.equal((await employeeDebtSummary(attendant, db)).outstanding, 400, 'the employee owes it again');
-    const mirror = await db('credit_accounts').where({ employee_id: attendant, type: 'employee' }).first();
-    assert.equal(Number(mirror.balance), 400, 'and the Credits page copy agrees');
-    console.log('PASS an employee debt payment is reversed the same way, and the Credits page copy stays in step');
+    assert.equal((await getVarianceStatement(db, attendant)).totals.owes, 400, 'the employee owes it again');
+    const entry = await db('employee_variance_entries').where({ payment_id: staffReceipt.id }).first();
+    assert.equal(entry.status, 'reversed', 'the repayment stays on record, marked reversed');
+    console.log('PASS a variance repayment taken into the drawer is reversed the same way');
 
     // ---- Closed shifts keep their reconciled drawer ----
     await db('shifts').where({ id: open }).update({ status: 'closed' });

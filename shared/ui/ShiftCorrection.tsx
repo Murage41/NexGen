@@ -91,8 +91,36 @@ function AccountChange({ account }: { account: any }) {
   return (
     <>
       {label}: {kes(account.owed_before)} → <strong>{kes(account.owed_after)}</strong>
+      {account.measure === 'employee_variance' && Number(account.credit_after) !== Number(account.credit_before) && (
+        <> (can be paid back to them: {kes(account.credit_before)} → <strong>{kes(account.credit_after)}</strong>)</>
+      )}
     </>
   );
+}
+
+// What a correction did to the attendant's variances (Employees, Variances).
+// Corrections recorded before variances started carry the old debt fields.
+function attendantLines(attendant: any): string[] {
+  if (!attendant) return [];
+  const name = attendant.name;
+  if ('owes_before' in attendant) {
+    const lines: string[] = [];
+    const before = Number(attendant.owes_before || 0);
+    const after = Number(attendant.owes_after || 0);
+    if (before !== after) {
+      lines.push(`${name} owes ${kes(before)} → ${kes(after)}${after > before ? ': that money should have been in the drawer.' : '.'}`);
+    }
+    const freed = Number(attendant.refundable_after || 0) - Number(attendant.refundable_before || 0);
+    if (freed > 0) lines.push(`${kes(freed)} that ${name} already repaid can be paid back to them from their Variances.`);
+    const surplus = Number(attendant.surplus_after || 0) - Number(attendant.surplus_before || 0);
+    if (surplus !== 0) lines.push(`${name}'s surplus this month changes by ${kes(surplus)}.`);
+    return lines;
+  }
+  return [
+    attendant.debt_added > 0 ? `${name} charged ${kes(attendant.debt_added)}.` : '',
+    attendant.debt_reduced > 0 ? `${name}'s shortage reduced by ${kes(attendant.debt_reduced)}.` : '',
+    attendant.refund_owed > 0 ? `${kes(attendant.refund_owed)} owed back to ${name}.` : '',
+  ].filter(Boolean);
 }
 
 // A shift's variance in words: below zero the drawer was short.
@@ -210,7 +238,7 @@ export function ShiftCorrectionForm({
   }
 
   const attendant = preview?.attendant;
-  const shortageMoved = attendant && (attendant.debt_added || attendant.debt_reduced || attendant.refund_owed || attendant.not_refunded);
+  const attendantEffect = attendantLines(attendant);
 
   return (
     <div className="space-y-4 text-sm">
@@ -338,21 +366,8 @@ export function ShiftCorrectionForm({
             )}
           </ul>
           <div className="border-t border-blue-200 pt-2 text-blue-900">
-            {!shortageMoved && <p>{attendant?.name}'s shortage does not change.</p>}
-            {attendant?.debt_added > 0 && (
-              <p>{attendant.name} is charged {kes(attendant.debt_added)}: that money should have been in the drawer.</p>
-            )}
-            {attendant?.debt_reduced > 0 && (
-              <p>{attendant.name}'s unpaid shortage is reduced by {kes(attendant.debt_reduced)}.</p>
-            )}
-            {attendant?.refund_owed > 0 && (
-              <p>
-                {kes(attendant.refund_owed)} that {attendant.name} already repaid is owed back to them. Settle it from their pay statement.
-              </p>
-            )}
-            {attendant?.not_refunded > 0 && (
-              <p>{kes(attendant.not_refunded)} of the shortage was never repaid, so nothing is owed back for it.</p>
-            )}
+            {attendantEffect.length === 0 && <p>{attendant?.name}'s variances do not change.</p>}
+            {attendantEffect.map((line) => <p key={line}>{line}</p>)}
           </div>
           <p className="text-xs text-blue-800">
             Dated {preview.posting_date}. The original entry stays on record, marked corrected.
@@ -410,12 +425,8 @@ export function ShiftCorrectionList({ corrections }: { corrections: any[] }) {
               {c.recorded_by_name && c.recorded_by_name !== c.approved_by_name ? ` · recorded by ${c.recorded_by_name}` : ''}
             </p>
             {c.note && <p className="text-xs text-gray-600">Note: {c.note}</p>}
-            {attendant && (attendant.debt_added > 0 || attendant.debt_reduced > 0 || attendant.refund_owed > 0) && (
-              <p className="text-xs text-gray-600">
-                {attendant.debt_added > 0 && `${attendant.name} charged ${kes(attendant.debt_added)}. `}
-                {attendant.debt_reduced > 0 && `${attendant.name}'s shortage reduced by ${kes(attendant.debt_reduced)}. `}
-                {attendant.refund_owed > 0 && `${kes(attendant.refund_owed)} owed back to ${attendant.name}.`}
-              </p>
+            {attendantLines(attendant).length > 0 && (
+              <p className="text-xs text-gray-600">{attendantLines(attendant).join(' ')}</p>
             )}
           </li>
         );

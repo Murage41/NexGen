@@ -11,9 +11,6 @@ export type Approver = { id: number; name: string };
 // be replayed to recover KES 400, or against another shift or payroll line.
 // Both sides must use these functions; never build a binding string elsewhere.
 export const approvalBindings = {
-  // version already hashes the debts snapshot and the shift/payroll-line context.
-  recovery: (fields: any) =>
-    `recovery:${String(fields?.version ?? '')}:${Number(fields?.amount).toFixed(2)}`,
   deduction: (fields: any) =>
     `deduction:${Number(fields?.payroll_line_id)}:${String(fields?.deduction_type ?? '')}:${Number(fields?.amount).toFixed(2)}`,
   // Credit past a customer's limit: this customer, this shift, this amount.
@@ -26,9 +23,13 @@ export const approvalBindings = {
   // figure it changes (services/shiftCorrections.ts).
   shift_correction: (fields: any) =>
     `shift_correction:${String(fields?.confirmation_token ?? '')}`,
-  // Paying back, or setting off, money owed to an employee after a correction.
-  refund_settlement: (fields: any) =>
-    `refund_settlement:${Number(fields?.adjustment_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
+  // Writing off what an attendant owes: this employee, this shift (0 = oldest
+  // first), this amount (services/employeeVariances.ts).
+  variance_waiver: (fields: any) =>
+    `variance_waiver:${Number(fields?.for_employee_id)}:${Number(fields?.shift_id) || 0}:${Number(fields?.amount).toFixed(2)}`,
+  // Paying an employee back money they repaid that covers nothing.
+  variance_refund: (fields: any) =>
+    `variance_refund:${Number(fields?.for_employee_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
   // Paying a customer back credit they hold on account.
   customer_refund: (fields: any) =>
     `customer_refund:${Number(fields?.account_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
@@ -60,9 +61,14 @@ export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): str
     if (!positive(fields?.amount)) return 'The amount being approved is missing.';
     return null;
   }
-  if (purpose === 'refund_settlement') {
-    if (!positive(fields?.adjustment_id)) return 'The refund being settled is missing.';
-    if (!['cash', 'mpesa', 'offset'].includes(String(fields?.method ?? ''))) return 'Choose how the refund is settled.';
+  if (purpose === 'variance_waiver') {
+    if (!positive(fields?.for_employee_id)) return 'The employee is missing.';
+    if (!positive(fields?.amount)) return 'The amount being approved is missing.';
+    return null;
+  }
+  if (purpose === 'variance_refund') {
+    if (!positive(fields?.for_employee_id)) return 'The employee being paid back is missing.';
+    if (!['cash', 'mpesa'].includes(String(fields?.method ?? ''))) return 'Choose how the money is paid back.';
     if (!positive(fields?.amount)) return 'The amount being approved is missing.';
     return null;
   }
@@ -75,9 +81,6 @@ export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): str
   const amount = Number(fields?.amount);
   if (fields?.amount === undefined || fields?.amount === null || !Number.isFinite(amount) || amount < 0) {
     return 'The amount being approved is missing.';
-  }
-  if (purpose === 'recovery' && !/^[0-9a-f]{64}$/.test(String(fields?.version ?? ''))) {
-    return 'The recovery being approved is missing. Refresh and review it again.';
   }
   if (purpose === 'deduction' && (!(Number(fields?.payroll_line_id) > 0) || !fields?.deduction_type)) {
     return 'The deduction being approved is missing its payroll line or type.';
