@@ -102,16 +102,48 @@ Do not record an invoice payment as a normal credit payment. Do not add an
 admin-recorded invoice payment to a shift's cash or M-Pesa expectation unless a
 future approved workflow explicitly links that payment to the shift.
 
-## Correct Consumption
+## Correct Consumption: Credit and Debit Notes
 
 While a shift is open, an unreserved and uninvoiced consumption row can be
-edited or soft-deleted through the normal shift workflow.
+edited or soft-deleted through the normal shift workflow. A closed shift never
+changes, and an issued invoice is final: it is corrected only by a note that
+refers to it (KRA eTIMS works the same way).
 
-A closed shift never changes, so fuel on account recorded on it is not edited.
-Correct it through the invoices: issue the invoice, then a credit note on the
-customer who was charged wrongly and a debit note on the one who took the fuel
-(or a credit note alone if it was never supplied). See
-[Fixing a Mistake on a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
+Invoice customers take fuel on account, so every note is **fuel, litres and a
+price per litre**, never a bare amount. On the invoice, choose **Credit note**
+or **Debit note**, then what was wrong:
+
+- **The litres:** fewer (credit) or more (debit) litres than the invoice says,
+  priced at the invoice's own agreed price for that fuel.
+- **The price per litre:** the same litres at the difference per litre (for
+  example agreed 185, invoiced 190: 5 a litre).
+
+Give the reason and the approving administrator with their PIN (on the phone
+the signed-in administrator approves). Notes are dated the day they are
+posted. Tank stock never changes: the fuel left the pumps either way; a note
+only changes who owes it.
+
+**Credit note (they owe less).** It reduces what the invoice still owes. If the
+invoice is already paid, or the credit is more than what is unpaid, the rest is
+the customer's **credit**: it pays their other open invoices and then their
+next invoice when it is issued. It is never paid out. A credit note can never
+credit more of a fuel than the invoice billed.
+
+**Debit note (they owe more).** It is a **bill of its own** (numbered DN-), due
+and payable like an invoice, and it appears in their invoices, statements and
+aging. From an invoice it refers to that invoice. For a customer with no
+invoice to correct (fuel taken on a shift but recorded on someone else, or
+missed), use **Debit note** on the customer's page and give the shift and the
+price per litre.
+
+**Fuel recorded on the wrong invoice customer:** a credit note on the customer
+charged wrongly and a debit note on the one who took it, each at their own
+agreed price.
+
+**Mistakes on notes.** A note is never edited. Reverse a wrong credit note (any
+credit it gave other invoices comes back off them). Void a wrong debit note
+while it is unpaid; once paid (in money or with the customer's credit), correct
+it with a credit note.
 
 ## Release Acceptance Test
 
@@ -133,10 +165,12 @@ live station records:
 8. Attempt an overpayment and confirm no payment or allocation is created.
 9. Reverse the partial payment and confirm the balances return while both audit
    records remain visible.
-10. Correct an unbilled closed-shift row and confirm preview, reversal,
-    replacement, stock impact, and history.
-11. Attempt to edit invoiced consumption from the shift and confirm rejection.
-12. Filter the customer history by date, shift, fuel, source, and status on
+10. Post a litres credit note on a paid invoice: the customer shows In credit,
+    and the credit pays their next invoice when it is issued.
+11. Post a debit note for a shift on a customer with no invoice: it appears as
+    a DN- bill, due and payable.
+12. Attempt to edit invoiced consumption from the shift and confirm rejection.
+13. Filter the customer history by date, shift, fuel, source, and status on
     both desktop and mobile.
 
 After the test, run the receivable integrity audit:

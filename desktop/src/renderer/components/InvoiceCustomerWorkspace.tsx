@@ -16,6 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import {
+  createStandaloneDebitNote,
+  desktopApproval,
   getCreditAccount,
   getCustomerInvoices,
   getInvoiceCustomerConsumption,
@@ -24,6 +26,7 @@ import {
   updateCreditAccount,
 } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
+import { InvoiceNoteForm } from '../../../../shared/ui/InvoiceNote';
 
 export type InvoiceCustomerWorkspaceCustomer = {
   id: number;
@@ -120,6 +123,8 @@ export default function InvoiceCustomerWorkspace({
   // Full account record: KRA PIN, limits, live limit status, limit approvals.
   const [account, setAccount] = useState<any>(null);
   const [editingCustomer, setEditingCustomer] = useState(false);
+  // A debit note for a shift: fuel recorded on someone else, or missed.
+  const [debitNote, setDebitNote] = useState(false);
   const [savingTerms, setSavingTerms] = useState(false);
   const [reversalPayment, setReversalPayment] = useState<any | null>(null);
   const [reversalForm, setReversalForm] = useState({ reason: '', reversal_date: kenyaToday() });
@@ -331,6 +336,24 @@ export default function InvoiceCustomerWorkspace({
 
   return (
     <div className="fixed inset-0 z-40 bg-gray-100 flex flex-col">
+      {debitNote && (
+        <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Debit note for {customer.name}</h2>
+              <button onClick={() => setDebitNote(false)} className="p-1 text-gray-400 hover:text-gray-700"><X size={19} /></button>
+            </div>
+            <InvoiceNoteForm
+              noteType="debit_note"
+              accountId={customer.id}
+              approval={desktopApproval}
+              post={createStandaloneDebitNote}
+              onDone={async () => { setDebitNote(false); await loadWorkspace(); await onChanged(); }}
+              onCancel={() => setDebitNote(false)}
+            />
+          </div>
+        </div>
+      )}
       {editingCustomer && account && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto space-y-5">
@@ -362,6 +385,9 @@ export default function InvoiceCustomerWorkspace({
                 {account?.kra_pin ? ` · KRA PIN ${account.kra_pin}` : ''}
               </p>
               {account && <CreditLimitSummary account={account} />}
+              {Number(account?.credit_on_account || 0) > 0 && (
+                <p className="text-sm text-green-700">In credit {fmt(account.credit_on_account)}: it pays their next invoice</p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -370,6 +396,9 @@ export default function InvoiceCustomerWorkspace({
             </button>
             <button onClick={() => onReceivePayment(customer.id)} className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700">
               <Wallet size={16} /> Receive Payment
+            </button>
+            <button onClick={() => setDebitNote(true)} className="inline-flex items-center gap-2 px-3 py-2 border border-green-700 text-green-800 text-sm font-medium rounded hover:bg-green-50" title="Fuel from a shift that was recorded on someone else, or missed">
+              Debit note
             </button>
             <button onClick={() => onGenerateInvoice(customer.id)} className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700">
               <FileText size={16} /> Generate Invoice

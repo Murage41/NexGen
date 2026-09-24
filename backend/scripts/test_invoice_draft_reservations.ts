@@ -97,6 +97,18 @@ async function createSchema(db: Knex) {
     table.integer('invoice_id').notNullable();
     table.string('status').notNullable();
     table.decimal('signed_amount', 14, 2).notNullable();
+    // Migration 049: credit notes count on their invoice for the applied part.
+    table.string('note_type').nullable();
+    table.decimal('amount', 14, 2).nullable();
+    table.decimal('applied_amount', 14, 2).nullable();
+    table.decimal('unapplied_amount', 14, 2).notNullable().defaultTo(0);
+  });
+  await db.schema.createTable('invoice_credit_applications', (table) => {
+    table.increments('id').primary();
+    table.integer('note_id').notNullable();
+    table.integer('invoice_id').notNullable();
+    table.decimal('amount', 14, 2).notNullable();
+    table.timestamp('reversed_at').nullable();
   });
 }
 

@@ -19,6 +19,13 @@ export const approvalBindings = {
   // Fuel on account past a limit; the retail value is priced by the server.
   consumption_override: (fields: any) =>
     `consumption_override:${Number(fields?.account_id)}:${Number(fields?.shift_id)}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(3)}`,
+  // An invoice customer's credit or debit note: which customer, which invoice
+  // (0 = none, a debit note for a shift), which kind, fuel, litres and price per
+  // litre (0 = the invoice's own price, a litres correction).
+  invoice_note: (fields: any) =>
+    `invoice_note:${Number(fields?.account_id) || 0}:${Number(fields?.invoice_id) || 0}:${String(fields?.note_type ?? '')}:${String(fields?.correction ?? '')}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(2)}:${(Number(fields?.unit_price) || 0).toFixed(2)}`,
+  // Reversing an invoice customer's credit or debit note.
+  invoice_note_reversal: (fields: any) => `invoice_note_reversal:${Number(fields?.note_id) || 0}`,
   // Paying a customer back credit they hold on account.
   customer_refund: (fields: any) =>
     `customer_refund:${Number(fields?.account_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
@@ -43,6 +50,16 @@ const positive = (value: unknown) => Number.isFinite(Number(value)) && Number(va
 // malformed client fails at the PIN prompt instead of later with "no longer
 // matches".
 export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): string | null {
+  if (purpose === 'invoice_note') {
+    if (!['credit_note', 'debit_note'].includes(String(fields?.note_type ?? ''))) return 'Choose a credit or debit note.';
+    if (!['litres', 'price'].includes(String(fields?.correction ?? ''))) return 'Say what was wrong: the litres or the price.';
+    if (!String(fields?.fuel_type ?? '')) return 'Choose the fuel.';
+    if (!positive(fields?.litres)) return 'The litres being approved are missing.';
+    return null;
+  }
+  if (purpose === 'invoice_note_reversal') {
+    return positive(fields?.note_id) ? null : 'The note being reversed is missing.';
+  }
   if (purpose === 'customer_refund') {
     if (!positive(fields?.account_id)) return 'The customer being refunded is missing.';
     if (!['cash', 'mpesa'].includes(String(fields?.method ?? ''))) return 'Choose how the refund is paid.';

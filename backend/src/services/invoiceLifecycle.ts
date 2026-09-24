@@ -10,7 +10,7 @@ import {
   releaseInvoiceReservation,
   validateDraftReservationForIssue,
 } from './invoiceDraftReservations';
-import { recomputeInvoiceTotals, roundMoney } from './receivablePayments';
+import { applyInvoiceCustomerCredit, recomputeInvoiceTotals, roundMoney } from './receivablePayments';
 
 function httpError(message: string, http: number, code?: string): Error {
   return Object.assign(new Error(message), { http, code });
@@ -80,6 +80,8 @@ export async function issueReservedCustomerInvoice(
       reason: 'Customer invoice issued',
       actorId: input.actorId,
     });
+    // Credit the customer holds (from credit notes) pays the new invoice.
+    await applyInvoiceCustomerCredit(trx, Number(invoice.account_id));
 
     return trx('customer_invoices').where({ id: input.invoiceId }).first();
   });
@@ -123,8 +125,17 @@ export async function voidIssuedCustomerInvoice(
       .whereNull('payment.deleted_at')
       .sum('allocation.amount_applied as total')
       .first();
-    if (Number((paid as any)?.total || 0) > 0) {
-      throw httpError('Cannot void an invoice with allocated payments', 400, 'INVOICE_HAS_PAYMENTS');
+    const credited = await trx('invoice_credit_applications')
+      .where({ invoice_id: input.invoiceId })
+      .whereNull('reversed_at')
+      .sum('amount as total')
+      .first();
+    if (Number((paid as any)?.total || 0) > 0 || Number((credited as any)?.total || 0) > 0) {
+      throw httpError(
+        "This has been paid (in money or with the customer's credit), so it cannot be voided. Issue a credit note instead.",
+        400,
+        'INVOICE_HAS_PAYMENTS',
+      );
     }
 
     const postedNotes = await trx('invoice_adjustment_notes')

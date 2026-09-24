@@ -21,7 +21,9 @@ export type ApprovalPurpose =
   | 'credit_override'
   | 'consumption_override'
   | 'customer_refund'
-  | 'balance_move';
+  | 'balance_move'
+  | 'invoice_note'
+  | 'invoice_note_reversal';
 
 export function useApprover(approval?: ApprovalApi) {
   const [approvers, setApprovers] = useState<{ id: number; name: string }[]>([]);

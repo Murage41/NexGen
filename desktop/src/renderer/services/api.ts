@@ -190,8 +190,11 @@ export const voidCustomerInvoice = (id: number, data: { reason: string }) => api
 export const deleteCustomerInvoiceDraft = (id: number) => api.delete(`/customer-invoices/${id}`);
 export const createCustomerInvoiceAdjustment = (id: number, data: any) =>
   api.post(`/customer-invoices/${id}/adjustments`, data);
-export const reverseCustomerInvoiceAdjustment = (noteId: number, data: { reason: string; reversal_date?: string }) =>
+export const reverseCustomerInvoiceAdjustment = (noteId: number, data: Record<string, unknown>) =>
   api.post(`/customer-invoices/adjustments/${noteId}/reverse`, data);
+// A debit note for a shift, for a customer with no invoice to correct.
+export const createStandaloneDebitNote = (data: Record<string, unknown>) =>
+  api.post('/customer-invoices/debit-notes', data);
 export const getInvoiceAccountingEvents = (params?: any) =>
   api.get('/customer-invoices/accounting-events', { params });
 

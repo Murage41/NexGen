@@ -27,6 +27,7 @@
     "test:receivable-payments": "tsx scripts/test_receivable_payment_integrity.ts",
     "test:invoice-consumption": "tsx scripts/test_invoice_consumption_controls.ts",
     "test:balance-moves": "tsx scripts/test_balance_moves.ts",
+    "test:invoice-notes": "tsx scripts/test_invoice_notes.ts",
     "test:employee-variances": "tsx scripts/test_employee_variances.ts",
     "test:invoice-draft-reservations": "tsx scripts/test_invoice_draft_reservations.ts",
     "test:invoice-accounting": "tsx scripts/test_invoice_accounting_controls.ts",

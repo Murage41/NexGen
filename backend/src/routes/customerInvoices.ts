@@ -17,8 +17,10 @@ import {
 } from '../services/invoiceDraftReservations';
 import {
   postInvoiceAdjustment,
+  postStandaloneDebitNote,
   reverseInvoiceAdjustment,
 } from '../services/invoiceAdjustments';
+import { approvalBindings, resolveApprover } from '../services/approval';
 import {
   issueReservedCustomerInvoice,
   voidIssuedCustomerInvoice,
@@ -206,21 +208,72 @@ router.get('/accounting-events', async (req, res) => {
 
 router.post('/adjustments/:noteId/reverse', requireAdmin, async (req: any, res) => {
   try {
-    const reversalDate = req.body.reversal_date || getKenyaDate();
-    if (reversalDate > getKenyaDate()) {
-      return res.status(400).json({ success: false, error: 'Reversal date cannot be in the future.' });
-    }
+    const noteId = Number(req.params.noteId);
+    const sessionEmployeeId = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
+    await resolveApprover(sessionEmployeeId, req.body?.approval_token, approvalBindings.invoice_note_reversal({ note_id: noteId }), db);
     const result = await reverseInvoiceAdjustment(db, {
-      noteId: Number(req.params.noteId),
-      reversalDate,
+      noteId,
+      // Dated the day it is made, like every correction.
+      reversalDate: getKenyaDate(),
       reason: req.body.reason,
       actorId: req.employee?.id,
     });
     res.json({ success: true, data: result });
   } catch (err: any) {
-    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
+    console.error('[customerInvoices:reverseNote] ERROR', err.message);
+    res.status(err.http || err.httpStatus || paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
   }
 });
+
+// Body: { note_type, correction: 'litres'|'price', fuel_type, litres,
+//         unit_price? (price corrections, and debit notes for a shift),
+//         reason, shift_id?, approval_token? } (services/invoiceAdjustments.ts)
+function noteInput(req: any, approver: any) {
+  return {
+    noteType: req.body?.note_type,
+    correction: req.body?.correction,
+    fuelType: req.body?.fuel_type,
+    litres: Number(req.body?.litres),
+    unitPrice: req.body?.unit_price === undefined || req.body?.unit_price === null ? null : Number(req.body.unit_price),
+    reason: req.body?.reason,
+    shiftId: Number(req.body?.shift_id) > 0 ? Number(req.body.shift_id) : null,
+    noteDate: getKenyaDate(),
+    approver,
+    actorId: req.employee?.id,
+  };
+}
+const noteApproval = (req: any, accountId: number, invoiceId: number | null) => resolveApprover(
+  Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
+  req.body?.approval_token,
+  approvalBindings.invoice_note({
+    account_id: accountId,
+    invoice_id: invoiceId,
+    note_type: req.body?.note_type,
+    correction: req.body?.correction,
+    fuel_type: req.body?.fuel_type,
+    litres: req.body?.litres,
+    unit_price: req.body?.correction === 'litres' && invoiceId ? 0 : req.body?.unit_price,
+  }),
+  db,
+);
+
+// POST /debit-notes - a debit note for a customer with no invoice to correct:
+// fuel taken on a shift but recorded on someone else, or missed.
+// Body: { account_id, fuel_type, litres, unit_price, reason, shift_id, approval_token? }
+router.post('/debit-notes', requireAdmin, async (req: any, res) => {
+  console.log('[customerInvoices:debitNote]', { ...req.body, approval_token: undefined });
+  try {
+    const accountId = Number(req.body?.account_id);
+    req.body = { ...req.body, note_type: 'debit_note', correction: 'litres' };
+    const approver = await noteApproval(req, accountId, null);
+    const bill = await postStandaloneDebitNote(db, { ...noteInput(req, approver), accountId });
+    res.status(201).json({ success: true, data: bill });
+  } catch (err: any) {
+    console.error('[customerInvoices:debitNote] ERROR', err.message);
+    res.status(err.http || err.httpStatus || paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
 
 // GET /:id — full invoice (header + lines + consumption rows)
 router.get('/:id', async (req, res) => {
@@ -262,6 +315,21 @@ router.get('/:id', async (req, res) => {
       .where({ invoice_id: invoice.id })
       .orderBy('posting_date', 'asc')
       .orderBy('id', 'asc');
+    // The customer's credit (from credit notes on other invoices) that paid this.
+    const creditApplied = await db('invoice_credit_applications as c')
+      .join('invoice_adjustment_notes as n', 'c.note_id', 'n.id')
+      .where('c.invoice_id', invoice.id)
+      .whereNull('c.reversed_at')
+      .select('c.id', 'c.amount', 'c.created_at', 'n.note_number', 'n.invoice_id as from_invoice_id')
+      .orderBy('c.id', 'asc');
+    // Debit-note bills that correct this invoice, or the invoice this one corrects.
+    const debitNotes = await db('customer_invoices')
+      .where({ corrects_invoice_id: invoice.id, document_kind: 'debit_note' })
+      .whereNull('deleted_at')
+      .select('id', 'invoice_number', 'issue_date', 'status', 'total_amount', 'balance', 'reason');
+    const corrects = invoice.corrects_invoice_id
+      ? await db('customer_invoices').where({ id: invoice.corrects_invoice_id }).first('id', 'invoice_number')
+      : null;
 
     res.json({
       success: true,
@@ -270,6 +338,9 @@ router.get('/:id', async (req, res) => {
         lines,
         consumption,
         allocations,
+        credit_applied: creditApplied,
+        debit_notes: debitNotes,
+        corrects_invoice: corrects,
         adjustment_notes: adjustmentNotes,
         accounting_events: accountingEvents,
       },
@@ -421,27 +492,20 @@ router.post('/:id/issue', requireAdmin, async (req: any, res) => {
 });
 
 router.post('/:id/adjustments', requireAdmin, async (req: any, res) => {
+  console.log('[customerInvoices:note]', { invoiceId: req.params.id, ...req.body, approval_token: undefined });
   try {
-    const noteDate = req.body.note_date || getKenyaDate();
-    if (noteDate > getKenyaDate()) {
-      return res.status(400).json({ success: false, error: 'Adjustment date cannot be in the future.' });
-    }
-    const result = await postInvoiceAdjustment(db, {
-      invoiceId: Number(req.params.id),
-      noteType: req.body.note_type,
-      noteDate,
-      amount: req.body.amount,
-      fuelType: req.body.fuel_type,
-      litres: req.body.litres,
-      unitPrice: req.body.unit_price,
-      reason: req.body.reason,
-      actorId: req.employee?.id,
-    });
+    const invoiceId = Number(req.params.id);
+    const invoice = await db('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first('account_id');
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
+    const approver = await noteApproval(req, Number(invoice.account_id), invoiceId);
+    const result = await postInvoiceAdjustment(db, { ...noteInput(req, approver), invoiceId });
     res.status(201).json({ success: true, data: result });
   } catch (err: any) {
-    res.status(paymentHttpStatus(err)).json({ success: false, error: err.message });
+    console.error('[customerInvoices:note] ERROR', err.message);
+    res.status(err.http || err.httpStatus || paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
   }
 });
+
 
 // POST /:id/void — issued → void (only if no payments allocated)
 router.post('/:id/void', requireAdmin, async (req: any, res) => {

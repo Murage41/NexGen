@@ -91,6 +91,7 @@ async function createSchema(db: Knex) {
     t.decimal('adjustment_total', 14, 2).notNullable().defaultTo(0);
     t.decimal('balance', 14, 2).notNullable();
     t.timestamp('deleted_at').nullable();
+    t.string('document_kind').notNullable().defaultTo('invoice');
   });
   await db.schema.createTable('invoice_lines', (t) => {
     t.increments('id').primary();
@@ -125,6 +126,18 @@ async function createSchema(db: Knex) {
     t.integer('invoice_id').notNullable();
     t.string('status').notNullable();
     t.decimal('signed_amount', 14, 2).notNullable();
+    // Migration 049: credit notes count on their invoice for the applied part.
+    t.string('note_type').nullable();
+    t.decimal('amount', 14, 2).nullable();
+    t.decimal('applied_amount', 14, 2).nullable();
+    t.decimal('unapplied_amount', 14, 2).notNullable().defaultTo(0);
+  });
+  await db.schema.createTable('invoice_credit_applications', (t) => {
+    t.increments('id').primary();
+    t.integer('note_id').notNullable();
+    t.integer('invoice_id').notNullable();
+    t.decimal('amount', 14, 2).notNullable();
+    t.timestamp('reversed_at').nullable();
   });
   await db.schema.createTable('invoice_accounting_events', (t) => {
     t.increments('id').primary();

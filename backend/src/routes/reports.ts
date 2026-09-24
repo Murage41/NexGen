@@ -815,8 +815,8 @@ async function computeMonthlyReport(month: string) {
       money_balance_adjustments: receivableActivity.money_balance_adjustments,
       balance_moves_station: await stationMoveTotals(db, startDate, endDate),
       // Credit customers held on account (owed to them), after corrections.
-      opening_customer_credits: openingReceivables.money_customer_credits,
-      closing_customer_credits: closingReceivables.money_customer_credits,
+      opening_customer_credits: openingReceivables.money_customer_credits + openingReceivables.invoice_customer_credits,
+      closing_customer_credits: closingReceivables.money_customer_credits + closingReceivables.invoice_customer_credits,
       invoice_receivables_issued: receivableActivity.invoice_receivables_issued,
       invoice_receivable_adjustments: receivableActivity.invoice_adjustments,
       unrecovered_losses: unrecoveredLosses,

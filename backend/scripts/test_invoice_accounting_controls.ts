@@ -67,6 +67,13 @@ async function createSchema(db: Knex) {
     table.text('void_reason').nullable();
     table.timestamp('deleted_at').nullable();
     table.timestamp('created_at').defaultTo(db.fn.now());
+    // Migration 049: debit notes are bills of their own.
+    table.string('document_kind').notNullable().defaultTo('invoice');
+    table.text('reason').nullable();
+    table.integer('shift_id').nullable();
+    table.integer('corrects_invoice_id').nullable();
+    table.integer('approved_by_employee_id').nullable();
+    table.string('approved_by_name').nullable();
   });
   await db.schema.createTable('invoice_lines', (table) => {
     table.increments('id').primary();
@@ -137,6 +144,21 @@ async function createSchema(db: Knex) {
     table.integer('reversed_by_employee_id').nullable();
     table.text('reversal_reason').nullable();
     table.timestamp('created_at').defaultTo(db.fn.now());
+    // Migration 049.
+    table.string('correction').nullable();
+    table.decimal('applied_amount', 14, 2).nullable();
+    table.decimal('unapplied_amount', 14, 2).notNullable().defaultTo(0);
+    table.integer('shift_id').nullable();
+    table.integer('approved_by_employee_id').nullable();
+    table.string('approved_by_name').nullable();
+  });
+  await db.schema.createTable('invoice_credit_applications', (table) => {
+    table.increments('id').primary();
+    table.integer('note_id').notNullable();
+    table.integer('invoice_id').notNullable();
+    table.decimal('amount', 14, 2).notNullable();
+    table.timestamp('created_at').defaultTo(db.fn.now());
+    table.timestamp('reversed_at').nullable();
   });
   await db.schema.createTable('invoice_accounting_events', (table) => {
     table.increments('id').primary();
@@ -239,68 +261,31 @@ async function run() {
     assert.equal(paymentResult.payment.received_into, 'mpesa');
     assert.equal(money(paymentResult.outstanding_balance), 850);
 
-    const credit = await postInvoiceAdjustment(db, {
-      invoiceId,
-      noteType: 'credit_note',
-      noteDate: '2026-07-31',
-      amount: 200,
-      reason: 'Approved customer pricing correction',
-    });
+    // Notes are fuel, litres and a price per litre (services/invoiceAdjustments.ts).
+    const approver = { id: 1, name: 'Test Admin' };
+    const note = (fields: Record<string, unknown>) => postInvoiceAdjustment(db, {
+      invoiceId, noteDate: '2026-07-31', approver, reason: 'Verified correction for this invoice', ...fields,
+    } as any);
+    // Price: agreed 165, invoiced 185 on 10 L.
+    const credit = await note({ noteType: 'credit_note', correction: 'price', fuelType: 'petrol', litres: 10, unitPrice: 20 });
     assert.equal(credit.note.note_number, 'CN-20260731-001');
     assert.equal(money(credit.invoice.balance), 650);
-    await expectCode(
-      () => postInvoiceAdjustment(db, {
-        invoiceId,
-        noteType: 'credit_note',
-        noteDate: '2026-07-31',
-        amount: 650.01,
-        reason: 'Attempt to exceed current balance',
-      }),
-      'CREDIT_NOTE_EXCEEDS_BALANCE',
-    );
-    const quantityCredit = await postInvoiceAdjustment(db, {
-      invoiceId,
-      noteType: 'credit_note',
-      noteDate: '2026-07-31',
-      fuelType: 'petrol',
-      litres: 6,
-      unitPrice: 1,
-      reason: 'Verified partial quantity correction',
-    });
-    assert.equal(money(quantityCredit.invoice.balance), 644);
-    await expectCode(
-      () => postInvoiceAdjustment(db, {
-        invoiceId,
-        noteType: 'credit_note',
-        noteDate: '2026-07-31',
-        fuelType: 'petrol',
-        litres: 5,
-        unitPrice: 1,
-        reason: 'Cumulative quantity exceeds invoice',
-      }),
-      'CREDIT_LITRES_EXCEED_INVOICE',
-    );
+    await expectCode(() => note({ noteType: 'credit_note', correction: 'price', fuelType: 'petrol', litres: 10, unitPrice: 186 }), 'CREDIT_PRICE_EXCEEDS_INVOICE');
+    // Litres: 6 L not taken, at the invoice price (1,110): more than the 650
+    // unpaid, so 460 is the customer's credit.
+    const quantityCredit = await note({ noteType: 'credit_note', correction: 'litres', fuelType: 'petrol', litres: 6 });
+    assert.equal(money(quantityCredit.note.amount), 1110);
+    assert.deepEqual([money(quantityCredit.note.applied_amount), money(quantityCredit.note.unapplied_amount)], [650, 460]);
+    assert.equal(money(quantityCredit.invoice.balance), 0);
+    await expectCode(() => note({ noteType: 'credit_note', correction: 'litres', fuelType: 'petrol', litres: 5 }), 'CREDIT_LITRES_EXCEED_INVOICE');
 
-    const debit = await postInvoiceAdjustment(db, {
-      invoiceId,
-      noteType: 'debit_note',
-      noteDate: '2026-07-31',
-      fuelType: 'petrol',
-      litres: 0.5,
-      unitPrice: 200,
-      reason: 'Additional verified petrol quantity',
-    });
-    assert.equal(debit.note.note_number, 'DN-20260731-001');
-    assert.equal(money(debit.note.amount), 100);
-    assert.equal(money(debit.invoice.balance), 744);
-
-    const reversedDebit = await reverseInvoiceAdjustment(db, {
-      noteId: Number(debit.note.id),
-      reversalDate: '2026-08-01',
-      reason: 'Quantity correction was entered twice',
-    });
-    assert.equal(reversedDebit.note.status, 'reversed');
-    assert.equal(money(reversedDebit.invoice.balance), 644);
+    // A debit note is a bill of its own; the customer's credit pays it.
+    const debit = await note({ noteType: 'debit_note', correction: 'litres', fuelType: 'petrol', litres: 0.5 });
+    const debitBill = debit.debit_note;
+    assert.equal(debitBill.invoice_number, 'DN-20260731-001');
+    assert.equal(money(debitBill.total_amount), 92.5);
+    const paidByCredit = await db('customer_invoices').where({ id: debitBill.id }).first();
+    assert.deepEqual([money(paidByCredit.balance), paidByCredit.status], [0, 'paid'], 'the credit paid the debit note');
 
     const reversedPayment = await reverseInvoicePayment(db, {
       paymentId,
@@ -313,7 +298,8 @@ async function run() {
       1,
       'Payment reversal deleted its allocation audit trail',
     );
-    assert.equal(money((await db('customer_invoices').where({ id: invoiceId }).first()).balance), 1644);
+    // The remaining credit (367.50) paid part of what the reversal left owing.
+    assert.equal(money((await db('customer_invoices').where({ id: invoiceId }).first()).balance), 632.5);
     await expectCode(
       () => reverseInvoicePayment(db, {
         paymentId,
@@ -323,12 +309,14 @@ async function run() {
       'PAYMENT_ALREADY_REVERSED',
     );
 
+    // Reversing the litres credit takes its credit back off everything it paid.
     const reversedQuantityCredit = await reverseInvoiceAdjustment(db, {
       noteId: Number(quantityCredit.note.id),
       reversalDate: '2026-08-01',
       reason: 'Quantity correction was withdrawn after review',
     });
     assert.equal(money(reversedQuantityCredit.invoice.balance), 1650);
+    assert.equal(money((await db('customer_invoices').where({ id: debitBill.id }).first()).balance), 92.5);
 
     const reversedCredit = await reverseInvoiceAdjustment(db, {
       noteId: Number(credit.note.id),
@@ -336,6 +324,13 @@ async function run() {
       reason: 'Customer pricing correction was withdrawn',
     });
     assert.equal(money(reversedCredit.invoice.balance), 1850);
+    // An unpaid debit note is voided.
+    const voidedDebit = await voidIssuedCustomerInvoice(db, {
+      invoiceId: Number(debitBill.id),
+      voidDate: '2026-08-01',
+      reason: 'Debit note entered by mistake',
+    });
+    assert.equal(voidedDebit.status, 'void');
 
     await expectCode(
       () => voidIssuedCustomerInvoice(db, {

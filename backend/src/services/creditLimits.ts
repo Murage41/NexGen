@@ -1,7 +1,7 @@
 import type { Knex } from 'knex';
 import { getKenyaDate } from '../utils/timezone';
 import { resolveApprover, type Approver } from './approval';
-import { customerCreditBalance } from './receivablePayments';
+import { customerCreditBalance, invoiceCustomerCredit } from './receivablePayments';
 
 // Credit limits for customer accounts (M5).
 //
@@ -96,8 +96,10 @@ export async function creditExposure(account: any, db: Conn): Promise<number> {
       .where((q) => q.whereNull('entry_status').orWhere('entry_status', 'active'))
       .sum({ total: 'retail_amount' })
       .first();
+    // Credit they hold from credit notes pays their next invoices.
+    const invoiceHeld = await invoiceCustomerCredit(Number(account.id), db);
     return money(
-      Number((invoiced as any)?.total || 0) + Number((drafts as any)?.total || 0) + Number((unbilled as any)?.total || 0),
+      Number((invoiced as any)?.total || 0) + Number((drafts as any)?.total || 0) + Number((unbilled as any)?.total || 0) - invoiceHeld,
     );
   }
   const credits = await db('credits')

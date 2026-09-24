@@ -69,11 +69,20 @@ export async function recomputeInvoiceTotals(
     .whereNull('payment.deleted_at')
     .sum('invoice_payment_allocations.amount_applied as total')
     .first();
-  const paidCents = toCents(Number((paidRow as any)?.total || 0));
+  // Customer credit from credit notes applied to this invoice pays it like a
+  // payment (invoice_credit_applications).
+  const creditRow = await trx('invoice_credit_applications')
+    .where({ invoice_id: invoiceId })
+    .whereNull('reversed_at')
+    .sum('amount as total')
+    .first();
+  const paidCents = toCents(Number((paidRow as any)?.total || 0)) + toCents(Number((creditRow as any)?.total || 0));
 
+  // A credit note reduces its own invoice by the part applied to it; the rest
+  // is the customer's credit (services/invoiceAdjustments.ts).
   const adjustmentsRow = await trx('invoice_adjustment_notes')
     .where({ invoice_id: invoiceId, status: 'posted' })
-    .sum('signed_amount as total')
+    .select(trx.raw("COALESCE(SUM(CASE WHEN note_type = 'credit_note' THEN -COALESCE(applied_amount, amount) ELSE signed_amount END), 0) as total"))
     .first();
   const adjustmentCents = toCents(Number((adjustmentsRow as any)?.total || 0));
   const effectiveTotalCents = totalCents + adjustmentCents;
@@ -333,6 +342,8 @@ export async function reverseInvoicePayment(
     for (const invoiceId of affectedInvoices) {
       await recomputeInvoiceTotals(invoiceId, trx);
     }
+    // Credit the customer holds pays what the reversal left unpaid.
+    await applyInvoiceCustomerCredit(trx, Number(payment.account_id));
 
     const originalEvent = await trx('invoice_accounting_events')
       .where({ source_key: `payment:${input.paymentId}:posted` })
@@ -722,6 +733,42 @@ export async function refundCustomerCredit(
     remainingCents -= cents;
   }
   return trx('customer_refunds').where({ id: refundId }).first();
+}
+
+// Credit an invoice customer holds: what credit notes gave back beyond the
+// unpaid balance of the invoice they corrected. It pays their open invoices
+// (and debit-note bills) oldest first, and the next one issued. It is never
+// paid out (owner decision 2026-09-24).
+export async function invoiceCustomerCredit(accountId: number, conn: DbConnection): Promise<number> {
+  const row = await conn('invoice_adjustment_notes')
+    .where({ account_id: accountId, note_type: 'credit_note', status: 'posted' })
+    .where('unapplied_amount', '>', 0)
+    .sum({ total: 'unapplied_amount' })
+    .first();
+  return roundMoney(Number((row as any)?.total || 0));
+}
+
+export async function applyInvoiceCustomerCredit(trx: Knex.Transaction, accountId: number): Promise<number> {
+  const notes = await trx('invoice_adjustment_notes')
+    .where({ account_id: accountId, note_type: 'credit_note', status: 'posted' })
+    .where('unapplied_amount', '>', 0)
+    .orderBy('id');
+  let appliedCents = 0;
+  for (const note of notes) {
+    let heldCents = toCents(Number(note.unapplied_amount));
+    for (const invoice of await getOpenInvoiceRows(accountId, trx)) {
+      if (heldCents <= 0) break;
+      const cents = Math.min(heldCents, toCents(Number(invoice.balance)));
+      if (cents <= 0) continue;
+      await trx('invoice_credit_applications').insert({ note_id: note.id, invoice_id: invoice.id, amount: fromCents(cents) });
+      await recomputeInvoiceTotals(Number(invoice.id), trx);
+      heldCents -= cents;
+      appliedCents += cents;
+    }
+    await trx('invoice_adjustment_notes').where({ id: note.id }).update({ unapplied_amount: fromCents(heldCents) });
+  }
+  if (appliedCents > 0) await recomputeAccountBalance(accountId, trx);
+  return fromCents(appliedCents);
 }
 
 export function paymentHttpStatus(err: any): number {

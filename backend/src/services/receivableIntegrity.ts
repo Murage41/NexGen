@@ -6,6 +6,7 @@ export type ReceivableIntegrityIssue = {
     | 'invoice_payment_unallocated'
     | 'invoice_overallocated'
     | 'invoice_balance_mismatch'
+    | 'credit_note_unbalanced'
     | 'money_account_overpaid'
     | 'payment_credit_mismatch'
     | 'account_cache_mismatch'
@@ -69,14 +70,21 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
       .whereNull('payment.deleted_at')
       .sum('allocation.amount_applied as total')
       .first();
+    // A credit note counts on its invoice for the part applied to it; the
+    // rest is the customer's credit, applied to invoices like a payment.
     const adjustmentRow = await db('invoice_adjustment_notes')
       .where({ invoice_id: invoice.id, status: 'posted' })
-      .sum('signed_amount as total')
+      .select(db.raw("COALESCE(SUM(CASE WHEN note_type = 'credit_note' THEN -COALESCE(applied_amount, amount) ELSE signed_amount END), 0) as total"))
+      .first();
+    const creditRow = await db('invoice_credit_applications')
+      .where({ invoice_id: invoice.id })
+      .whereNull('reversed_at')
+      .sum('amount as total')
       .first();
     const adjustedTotal = roundMoney(
       total + Number((adjustmentRow as any)?.total || 0),
     );
-    const allocated = roundMoney(Number((paidRow as any)?.total || 0));
+    const allocated = roundMoney(Number((paidRow as any)?.total || 0) + Number((creditRow as any)?.total || 0));
     const storedBalance = roundMoney(Number(invoice.balance || 0));
     if (allocated > adjustedTotal) {
       issues.push({
@@ -103,12 +111,38 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
     }
   }
 
+  const creditNotes = await db('invoice_adjustment_notes')
+    .where({ note_type: 'credit_note', status: 'posted' })
+    .whereNotNull('applied_amount')
+    .select('id', 'account_id', 'amount', 'applied_amount', 'unapplied_amount');
+  for (const note of creditNotes as any[]) {
+    const applied = await db('invoice_credit_applications')
+      .where({ note_id: note.id })
+      .whereNull('reversed_at')
+      .sum('amount as total')
+      .first();
+    const accounted = roundMoney(Number(note.applied_amount) + Number((applied as any)?.total || 0) + Number(note.unapplied_amount || 0));
+    if (Math.abs(accounted - roundMoney(Number(note.amount))) >= 0.01) {
+      issues.push({
+        kind: 'credit_note_unbalanced',
+        account_id: Number(note.account_id),
+        record_id: Number(note.id),
+        expected: roundMoney(Number(note.amount)),
+        actual: accounted,
+        difference: difference(accounted, roundMoney(Number(note.amount))),
+        message: `Credit note ${note.id} is KES ${Number(note.amount).toFixed(2)}, but KES ${accounted.toFixed(2)} is applied or held.`,
+      });
+    }
+  }
+
   const accounts = await db('credit_accounts')
     .whereNull('deleted_at')
     .where({ type: 'customer' })
     .select('id', 'billing_mode', 'balance');
   for (const account of accounts as any[]) {
     let expectedBalance = 0;
+    // The cached balance is what they owe: open documents, before any credit.
+    let cacheBalance: number | null = null;
     if ((account.billing_mode || 'money') === 'invoice') {
       const row = await db('customer_invoices')
         .where({ account_id: account.id })
@@ -116,7 +150,14 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
         .whereIn('status', ['issued', 'partial'])
         .sum('balance as total')
         .first();
-      expectedBalance = roundMoney(Number((row as any)?.total || 0));
+      // Credit the customer holds is owed to them: it nets against their
+      // open documents in the accounting events.
+      const heldRow = await db('invoice_adjustment_notes')
+        .where({ account_id: account.id, note_type: 'credit_note', status: 'posted' })
+        .sum('unapplied_amount as total')
+        .first();
+      cacheBalance = roundMoney(Number((row as any)?.total || 0));
+      expectedBalance = roundMoney(cacheBalance - Number((heldRow as any)?.total || 0));
       const eventRow = await db('invoice_accounting_events')
         .where({ account_id: account.id })
         .sum('receivable_delta as total')
@@ -224,14 +265,15 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
     }
 
     const cached = roundMoney(Number(account.balance || 0));
-    if (Math.abs(cached - expectedBalance) >= 0.01) {
+    const cacheExpected = cacheBalance ?? expectedBalance;
+    if (Math.abs(cached - cacheExpected) >= 0.01) {
       issues.push({
         kind: 'account_cache_mismatch',
         account_id: Number(account.id),
-        expected: expectedBalance,
+        expected: cacheExpected,
         actual: cached,
-        difference: difference(cached, expectedBalance),
-        message: `Account ${account.id} cache is KES ${cached.toFixed(2)}; open documents total KES ${expectedBalance.toFixed(2)}.`,
+        difference: difference(cached, cacheExpected),
+        message: `Account ${account.id} cache is KES ${cached.toFixed(2)}; open documents total KES ${cacheExpected.toFixed(2)}.`,
       });
     }
   }
@@ -240,12 +282,13 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
   const issuedInvoices = await db('customer_invoices')
     .whereNull('deleted_at')
     .whereIn('status', ['issued', 'partial', 'paid', 'void'])
-    .select('id', 'account_id', 'status');
+    .select('id', 'account_id', 'status', 'document_kind');
   for (const invoice of issuedInvoices as any[]) {
     requiredEventKeys.push({
       account_id: Number(invoice.account_id),
       record_id: Number(invoice.id),
-      source_key: `invoice:${invoice.id}:issue`,
+      // A debit note is a bill of its own (services/invoiceAdjustments.ts).
+      source_key: invoice.document_kind === 'debit_note' ? `debit-note:${invoice.id}:issue` : `invoice:${invoice.id}:issue`,
     });
     if (invoice.status === 'void') {
       requiredEventKeys.push({
@@ -308,6 +351,7 @@ export async function auditReceivableIntegrity(db: Knex): Promise<ReceivableInte
     invoice_payment_unallocated: 0,
     invoice_overallocated: 0,
     invoice_balance_mismatch: 0,
+    credit_note_unbalanced: 0,
     money_account_overpaid: 0,
     payment_credit_mismatch: 0,
     account_cache_mismatch: 0,

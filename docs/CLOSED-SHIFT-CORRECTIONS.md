@@ -84,8 +84,10 @@ A move is never edited or deleted. A wrong move is fixed by moving it back.
 
 ## Invoice Customers
 
-Their fuel is billed on invoices, so it is corrected on the invoice with a
-**credit note** (they owe less) or **debit note** (they owe more). See
+Their fuel is billed on invoices, so it is corrected with a **credit note**
+(they owe less) or **debit note** (they owe more), always in fuel, litres and
+price per litre. A debit note is a bill of its own and also works for a shift
+when there is no invoice yet. See
 [Invoice Customer Workflow](INVOICE-CUSTOMER-WORKFLOW.md).
 
 ## Corrections Made Before This Rule

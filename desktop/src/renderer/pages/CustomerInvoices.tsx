@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { InvoiceNoteForm, InvoiceNoteReverse } from '../../../../shared/ui/InvoiceNote';
 import {
   getCustomerInvoices,
   getCustomerInvoice,
@@ -11,6 +12,7 @@ import {
   deleteCustomerInvoiceDraft,
   createCustomerInvoiceAdjustment,
   reverseCustomerInvoiceAdjustment,
+  desktopApproval,
   getCreditAccounts,
   getInvoicePayments,
   createInvoicePayment,
@@ -114,19 +116,9 @@ export default function CustomerInvoices() {
   const [refreshingDraft, setRefreshingDraft] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [refreshMessage, setRefreshMessage] = useState('');
-  const [adjustmentError, setAdjustmentError] = useState('');
-  const [showAdjustment, setShowAdjustment] = useState(false);
-  const [submittingAdjustment, setSubmittingAdjustment] = useState(false);
-  const [adjustmentForm, setAdjustmentForm] = useState({
-    note_type: 'credit_note' as 'credit_note' | 'debit_note',
-    note_date: today(),
-    mode: 'amount' as 'amount' | 'quantity',
-    amount: '',
-    fuel_type: 'petrol',
-    litres: '',
-    unit_price: '',
-    reason: '',
-  });
+  // Credit/debit note on the open invoice (shared/ui/InvoiceNote.tsx).
+  const [noteType, setNoteType] = useState<'credit_note' | 'debit_note' | null>(null);
+  const [reversingNote, setReversingNote] = useState<any | null>(null);
 
   // Phase 3D — Payments
   const [tab, setTab] = useState<'customers' | 'invoices' | 'payments'>('customers');
@@ -144,7 +136,7 @@ export default function CustomerInvoices() {
   const [payResult, setPayResult] = useState<any | null>(null);
   const [submittingPay, setSubmittingPay] = useState(false);
   const [reasonAction, setReasonAction] = useState<{
-    kind: 'payment' | 'invoice' | 'adjustment';
+    kind: 'payment' | 'invoice';
     id: number;
     title: string;
     description: string;
@@ -406,60 +398,23 @@ export default function CustomerInvoices() {
     }
   }
 
-  function openAdjustment(noteType: 'credit_note' | 'debit_note') {
-    setAdjustmentForm({
-      note_type: noteType,
-      note_date: today(),
-      mode: 'amount',
-      amount: '',
-      fuel_type: detail?.lines?.[0]?.fuel_type || 'petrol',
-      litres: '',
-      unit_price: '',
-      reason: '',
-    });
-    setAdjustmentError('');
-    setShowAdjustment(true);
-  }
-
-  async function submitAdjustment() {
-    if (!detail) return;
-    try {
-      setSubmittingAdjustment(true);
-      const payload: any = {
-        note_type: adjustmentForm.note_type,
-        note_date: adjustmentForm.note_date,
-        reason: adjustmentForm.reason,
-      };
-      if (adjustmentForm.mode === 'quantity') {
-        payload.fuel_type = adjustmentForm.fuel_type;
-        payload.litres = Number(adjustmentForm.litres);
-        payload.unit_price = Number(adjustmentForm.unit_price);
-      } else {
-        payload.amount = Number(adjustmentForm.amount);
-      }
-      await createCustomerInvoiceAdjustment(detail.id, payload);
-      setShowAdjustment(false);
-      const refreshed = await getCustomerInvoice(detail.id);
-      setDetail(refreshed.data.data);
-      await loadInvoices();
-      await loadMonitor();
-    } catch (err: any) {
-      setAdjustmentError(err?.response?.data?.error || err?.message);
-    } finally {
-      setSubmittingAdjustment(false);
-    }
+  function openAdjustment(type: 'credit_note' | 'debit_note') {
+    setNoteType(type);
   }
 
   function handleReverseAdjustment(noteId: number) {
     setError('');
-    setReasonAction({
-      kind: 'adjustment',
-      id: noteId,
-      title: 'Reverse adjustment note',
-      description: 'This posts an equal and opposite accounting entry. The original note remains in the audit trail.',
-    });
-    setReasonText('');
-    setReasonDate(today());
+    setReversingNote((detail?.adjustment_notes || []).find((n: any) => n.id === noteId) || null);
+  }
+
+  async function noteDone() {
+    setNoteType(null);
+    setReversingNote(null);
+    if (detail) {
+      const refreshed = await getCustomerInvoice(detail.id);
+      setDetail(refreshed.data.data);
+    }
+    await Promise.all([loadInvoices(), loadMonitor()]);
   }
 
   async function submitReasonAction() {
@@ -472,18 +427,9 @@ export default function CustomerInvoices() {
           reason: reasonText.trim(),
           reversal_date: reasonDate,
         });
-      } else if (reasonAction.kind === 'invoice') {
+      } else {
         await voidCustomerInvoice(reasonAction.id, { reason: reasonText.trim() });
         setDetail(null);
-      } else {
-        await reverseCustomerInvoiceAdjustment(reasonAction.id, {
-          reason: reasonText.trim(),
-          reversal_date: reasonDate,
-        });
-        if (detail) {
-          const refreshed = await getCustomerInvoice(detail.id);
-          setDetail(refreshed.data.data);
-        }
       }
       setReasonAction(null);
       await Promise.all([loadInvoices(), loadPayments(), loadMonitor()]);
@@ -1395,6 +1341,34 @@ export default function CustomerInvoices() {
                 </div>
               )}
 
+              {detail.document_kind === 'debit_note' && (
+                <div className="text-xs bg-green-50 border border-green-200 rounded p-2">
+                  <p className="font-semibold text-green-800">Debit note</p>
+                  <p className="text-gray-700">{detail.reason}</p>
+                  <p className="text-gray-500">
+                    {detail.corrects_invoice ? `Corrects ${detail.corrects_invoice.invoice_number}` : detail.shift_id ? `Fuel from shift #${detail.shift_id}` : ''}
+                    {detail.approved_by_name ? ` · approved by ${detail.approved_by_name}` : ''}
+                  </p>
+                </div>
+              )}
+              {(detail.credit_applied || []).length > 0 && (
+                <div className="text-xs">
+                  <p className="font-semibold text-gray-600 mb-1">Paid with the customer's credit</p>
+                  {detail.credit_applied.map((c: any) => (
+                    <p key={c.id} className="text-gray-700">{fmt(c.amount)} from credit note {c.note_number}</p>
+                  ))}
+                </div>
+              )}
+              {(detail.debit_notes || []).length > 0 && (
+                <div className="text-xs">
+                  <p className="font-semibold text-gray-600 mb-1">Debit notes for this invoice</p>
+                  {detail.debit_notes.map((d: any) => (
+                    <p key={d.id} className="text-gray-700">
+                      <span className="font-mono">{d.invoice_number}</span> · {d.issue_date} · {fmt(d.total_amount)} · {d.status}
+                    </p>
+                  ))}
+                </div>
+              )}
               {detail.adjustment_notes && detail.adjustment_notes.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-gray-600 mb-1">Credit and debit notes</p>
@@ -1416,7 +1390,19 @@ export default function CustomerInvoices() {
                             <span className="font-mono">{note.note_number}</span>
                             <span className="block capitalize text-gray-500">{String(note.note_type).replace('_', ' ')}</span>
                           </td>
-                          <td className="px-2 py-1.5">{note.reason}</td>
+                          <td className="px-2 py-1.5">
+                            {note.fuel_type && (
+                              <span className="block text-gray-600">
+                                {note.fuel_type} · {Number(note.litres).toFixed(2)} L × {fmt(note.unit_price)}
+                                {note.correction === 'price' ? ' (price difference)' : ''}
+                              </span>
+                            )}
+                            {note.reason}
+                            {note.approved_by_name && <span className="block text-gray-400">approved by {note.approved_by_name}</span>}
+                            {note.status === 'posted' && Number(note.unapplied_amount) > 0 && (
+                              <span className="block text-amber-700">{fmt(note.unapplied_amount)} held as the customer's credit for their next invoice</span>
+                            )}
+                          </td>
                           <td className={`px-2 py-1.5 text-right font-medium ${Number(note.signed_amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
                             {fmt(note.signed_amount)}
                           </td>
@@ -1603,138 +1589,39 @@ export default function CustomerInvoices() {
         </div>
       )}
 
-      {showAdjustment && detail && (
+      {(noteType || reversingNote) && detail && (
         <div className="fixed inset-0 bg-black/45 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-4 border-b">
               <div>
                 <h2 className="text-lg font-bold">
-                  {adjustmentForm.note_type === 'credit_note' ? 'Create Credit Note' : 'Create Debit Note'}
+                  {reversingNote ? 'Reverse note' : noteType === 'credit_note' ? 'Credit note' : 'Debit note'}
                 </h2>
                 <p className="text-xs text-gray-500">{detail.invoice_number}</p>
               </div>
-              <button onClick={() => setShowAdjustment(false)} className="p-1 text-gray-400 hover:text-gray-700">
+              <button onClick={() => { setNoteType(null); setReversingNote(null); }} className="p-1 text-gray-400 hover:text-gray-700">
                 <X size={19} />
               </button>
             </div>
-            <div className="p-4 space-y-3">
-              {adjustmentError && (
-                <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{adjustmentError}</div>
-              )}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Note type</label>
-                <div className="grid grid-cols-2 border border-gray-300 rounded-lg overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => setAdjustmentForm({ ...adjustmentForm, note_type: 'credit_note' })}
-                    className={`px-3 py-2 text-sm font-medium ${adjustmentForm.note_type === 'credit_note' ? 'bg-red-50 text-red-700' : 'bg-white text-gray-600'}`}
-                  >
-                    Credit note
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdjustmentForm({ ...adjustmentForm, note_type: 'debit_note' })}
-                    className={`px-3 py-2 text-sm font-medium border-l border-gray-300 ${adjustmentForm.note_type === 'debit_note' ? 'bg-green-50 text-green-700' : 'bg-white text-gray-600'}`}
-                  >
-                    Debit note
-                  </button>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={adjustmentForm.note_date}
-                    max={today()}
-                    onChange={e => setAdjustmentForm({ ...adjustmentForm, note_date: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Correction basis</label>
-                  <select
-                    value={adjustmentForm.mode}
-                    onChange={e => setAdjustmentForm({ ...adjustmentForm, mode: e.target.value as 'amount' | 'quantity' })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="amount">Amount only</option>
-                    <option value="quantity">Litres and price</option>
-                  </select>
-                </div>
-              </div>
-              {adjustmentForm.mode === 'amount' ? (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Amount</label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={adjustmentForm.amount}
-                    onChange={e => setAdjustmentForm({ ...adjustmentForm, amount: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-              ) : (
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Fuel</label>
-                    <select
-                      value={adjustmentForm.fuel_type}
-                      onChange={e => setAdjustmentForm({ ...adjustmentForm, fuel_type: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
-                    >
-                      {(detail.lines || []).map((line: any) => (
-                        <option key={line.id} value={line.fuel_type}>{line.fuel_type}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Litres</label>
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={adjustmentForm.litres}
-                      onChange={e => setAdjustmentForm({ ...adjustmentForm, litres: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Unit price</label>
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={adjustmentForm.unit_price}
-                      onChange={e => setAdjustmentForm({ ...adjustmentForm, unit_price: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
-                    />
-                  </div>
-                </div>
-              )}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
-                <textarea
-                  rows={3}
-                  value={adjustmentForm.reason}
-                  onChange={e => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })}
-                  placeholder="Describe the approved correction"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            <div className="p-4">
+              {reversingNote ? (
+                <InvoiceNoteReverse
+                  note={reversingNote}
+                  approval={desktopApproval}
+                  reverse={reverseCustomerInvoiceAdjustment}
+                  onDone={noteDone}
+                  onCancel={() => setReversingNote(null)}
                 />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 p-4 border-t bg-gray-50">
-              <button onClick={() => setShowAdjustment(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">
-                Cancel
-              </button>
-              <button
-                onClick={submitAdjustment}
-                disabled={submittingAdjustment}
-                className={`px-4 py-2 text-sm text-white rounded-lg font-medium disabled:opacity-50 ${adjustmentForm.note_type === 'credit_note' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-700 hover:bg-green-800'}`}
-              >
-                {submittingAdjustment ? 'Posting...' : 'Post note'}
-              </button>
+              ) : (
+                <InvoiceNoteForm
+                  noteType={noteType!}
+                  invoice={detail}
+                  approval={desktopApproval}
+                  post={(body) => createCustomerInvoiceAdjustment(detail.id, body)}
+                  onDone={noteDone}
+                  onCancel={() => setNoteType(null)}
+                />
+              )}
             </div>
           </div>
         </div>

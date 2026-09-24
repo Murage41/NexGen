@@ -80,9 +80,16 @@ export async function nextInvoiceDocumentNumber(
       .update({ last_number: sequence, updated_at: trx.fn.now() });
   } else {
     const pattern = `${prefix}-${compactDate}-%`;
-    const values = documentType === 'invoice'
-      ? await trx('customer_invoices').where('invoice_number', 'like', pattern).pluck('invoice_number')
-      : await trx('invoice_adjustment_notes').where('note_number', 'like', pattern).pluck('note_number');
+    // Debit notes were once notes on an invoice and are now bills of their own
+    // (customer_invoices): look in both.
+    const values = [
+      ...(documentType !== 'credit_note'
+        ? await trx('customer_invoices').where('invoice_number', 'like', pattern).pluck('invoice_number')
+        : []),
+      ...(documentType !== 'invoice'
+        ? await trx('invoice_adjustment_notes').where('note_number', 'like', pattern).pluck('note_number')
+        : []),
+    ];
     const maxExisting = values.reduce((max: number, value: unknown) => {
       const parsed = Number(String(value).split('-').pop());
       return Number.isInteger(parsed) && parsed > max ? parsed : max;

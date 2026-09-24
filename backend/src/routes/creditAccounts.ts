@@ -5,6 +5,7 @@ import { getKenyaDate } from '../utils/timezone';
 import { requireAdmin, requireAuth } from '../middleware/requireAdmin';
 import {
   customerCreditBalance,
+  invoiceCustomerCredit,
   paymentHttpStatus,
   recordMoneyAccountPayment,
   refundCustomerCredit,
@@ -73,6 +74,16 @@ router.get('/', async (req, res) => {
       .select('account_id')
       .sum({ total: 'unapplied_amount' });
     const held = new Map(heldRows.map((row: any) => [Number(row.account_id), roundMoney(Number(row.total || 0))]));
+    // An invoice customer's credit from credit notes (invoiceAdjustments.ts).
+    const invoiceHeld = await db('invoice_adjustment_notes')
+      .where({ note_type: 'credit_note', status: 'posted' })
+      .where('unapplied_amount', '>', 0)
+      .groupBy('account_id')
+      .select('account_id')
+      .sum({ total: 'unapplied_amount' });
+    for (const row of invoiceHeld as any[]) {
+      held.set(Number(row.account_id), roundMoney((held.get(Number(row.account_id)) || 0) + Number(row.total || 0)));
+    }
     for (const account of accounts) {
       account.credit_on_account = held.get(Number(account.id)) || 0;
       // Limit status only for customers that have limits; everyone else has no
@@ -139,6 +150,8 @@ router.get('/:id', async (req, res) => {
         .where({ account_id: account.id })
         .orderBy('refund_date', 'desc')
         .orderBy('id', 'desc');
+    } else if (account.type === 'customer') {
+      creditOnAccount = await invoiceCustomerCredit(Number(account.id), db);
     }
     if (!isAdmin) delete account.kra_pin;
     if (account.type === 'customer') {
@@ -374,7 +387,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     if (Number(account.balance || 0) > 0) {
       return res.status(400).json({ success: false, error: 'Cannot delete account with outstanding balance' });
     }
-    const held = await customerCreditBalance(Number(account.id), db);
+    const held = roundMoney(await customerCreditBalance(Number(account.id), db) + await invoiceCustomerCredit(Number(account.id), db));
     if (held > 0) {
       return res.status(400).json({
         success: false,

@@ -105,22 +105,33 @@ export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
     if (cents > 0) owedCents += cents;
     else creditCents -= cents;
   }
-  const invoiceEventsRow = await db('invoice_accounting_events as event')
+  // Per invoice customer: one holding credit (a credit note beyond what they
+  // owed, services/invoiceAdjustments.ts) is owed money, not a negative debt.
+  const invoiceEvents = await db('invoice_accounting_events as event')
     .join('credit_accounts as account', 'event.account_id', 'account.id')
     .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where('account.billing_mode', 'invoice')
     .where('event.posting_date', '<=', asOfDate)
-    .sum({ total: 'event.receivable_delta' })
-    .first();
+    .groupBy('event.account_id')
+    .select('event.account_id')
+    .sum({ total: 'event.receivable_delta' });
+  let invoiceOwedCents = 0;
+  let invoiceCreditCents = 0;
+  for (const row of invoiceEvents as any[]) {
+    const cents = Math.round(Number(row.total || 0) * 100);
+    if (cents > 0) invoiceOwedCents += cents;
+    else invoiceCreditCents -= cents;
+  }
 
   const moneyReceivables = roundMoney(owedCents / 100);
-  const invoiceReceivables = roundMoney(Number((invoiceEventsRow as any)?.total || 0));
+  const invoiceReceivables = roundMoney(invoiceOwedCents / 100);
   return {
     as_of_date: asOfDate,
     money_receivables: moneyReceivables,
     money_customer_credits: roundMoney(creditCents / 100),
     invoice_receivables: invoiceReceivables,
+    invoice_customer_credits: roundMoney(invoiceCreditCents / 100),
     total_receivables: roundMoney(moneyReceivables + invoiceReceivables),
   };
 }
