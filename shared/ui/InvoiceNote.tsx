@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApproverFields, useApprover, type ApprovalApi } from './ApproverConfirm';
 
 // Credit and debit notes for invoice customers (backend
@@ -6,9 +6,11 @@ import { ApproverFields, useApprover, type ApprovalApi } from './ApproverConfirm
 // litre: what was wrong is the litres (priced at the invoice's own price) or
 // the price (the same litres at the difference). A credit note beyond what the
 // invoice still owes becomes the customer's credit for their next invoice. A
-// debit note is a bill of its own, for an invoice or for a shift. Notes are
-// dated today and approved by an administrator (desktop: name and PIN; phone:
-// the signed-in admin).
+// debit note is a bill of its own, for an invoice or for a shift. A note on a
+// shift can name its attendant: fuel they recorded on the customer to cover
+// their drawer (credit note), or fuel they never recorded (debit note). Notes
+// are dated today and approved by an administrator (desktop: name and PIN;
+// phone: the signed-in admin).
 
 const kes = (value: unknown) =>
   `KES ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -21,6 +23,7 @@ export function InvoiceNoteForm({
   accountId,
   approval,
   post,
+  attendantPreview,
   onDone,
   onCancel,
   inputClassName = field,
@@ -31,6 +34,8 @@ export function InvoiceNoteForm({
   accountId?: number;
   approval?: ApprovalApi;
   post: (body: Record<string, unknown>) => Promise<any>;
+  // GET /customer-invoices/note-attendant; without it the attendant option is hidden.
+  attendantPreview?: (params: Record<string, unknown>) => Promise<any>;
   onDone: () => Promise<void> | void;
   onCancel: () => void;
   inputClassName?: string;
@@ -43,6 +48,8 @@ export function InvoiceNoteForm({
   const [price, setPrice] = useState('');
   const [shiftId, setShiftId] = useState('');
   const [reason, setReason] = useState('');
+  const [attendant, setAttendant] = useState(false);
+  const [preview, setPreview] = useState<{ data?: any; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -51,8 +58,33 @@ export function InvoiceNoteForm({
   const unitPrice = byLitres ? Number(line?.agreed_price || 0) : Number(price);
   const amount = Math.round(Number(litres) * unitPrice * 100) / 100;
   const credit = noteType === 'credit_note';
+  // Only litres can be the attendant's, and only on a named shift.
+  const canNameAttendant = Boolean(attendantPreview) && (!invoice || correction === 'litres') && Number(shiftId) > 0;
+  const onAttendant = attendant && canNameAttendant;
   const ready = Number(litres) > 0 && unitPrice > 0 && reason.trim().length >= 10
-    && (Boolean(invoice) || Number(shiftId) > 0) && approver.ready;
+    && (Boolean(invoice) || Number(shiftId) > 0) && approver.ready
+    && (!onAttendant || Boolean(preview?.data));
+
+  useEffect(() => {
+    if (!onAttendant || !attendantPreview) {
+      setPreview(null);
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      attendantPreview({
+        account_id: invoice?.account_id ?? accountId,
+        invoice_id: invoice?.id,
+        note_type: noteType,
+        fuel_type: fuel,
+        litres: Number(litres) || 0,
+        shift_id: Number(shiftId),
+      })
+        .then((r) => { if (live) setPreview({ data: r.data.data }); })
+        .catch((e) => { if (live) setPreview({ error: errorText(e, 'The attendant could not be found.') }); });
+    }, 300);
+    return () => { live = false; clearTimeout(timer); };
+  }, [onAttendant, fuel, litres, shiftId]);
 
   async function submit() {
     setBusy(true);
@@ -66,6 +98,8 @@ export function InvoiceNoteForm({
         fuel_type: fuel,
         litres: Number(litres),
         unit_price: byLitres ? 0 : unitPrice,
+        shift_id: shiftId ? Number(shiftId) : 0,
+        attendant: onAttendant,
       };
       const approved = await approver.confirm('invoice_note', fields);
       await post({
@@ -76,6 +110,7 @@ export function InvoiceNoteForm({
         litres: Number(litres),
         ...(byLitres ? {} : { unit_price: unitPrice }),
         shift_id: shiftId ? Number(shiftId) : undefined,
+        ...(onAttendant ? { attendant: true } : {}),
         reason: reason.trim(),
         ...(approved.approval_token ? { approval_token: approved.approval_token } : {}),
       });
@@ -135,6 +170,27 @@ export function InvoiceNoteForm({
           <p className="py-2 font-semibold">{amount > 0 ? kes(amount) : '—'}</p>
         </div>
       </div>
+      {canNameAttendant && (
+        <label className="flex items-start gap-2 text-xs text-gray-700">
+          <input type="checkbox" className="mt-0.5" checked={attendant} onChange={(e) => setAttendant(e.target.checked)} />
+          <span>
+            {credit
+              ? `The attendant of shift #${shiftId} recorded this fuel on the customer to cover their drawer. They owe it, not the station.`
+              : `The attendant of shift #${shiftId} never recorded this fuel, so their drawer came up short by it. They owe that much less.`}
+          </span>
+        </label>
+      )}
+      {onAttendant && preview?.data && (
+        <p className="text-xs bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-900">
+          {preview.data.employee_name}'s shortage on shift #{preview.data.shift_id} is {kes(preview.data.shift_shortage)}. It goes{' '}
+          {credit ? 'up' : 'down'} by <strong>{kes(preview.data.amount)}</strong> ({Number(litres || 0).toFixed(2)} L at{' '}
+          {kes(preview.data.price)}, the shift's pump price).
+          {credit && preview.data.available_litres !== null
+            ? ` Up to ${Number(preview.data.available_litres).toFixed(2)} L of this customer's on the shift can be put on them.`
+            : ''}
+        </p>
+      )}
+      {onAttendant && preview?.error && <p className="text-xs text-red-700">{preview.error}</p>}
       <label className="block"><span className="text-xs text-gray-600">Reason (at least 10 characters)</span>
         <textarea className={inputClassName} rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
       </label>

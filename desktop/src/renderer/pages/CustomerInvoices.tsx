@@ -11,6 +11,7 @@ import {
   voidCustomerInvoice,
   deleteCustomerInvoiceDraft,
   createCustomerInvoiceAdjustment,
+  getNoteAttendant,
   reverseCustomerInvoiceAdjustment,
   desktopApproval,
   getCreditAccounts,
@@ -1349,6 +1350,11 @@ export default function CustomerInvoices() {
                     {detail.corrects_invoice ? `Corrects ${detail.corrects_invoice.invoice_number}` : detail.shift_id ? `Fuel from shift #${detail.shift_id}` : ''}
                     {detail.approved_by_name ? ` · approved by ${detail.approved_by_name}` : ''}
                   </p>
+                  {detail.attendant && (
+                    <p className={detail.attendant.status === 'posted' ? 'text-amber-800' : 'text-gray-400 line-through'}>
+                      {detail.attendant.name}'s shortage on shift #{detail.attendant.shift_id} went down by {fmt(Math.abs(Number(detail.attendant.amount)))}
+                    </p>
+                  )}
                 </div>
               )}
               {(detail.credit_applied || []).length > 0 && (
@@ -1399,6 +1405,11 @@ export default function CustomerInvoices() {
                             )}
                             {note.reason}
                             {note.approved_by_name && <span className="block text-gray-400">approved by {note.approved_by_name}</span>}
+                            {note.attendant_name && (
+                              <span className="block text-amber-700">
+                                {note.attendant_name} owes {fmt(note.attendant_amount)} of it (shift #{note.shift_id})
+                              </span>
+                            )}
                             {note.status === 'posted' && Number(note.unapplied_amount) > 0 && (
                               <span className="block text-amber-700">{fmt(note.unapplied_amount)} held as the customer's credit for their next invoice</span>
                             )}
@@ -1618,6 +1629,7 @@ export default function CustomerInvoices() {
                   invoice={detail}
                   approval={desktopApproval}
                   post={(body) => createCustomerInvoiceAdjustment(detail.id, body)}
+                  attendantPreview={getNoteAttendant}
                   onDone={noteDone}
                   onCancel={() => setNoteType(null)}
                 />

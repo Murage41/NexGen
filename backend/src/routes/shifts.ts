@@ -54,6 +54,7 @@ import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency'
 import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
 import { computeShiftAccountability } from '../services/shiftAccountability';
 import { listBalanceMoves } from '../services/balanceMoves';
+import { getRetailPriceAsOf } from '../services/invoiceAccounting';
 import {
   listShiftCorrections,
 } from '../services/shiftCorrections';
@@ -1204,21 +1205,6 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
 // agreed price is set later when the invoice is generated. No KES debit hits
 // the customer account here — just a litre ledger that later rolls up into a
 // customer_invoices row.
-
-/** Look up retail fuel price effective on a given date (YYYY-MM-DD). */
-async function getRetailPriceAsOf(
-  trx: any,
-  fuelType: string,
-  asOfDate: string,
-): Promise<number | null> {
-  const row = await trx('fuel_prices')
-    .where({ fuel_type: fuelType })
-    .where('effective_date', '<=', asOfDate)
-    .orderBy('effective_date', 'desc')
-    .orderBy('id', 'desc')
-    .first();
-  return row ? Number(row.price_per_litre) : null;
-}
 
 // POST /shifts/:id/invoice-consumption
 // Body: { account_id, tank_id?, fuel_type: 'petrol' | 'diesel', litres }

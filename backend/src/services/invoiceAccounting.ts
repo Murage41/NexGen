@@ -135,6 +135,21 @@ export async function postInvoiceAccountingEvent(
   return trx('invoice_accounting_events').where({ source_key: input.sourceKey }).first();
 }
 
+/** The retail (pump) price of a fuel effective on a date (YYYY-MM-DD). */
+export async function getRetailPriceAsOf(
+  trx: DbConnection,
+  fuelType: string,
+  asOfDate: string,
+): Promise<number | null> {
+  const row = await trx('fuel_prices')
+    .where({ fuel_type: fuelType })
+    .where('effective_date', '<=', asOfDate)
+    .orderBy('effective_date', 'desc')
+    .orderBy('id', 'desc')
+    .first();
+  return row ? Number(row.price_per_litre) : null;
+}
+
 export async function getInvoiceRetailBaseline(
   trx: DbConnection,
   invoiceId: number,

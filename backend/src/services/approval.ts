@@ -23,7 +23,7 @@ export const approvalBindings = {
   // (0 = none, a debit note for a shift), which kind, fuel, litres and price per
   // litre (0 = the invoice's own price, a litres correction).
   invoice_note: (fields: any) =>
-    `invoice_note:${Number(fields?.account_id) || 0}:${Number(fields?.invoice_id) || 0}:${String(fields?.note_type ?? '')}:${String(fields?.correction ?? '')}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(2)}:${(Number(fields?.unit_price) || 0).toFixed(2)}`,
+    `invoice_note:${Number(fields?.account_id) || 0}:${Number(fields?.invoice_id) || 0}:${String(fields?.note_type ?? '')}:${String(fields?.correction ?? '')}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(2)}:${(Number(fields?.unit_price) || 0).toFixed(2)}:${Number(fields?.shift_id) || 0}:${fields?.attendant === true ? 1 : 0}`,
   // Reversing an invoice customer's credit or debit note.
   invoice_note_reversal: (fields: any) => `invoice_note_reversal:${Number(fields?.note_id) || 0}`,
   // Paying a customer back credit they hold on account.

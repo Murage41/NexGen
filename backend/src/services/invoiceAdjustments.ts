@@ -2,10 +2,12 @@ import type { Knex } from 'knex';
 import { recomputeAccountBalance } from './accountBalance';
 import {
   addDaysToBusinessDate,
+  getRetailPriceAsOf,
   nextInvoiceDocumentNumber,
   postInvoiceAccountingEvent,
 } from './invoiceAccounting';
 import { applyInvoiceCustomerCredit, recomputeInvoiceTotals, roundMoney } from './receivablePayments';
+import { syncVarianceAccount } from './employeeVariances';
 import type { Approver } from './approval';
 
 // Credit and debit notes for invoice customers. An issued invoice is final:
@@ -28,6 +30,13 @@ import type { Approver } from './approval';
 // - Notes are dated the day they are posted and approved by an administrator.
 //   A note is never edited; a wrong credit note is reversed, a wrong unpaid
 //   debit note is voided, and a paid one is corrected by a credit note.
+// - A note on a shift can name that shift's attendant instead of the station:
+//   litres they recorded on the customer to cover their drawer (credit note),
+//   or a customer's litres they never recorded, which left their drawer short
+//   (debit note). Their shortage on that shift goes up (or down) by the litres
+//   at the shift's pump price, which is what the drawer was really short; the
+//   station's revenue then changes only by the customer's price difference on
+//   those litres. Reversing the note (voiding the debit note) undoes it.
 // Tank stock never changes: the fuel left the pumps either way. A note only
 // changes who owes it.
 
@@ -39,6 +48,9 @@ export type NoteInput = {
   unitPrice?: number | null;
   reason: string;
   shiftId?: number | null;
+  // The shift's attendant owes it (credit note) or is owed it (debit note),
+  // instead of the station.
+  attendant?: boolean;
   noteDate: string;
   approver: Approver;
   actorId?: number | null;
@@ -103,6 +115,144 @@ function notePrice(correction: 'litres' | 'price', line: any, unitPrice: unknown
   return difference;
 }
 
+export type NoteAttendant = {
+  employee_id: number;
+  employee_name: string;
+  shift_id: number;
+  // The shift's pump price for the fuel, and the litres at it.
+  price: number;
+  amount: number;
+  // Credit notes: litres of the customer's on the shift not yet put on them.
+  available_litres: number | null;
+};
+
+type Link = { invoice_note_id: number } | { invoice_id: number };
+
+// The attendant a note names: whoever worked its shift, at the shift's pump
+// price. A credit note can put on them only litres recorded on this customer
+// in that shift (on this invoice) that are not on them already; a debit
+// note's litres were never recorded, so it takes the pump price of the day.
+export async function noteAttendant(
+  conn: Knex | Knex.Transaction,
+  input: {
+    accountId: number;
+    invoiceId: number | null;
+    noteType: string;
+    correction: string;
+    fuelType: string;
+    litres: number;
+    shiftId: number | null;
+  },
+): Promise<NoteAttendant> {
+  if (input.correction !== 'litres') {
+    throw httpError("Only litres can be the attendant's. The invoice price is not theirs.", 400, 'ATTENDANT_LITRES_ONLY');
+  }
+  if (!input.shiftId) throw httpError('Enter the shift number: its attendant is the one who owes it.', 400, 'SHIFT_REQUIRED');
+  const shift = await conn('shifts as s')
+    .leftJoin('employees as e', 's.employee_id', 'e.id')
+    .where('s.id', input.shiftId)
+    .first('s.id', 's.status', 's.shift_date', 's.employee_id', 'e.name');
+  if (!shift) throw httpError(`Shift #${input.shiftId} not found.`, 404, 'SHIFT_NOT_FOUND');
+  if (shift.status !== 'closed') throw httpError(`Shift #${input.shiftId} is not closed.`, 409, 'SHIFT_NOT_CLOSED');
+  if (!shift.employee_id) throw httpError(`Shift #${input.shiftId} has no attendant.`, 409, 'SHIFT_NO_ATTENDANT');
+  const fuelType = String(input.fuelType || '').trim().toLowerCase();
+  const litres = roundMoney(Number(input.litres) || 0);
+
+  let price: number;
+  let available: number | null = null;
+  if (input.noteType === 'credit_note') {
+    const recordedQuery = conn('invoice_consumption as ic')
+      .where({ 'ic.account_id': input.accountId, 'ic.shift_id': shift.id, 'ic.fuel_type': fuelType })
+      .whereNull('ic.deleted_at')
+      .where((q) => q.whereNull('ic.entry_status').orWhere('ic.entry_status', 'active'));
+    if (input.invoiceId) {
+      recordedQuery.whereIn('ic.invoice_line_id', conn('invoice_lines').where({ invoice_id: input.invoiceId }).select('id'));
+    }
+    const recorded: any = await recordedQuery.sum({ litres: 'ic.litres', value: 'ic.retail_amount' }).first();
+    if (!(cents(recorded?.litres) > 0)) {
+      throw httpError(
+        `No ${fuelType} was recorded on this customer${input.invoiceId ? ' for this invoice' : ''} in shift #${shift.id}.`,
+        400,
+        'ATTENDANT_NOT_ON_SHIFT',
+      );
+    }
+    const onAttendant: any = await conn('invoice_adjustment_notes as n')
+      .join('employee_variance_entries as v', 'v.invoice_note_id', 'n.id')
+      .where({ 'n.account_id': input.accountId, 'n.shift_id': shift.id, 'n.fuel_type': fuelType, 'n.status': 'posted', 'v.status': 'posted' })
+      .sum({ litres: 'n.litres' })
+      .first();
+    const left = cents(recorded.litres) - cents(onAttendant?.litres);
+    available = Math.max(0, left) / 100;
+    if (cents(litres) > left) {
+      throw httpError(
+        `Shift #${shift.id} recorded ${Number(recorded.litres).toFixed(2)} L of ${fuelType} on this customer; ${(cents(onAttendant?.litres) / 100).toFixed(2)} L of it are already on the attendant.`,
+        400,
+        'ATTENDANT_LITRES_EXCEED_SHIFT',
+      );
+    }
+    // The price the shift recorded them at.
+    price = roundMoney(Number(recorded.value) / Number(recorded.litres));
+  } else {
+    const day = String(shift.shift_date).slice(0, 10);
+    const retail = await getRetailPriceAsOf(conn, fuelType, day);
+    if (retail === null) throw httpError(`No ${fuelType} pump price was set on ${day}.`, 409, 'NO_PUMP_PRICE');
+    price = roundMoney(retail);
+  }
+  return {
+    employee_id: Number(shift.employee_id),
+    employee_name: String(shift.name || 'The attendant'),
+    shift_id: Number(shift.id),
+    price,
+    amount: roundMoney(litres * price),
+    available_litres: available,
+  };
+}
+
+// The attendant's side of a note: a 'correction' of their shortage on the
+// shift, like a balance move on their own shift.
+async function postAttendantEntry(
+  trx: Knex.Transaction,
+  attendant: NoteAttendant,
+  signedAmount: number,
+  link: Link,
+  documentNumber: string,
+  label: string,
+  input: NoteInput,
+) {
+  await trx('employee_variance_entries').insert({
+    employee_id: attendant.employee_id,
+    entry_type: 'correction',
+    shift_id: attendant.shift_id,
+    entry_date: input.noteDate,
+    amount: signedAmount,
+    refundable: false,
+    reference: documentNumber,
+    reason: label,
+    approved_by_employee_id: input.approver.id,
+    approved_by_name: input.approver.name,
+    created_by_employee_id: actorId(input.actorId),
+    ...link,
+  });
+  await syncVarianceAccount(trx, attendant.employee_id);
+}
+
+// Undoes a note's attendant entry when the note is reversed or its debit
+// note voided.
+export async function reverseAttendantEntries(trx: Knex.Transaction, link: Link, reason: string, actor?: number | null) {
+  const entries = await trx('employee_variance_entries').where({ ...link, status: 'posted' });
+  for (const entry of entries) {
+    await trx('employee_variance_entries').where({ id: entry.id }).update({
+      status: 'reversed',
+      reversed_at: new Date().toISOString(),
+      reversed_by_employee_id: actorId(actor),
+      reversal_reason: reason,
+    });
+    await syncVarianceAccount(trx, Number(entry.employee_id));
+  }
+}
+
+const litresText = (litres: number, fuelType: string) => `${litres.toFixed(2)} L of ${fuelType}`;
+
 // A credit note against an issued invoice (or debit-note bill).
 async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteInput) {
   const { fuelType, litres, reason } = parseNote(input);
@@ -113,6 +263,17 @@ async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteIn
     throw httpError(`The invoice price was ${kes(Number(line.agreed_price))} a litre.`, 400, 'CREDIT_PRICE_EXCEEDS_INVOICE');
   }
   const amount = roundMoney(litres * unitPrice);
+  const attendant = input.attendant
+    ? await noteAttendant(trx, {
+      accountId: Number(invoice.account_id),
+      invoiceId: Number(invoice.id),
+      noteType: 'credit_note',
+      correction: input.correction,
+      fuelType,
+      litres,
+      shiftId: input.shiftId || null,
+    })
+    : null;
 
   const posted = await trx('invoice_adjustment_notes')
     .where({ invoice_id: invoice.id, status: 'posted' })
@@ -169,6 +330,18 @@ async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteIn
     created_by_employee_id: actorId(input.actorId),
   });
   await recomputeInvoiceTotals(Number(invoice.id), trx);
+  if (attendant) {
+    const account = await trx('credit_accounts').where({ id: invoice.account_id }).first('name');
+    await postAttendantEntry(
+      trx,
+      attendant,
+      attendant.amount,
+      { invoice_note_id: Number(noteId) },
+      noteNumber,
+      `Credit note ${noteNumber}: ${litresText(litres, fuelType)} recorded on ${account?.name} in shift #${attendant.shift_id} were not taken (at ${kes(attendant.price)} a litre): ${reason}`,
+      input,
+    );
+  }
   await postInvoiceAccountingEvent(trx, {
     sourceKey: `adjustment-note:${noteId}:posted`,
     accountId: Number(invoice.account_id),
@@ -177,7 +350,9 @@ async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteIn
     eventType: 'credit_note',
     postingDate: input.noteDate,
     receivableDelta: -amount,
-    revenueAdjustment: -amount,
+    // The station loses the fuel, unless the attendant owes it: then only the
+    // customer's price difference on those litres.
+    revenueAdjustment: attendant ? roundMoney(attendant.amount - amount) : -amount,
     documentAmount: -amount,
     reason,
     actorId: input.actorId,
@@ -219,6 +394,20 @@ async function createDebitNoteBill(
     fromDate = String(shift.shift_date).slice(0, 10);
   }
   const amount = roundMoney(litres * unitPrice);
+  const attendant = input.attendant
+    ? await noteAttendant(trx, {
+      accountId,
+      invoiceId: correctedInvoice?.id ?? null,
+      noteType: 'debit_note',
+      correction: input.correction,
+      fuelType,
+      litres,
+      shiftId: input.shiftId || null,
+    })
+    : null;
+  // Extra revenue, unless the attendant's drawer was short by these litres:
+  // then only the customer's price difference on them.
+  const revenue = attendant ? roundMoney(amount - attendant.amount) : amount;
   const termsDays = Math.max(0, Math.trunc(Number(account.payment_terms_days || 0)));
   const number = await nextInvoiceDocumentNumber(trx, 'debit_note', input.noteDate);
   const [billId] = await trx('customer_invoices').insert({
@@ -233,7 +422,7 @@ async function createDebitNoteBill(
     reservation_status: 'not_applicable',
     total_amount: amount,
     // Its revenue: voiding it reverses this (invoiceLifecycle.ts).
-    price_adjustment_amount: amount,
+    price_adjustment_amount: revenue,
     balance: amount,
     reason,
     notes: reason,
@@ -252,6 +441,17 @@ async function createDebitNoteBill(
     line_total: amount,
   });
   await recomputeInvoiceTotals(Number(billId), trx);
+  if (attendant) {
+    await postAttendantEntry(
+      trx,
+      attendant,
+      -attendant.amount,
+      { invoice_id: Number(billId) },
+      number,
+      `Debit note ${number}: ${litresText(litres, fuelType)} taken by ${account.name} in shift #${attendant.shift_id} were not recorded (at ${kes(attendant.price)} a litre): ${reason}`,
+      input,
+    );
+  }
   await postInvoiceAccountingEvent(trx, {
     sourceKey: `debit-note:${billId}:issue`,
     accountId,
@@ -259,7 +459,7 @@ async function createDebitNoteBill(
     eventType: 'debit_note',
     postingDate: input.noteDate,
     receivableDelta: amount,
-    revenueAdjustment: amount,
+    revenueAdjustment: revenue,
     documentAmount: amount,
     reason,
     actorId: input.actorId,
@@ -330,6 +530,7 @@ export async function reverseInvoiceAdjustment(
       reversed_by_employee_id: actorId(input.actorId),
       reversal_reason: reason,
     });
+    await reverseAttendantEntries(trx, { invoice_note_id: Number(note.id) }, `${note.note_number} reversed: ${reason}`, input.actorId);
     try {
       await recomputeInvoiceTotals(Number(note.invoice_id), trx);
     } catch (err: any) {
@@ -354,7 +555,7 @@ export async function reverseInvoiceAdjustment(
       eventType: `${note.note_type}_reversal`,
       postingDate: input.reversalDate,
       receivableDelta: -Number(note.signed_amount),
-      revenueAdjustment: -Number(note.signed_amount),
+      revenueAdjustment: originalEvent ? -Number(originalEvent.revenue_adjustment || 0) : -Number(note.signed_amount),
       documentAmount: -Number(note.signed_amount),
       reversalOfEventId: originalEvent?.id || null,
       reason,

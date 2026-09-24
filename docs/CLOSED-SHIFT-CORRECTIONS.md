@@ -87,7 +87,10 @@ A move is never edited or deleted. A wrong move is fixed by moving it back.
 Their fuel is billed on invoices, so it is corrected with a **credit note**
 (they owe less) or **debit note** (they owe more), always in fuel, litres and
 price per litre. A debit note is a bill of its own and also works for a shift
-when there is no invoice yet. See
+when there is no invoice yet. When the shift's attendant is the one who owes
+it (fuel recorded on the customer to cover their drawer, or the customer's fuel
+never recorded), the note names them and their shortage on that shift changes,
+as a customer-to-attendant move does. See
 [Invoice Customer Workflow](INVOICE-CUSTOMER-WORKFLOW.md).
 
 ## Corrections Made Before This Rule

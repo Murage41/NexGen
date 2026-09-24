@@ -160,6 +160,17 @@ async function createSchema(db: Knex) {
     table.timestamp('created_at').defaultTo(db.fn.now());
     table.timestamp('reversed_at').nullable();
   });
+  // Migration 050: a note's attendant entry, undone with the note.
+  await db.schema.createTable('employee_variance_entries', (table) => {
+    table.increments('id').primary();
+    table.integer('employee_id').notNullable();
+    table.string('status').notNullable().defaultTo('posted');
+    table.integer('invoice_note_id').nullable();
+    table.integer('invoice_id').nullable();
+    table.timestamp('reversed_at').nullable();
+    table.integer('reversed_by_employee_id').nullable();
+    table.text('reversal_reason').nullable();
+  });
   await db.schema.createTable('invoice_accounting_events', (table) => {
     table.increments('id').primary();
     table.string('source_key').notNullable().unique();

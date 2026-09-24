@@ -17,10 +17,12 @@ import {
 } from '../services/invoiceDraftReservations';
 import {
   postInvoiceAdjustment,
+  noteAttendant,
   postStandaloneDebitNote,
   reverseInvoiceAdjustment,
 } from '../services/invoiceAdjustments';
 import { approvalBindings, resolveApprover } from '../services/approval';
+import { getVarianceStatement } from '../services/employeeVariances';
 import {
   issueReservedCustomerInvoice,
   voidIssuedCustomerInvoice,
@@ -227,7 +229,9 @@ router.post('/adjustments/:noteId/reverse', requireAdmin, async (req: any, res) 
 
 // Body: { note_type, correction: 'litres'|'price', fuel_type, litres,
 //         unit_price? (price corrections, and debit notes for a shift),
-//         reason, shift_id?, approval_token? } (services/invoiceAdjustments.ts)
+//         reason, shift_id?, attendant? (the shift's attendant owes it, or is
+//         owed it), approval_token? } (services/invoiceAdjustments.ts)
+const wantsAttendant = (value: unknown) => value === true || value === 'true';
 function noteInput(req: any, approver: any) {
   return {
     noteType: req.body?.note_type,
@@ -237,6 +241,7 @@ function noteInput(req: any, approver: any) {
     unitPrice: req.body?.unit_price === undefined || req.body?.unit_price === null ? null : Number(req.body.unit_price),
     reason: req.body?.reason,
     shiftId: Number(req.body?.shift_id) > 0 ? Number(req.body.shift_id) : null,
+    attendant: wantsAttendant(req.body?.attendant),
     noteDate: getKenyaDate(),
     approver,
     actorId: req.employee?.id,
@@ -253,9 +258,35 @@ const noteApproval = (req: any, accountId: number, invoiceId: number | null) => 
     fuel_type: req.body?.fuel_type,
     litres: req.body?.litres,
     unit_price: req.body?.correction === 'litres' && invoiceId ? 0 : req.body?.unit_price,
+    shift_id: req.body?.shift_id,
+    attendant: wantsAttendant(req.body?.attendant),
   }),
   db,
 );
+
+// GET /note-attendant?account_id&invoice_id?&note_type&fuel_type&litres&shift_id
+// Who a note on a shift would put the litres on, and at what pump price, so
+// the form shows it before the PIN.
+router.get('/note-attendant', requireAdmin, async (req: any, res) => {
+  try {
+    const q = req.query || {};
+    const data = await noteAttendant(db, {
+      accountId: Number(q.account_id),
+      invoiceId: Number(q.invoice_id) > 0 ? Number(q.invoice_id) : null,
+      noteType: String(q.note_type || ''),
+      correction: 'litres',
+      fuelType: String(q.fuel_type || ''),
+      litres: Number(q.litres) || 0,
+      shiftId: Number(q.shift_id) > 0 ? Number(q.shift_id) : null,
+    });
+    // Their shortage on that shift as it stands, so the approver can see it.
+    const statement = await getVarianceStatement(db, data.employee_id);
+    const row: any = statement.rows.find((r: any) => r.shift_id === data.shift_id);
+    res.json({ success: true, data: { ...data, shift_shortage: Number(row?.shortage || 0) } });
+  } catch (err: any) {
+    res.status(err.http || 500).json({ success: false, error: err.message, code: err.code });
+  }
+});
 
 // POST /debit-notes - a debit note for a customer with no invoice to correct:
 // fuel taken on a shift but recorded on someone else, or missed.
@@ -307,10 +338,20 @@ router.get('/:id', async (req, res) => {
       .select('a.*', 'p.payment_date', 'p.payment_method', 'p.reference')
       .orderBy('p.payment_date', 'asc');
 
-    const adjustmentNotes = await db('invoice_adjustment_notes')
-      .where({ invoice_id: invoice.id })
-      .orderBy('note_date', 'asc')
-      .orderBy('id', 'asc');
+    // With the attendant a note put the litres on, if any.
+    const adjustmentNotes = await db('invoice_adjustment_notes as n')
+      .leftJoin('employee_variance_entries as v', 'v.invoice_note_id', 'n.id')
+      .leftJoin('employees as e', 'v.employee_id', 'e.id')
+      .where('n.invoice_id', invoice.id)
+      .select('n.*', 'e.name as attendant_name', 'v.amount as attendant_amount', 'v.status as attendant_status')
+      .orderBy('n.note_date', 'asc')
+      .orderBy('n.id', 'asc');
+    const attendant = invoice.document_kind === 'debit_note'
+      ? await db('employee_variance_entries as v')
+        .leftJoin('employees as e', 'v.employee_id', 'e.id')
+        .where('v.invoice_id', invoice.id)
+        .first('e.name', 'v.amount', 'v.shift_id', 'v.status')
+      : null;
     const accountingEvents = await db('invoice_accounting_events')
       .where({ invoice_id: invoice.id })
       .orderBy('posting_date', 'asc')
@@ -341,6 +382,7 @@ router.get('/:id', async (req, res) => {
         credit_applied: creditApplied,
         debit_notes: debitNotes,
         corrects_invoice: corrects,
+        attendant: attendant || null,
         adjustment_notes: adjustmentNotes,
         accounting_events: accountingEvents,
       },

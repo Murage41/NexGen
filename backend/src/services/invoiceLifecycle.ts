@@ -10,6 +10,7 @@ import {
   releaseInvoiceReservation,
   validateDraftReservationForIssue,
 } from './invoiceDraftReservations';
+import { reverseAttendantEntries } from './invoiceAdjustments';
 import { applyInvoiceCustomerCredit, recomputeInvoiceTotals, roundMoney } from './receivablePayments';
 
 function httpError(message: string, http: number, code?: string): Error {
@@ -160,6 +161,8 @@ export async function voidIssuedCustomerInvoice(
       voided_by_employee_id: actorId(input.actorId),
       void_reason: reason,
     });
+    // A debit note that put a shift's missed litres on its attendant.
+    await reverseAttendantEntries(trx, { invoice_id: input.invoiceId }, `${invoice.invoice_number} voided: ${reason}`, input.actorId);
 
     await recomputeAccountBalance(invoice.account_id, trx);
     await postInvoiceAccountingEvent(trx, {

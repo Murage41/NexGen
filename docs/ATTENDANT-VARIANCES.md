@@ -76,6 +76,12 @@ balance** (see [Fixing a Mistake on a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md)
 The station is never one side of an attendant's move: it neither writes a
 shortage off nor adds one.
 
+For an **invoice customer** the same is done with a credit or debit note that
+names the shift's attendant: fuel recorded on the customer to cover the drawer
+(their shortage goes up), or the customer's fuel never recorded (it goes down),
+at the shift's pump price. See
+[Invoice Customer Workflow](INVOICE-CUSTOMER-WORKFLOW.md).
+
 ## History Kept As It Was
 
 - Write-offs and paybacks recorded before 24 Sep 2026 stay on the list and

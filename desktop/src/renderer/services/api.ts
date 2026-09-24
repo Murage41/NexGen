@@ -195,6 +195,9 @@ export const reverseCustomerInvoiceAdjustment = (noteId: number, data: Record<st
 // A debit note for a shift, for a customer with no invoice to correct.
 export const createStandaloneDebitNote = (data: Record<string, unknown>) =>
   api.post('/customer-invoices/debit-notes', data);
+// Who a note on a shift would put the litres on, at the shift's pump price.
+export const getNoteAttendant = (params: Record<string, unknown>) =>
+  api.get('/customer-invoices/note-attendant', { params });
 export const getInvoiceAccountingEvents = (params?: any) =>
   api.get('/customer-invoices/accounting-events', { params });
 

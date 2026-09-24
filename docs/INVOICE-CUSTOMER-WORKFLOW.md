@@ -140,6 +140,27 @@ price per litre.
 charged wrongly and a debit note on the one who took it, each at their own
 agreed price.
 
+**When the shift's attendant owes it.** A litres note that gives a shift number
+can name that shift's attendant instead of the station:
+
+- **Credit note:** the attendant recorded fuel on the customer that the
+  customer never took, to cover a drawer shortage. Tick *the attendant of
+  shift #N ... owes it*. The customer is credited at their invoice price; the
+  attendant's shortage on that shift goes up by the litres at the **shift's
+  pump price** (what their drawer was really short). Only litres recorded on
+  this customer in that shift, on this invoice, can be put on them, and never
+  the same litres twice.
+- **Debit note:** the customer took fuel the attendant never recorded, so the
+  drawer came up short by it. Tick *... never recorded this fuel*. The customer
+  is billed; the attendant's shortage on that shift goes down by the litres at
+  that day's pump price.
+
+Before the PIN, the form shows the attendant, their shortage on that shift now,
+and the change. The station's revenue then moves only by the customer's price
+difference on those litres. Reversing the credit note (or voiding the debit
+note) undoes the attendant's change too. A price correction is never the
+attendant's.
+
 **Mistakes on notes.** A note is never edited. Reverse a wrong credit note (any
 credit it gave other invoices comes back off them). Void a wrong debit note
 while it is unpaid; once paid (in money or with the customer's credit), correct
@@ -169,8 +190,11 @@ live station records:
     and the credit pays their next invoice when it is issued.
 11. Post a debit note for a shift on a customer with no invoice: it appears as
     a DN- bill, due and payable.
-12. Attempt to edit invoiced consumption from the shift and confirm rejection.
-13. Filter the customer history by date, shift, fuel, source, and status on
+12. Post a litres credit note naming the shift's attendant: the attendant's
+    shortage on that shift (Employees) goes up by the litres at the shift's pump
+    price; reverse it and confirm the shortage returns.
+13. Attempt to edit invoiced consumption from the shift and confirm rejection.
+14. Filter the customer history by date, shift, fuel, source, and status on
     both desktop and mobile.
 
 After the test, run the receivable integrity audit:

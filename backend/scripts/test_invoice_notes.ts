@@ -8,9 +8,11 @@ import express from 'express';
 // migration 049): every note is fuel, litres and a price per litre; a credit
 // note beyond what the invoice still owes becomes the customer's credit, which
 // pays their open and next invoices and is never paid out; a debit note is a
-// bill of its own, for an invoice or a shift. Notes are dated today and need an
-// administrator. Runs on a private temporary database through the real
-// routes; never touches data/nexgen.db.
+// bill of its own, for an invoice or a shift. A note on a shift can name its
+// attendant (migration 050): their shortage on the shift changes by the litres
+// at the shift's pump price. Notes are dated today and need an administrator.
+// Runs on a private temporary database through the real routes; never touches
+// data/nexgen.db.
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexgen-invoice-notes-test-'));
   process.env.NEXGEN_DATA_DIR = directory;
@@ -22,6 +24,7 @@ async function main() {
   const { invoiceCustomerCredit } = await import('../src/services/receivablePayments');
   const { getReceivablePositionAsOf } = await import('../src/services/receivableReporting');
   const { auditReceivableIntegrity } = await import('../src/services/receivableIntegrity');
+  const { getVarianceStatement, postShiftVariance } = await import('../src/services/employeeVariances');
   const { default: invoicesRouter } = await import('../src/routes/customerInvoices');
   const { default: authRouter } = await import('../src/routes/auth');
 
@@ -156,7 +159,7 @@ async function main() {
       approval_token: await approve({ purpose: 'invoice_note', account_id: mugendi, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185 }),
     });
     assert.equal(r.status, 400, 'the shift is required');
-    const token = await approve({ purpose: 'invoice_note', account_id: mugendi, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185 });
+    const token = await approve({ purpose: 'invoice_note', account_id: mugendi, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1 });
     r = await call('POST', '/inv/debit-notes', {
       account_id: mugendi, fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1, reason: 'Fuel recorded on Blossom, was Mugendi', approval_token: token,
     });
@@ -210,6 +213,96 @@ async function main() {
     assert.equal(r.status, 409);
     assert.match(r.body.error, /Issue a credit note instead/);
     console.log('PASS a paid debit note gives a clear answer');
+
+    // 12. The attendant option. Kamau's invoice: 30 L recorded on shift s3 at
+    // the pump price 190, billed at the agreed 185 (5,550).
+    const kamau = await customer('Kamau');
+    const s3 = await closedShift(daysAgo(6));
+    await fuel(s3, kamau, 30);
+    const kDraft = await call('POST', '/inv', { account_id: kamau, from_date: daysAgo(40), to_date: today, agreed_prices: { diesel: 185 } });
+    assert.equal(kDraft.status, 201, JSON.stringify(kDraft.body));
+    const kIssued = await call('POST', `/inv/${kDraft.body.data.id}/issue`, {});
+    assert.equal(kIssued.status, 200, JSON.stringify(kIssued.body));
+    const inv4 = kIssued.body.data;
+    assert.equal(Number(inv4.total_amount), 5550);
+    const owes = async () => Number((await getVarianceStatement(db, attendant)).totals.owes);
+    const shortageOn = async (shiftId: number) =>
+      Number(((await getVarianceStatement(db, attendant)).rows as any[]).find((row) => row.shift_id === shiftId)?.shortage || 0);
+    const owedBefore = await owes();
+
+    const onAttendant = { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', reason: 'Recorded on Kamau to cover the drawer', shift_id: s3, attendant: true };
+    r = await note(inv4.id, kamau, { ...onAttendant, correction: 'price', unit_price: 5, litres: 10 });
+    assert.equal(r.status, 400, 'a price is never the attendant\'s');
+    r = await note(inv4.id, kamau, { ...onAttendant, shift_id: undefined, litres: 10 });
+    assert.equal(r.status, 400, 'the shift is required');
+    r = await note(inv4.id, kamau, { ...onAttendant, shift_id: s1, litres: 10 });
+    assert.equal(r.status, 400, 'Kamau had no fuel on shift s1');
+    assert.equal(r.body.code, 'ATTENDANT_NOT_ON_SHIFT');
+    // The form's preview: the shift's attendant, at the price the shift recorded.
+    r = await call('GET', `/inv/note-attendant?account_id=${kamau}&invoice_id=${inv4.id}&note_type=credit_note&fuel_type=diesel&litres=10&shift_id=${s3}`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(
+      [r.body.data.employee_name, r.body.data.price, r.body.data.amount, r.body.data.available_litres, r.body.data.shift_shortage],
+      ['Attendant', 190, 1900, 30, 0],
+    );
+    r = await call('GET', `/inv/note-attendant?account_id=${kamau}&note_type=credit_note&fuel_type=diesel&litres=10&shift_id=${s1}`);
+    assert.equal(r.body.code, 'ATTENDANT_NOT_ON_SHIFT', "Blossom's litres on shift s1 are not Kamau's");
+    // An approval for the station is not one for the attendant.
+    const stationToken = await approve({ purpose: 'invoice_note', account_id: kamau, invoice_id: inv4.id, note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 10, unit_price: 0, shift_id: s3 });
+    r = await call('POST', `/inv/${inv4.id}/adjustments`, { ...onAttendant, litres: 10, approval_token: stationToken });
+    assert.notEqual(r.status, 201, 'the attendant was not approved');
+
+    r = await note(inv4.id, kamau, { ...onAttendant, litres: 10 });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const cn4 = r.body.data.note;
+    assert.equal(Number(cn4.amount), 1850, 'the customer is credited at the invoice price');
+    assert.equal(await balance(inv4.id), 3700);
+    assert.equal(await owes(), owedBefore + 1900, 'the attendant owes the litres at the pump price');
+    assert.equal(await shortageOn(s3), 1900, 'as a shortage on their shift');
+    let event = await db('invoice_accounting_events').where({ source_key: `adjustment-note:${cn4.id}:posted` }).first();
+    assert.equal(Number(event.revenue_adjustment), 50, 'the station keeps the fuel; only the discount on it comes back');
+    r = await note(inv4.id, kamau, { ...onAttendant, litres: 25 });
+    assert.equal(r.body.code, 'ATTENDANT_LITRES_EXCEED_SHIFT', 'only 20 L are left to put on the attendant');
+    r = await call('GET', `/inv/${inv4.id}`);
+    const shown = r.body.data.adjustment_notes.find((n: any) => n.id === cn4.id);
+    assert.deepEqual([shown.attendant_name, Number(shown.attendant_amount)], ['Attendant', 1900]);
+
+    r = await call('POST', `/inv/adjustments/${cn4.id}/reverse`, { reason: 'It was Kamau after all', approval_token: await approve({ purpose: 'invoice_note_reversal', note_id: cn4.id }) });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(await owes(), owedBefore, 'reversing the note takes it off the attendant');
+    assert.equal(await balance(inv4.id), 5550);
+    event = await db('invoice_accounting_events').where({ source_key: `adjustment-note:${cn4.id}:reversal` }).first();
+    assert.equal(Number(event.revenue_adjustment), -50);
+    console.log('PASS a credit note can put the litres on the shift\'s attendant');
+
+    // A debit note for fuel the attendant never recorded: their drawer was
+    // short by it at the pump price of the day (200), so they owe less.
+    await db('fuel_prices').insert({ fuel_type: 'diesel', price_per_litre: 200, effective_date: daysAgo(30) });
+    const s4 = await closedShift(daysAgo(5));
+    await db.transaction((trx) => postShiftVariance(trx, { id: s4, employee_id: attendant, shift_date: daysAgo(5) }, -2500, null));
+    assert.equal(await shortageOn(s4), 2500);
+    const dnFields = { account_id: kamau, fuel_type: 'diesel', litres: 10, unit_price: 185, shift_id: s4, attendant: true, reason: 'Kamau took 10 L that was never recorded' };
+    r = await call('POST', '/inv/debit-notes', {
+      ...dnFields,
+      approval_token: await approve({ purpose: 'invoice_note', invoice_id: 0, note_type: 'debit_note', correction: 'litres', ...dnFields }),
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const dn4 = r.body.data;
+    assert.equal(Number(dn4.total_amount), 1850);
+    assert.equal(Number(dn4.price_adjustment_amount), -150, 'revenue: only the customer\'s discount on those litres');
+    assert.equal(await shortageOn(s4), 500, 'their drawer was short by the 2,000 of fuel never recorded');
+    assert.equal(await owes(), owedBefore + 500);
+    r = await call('GET', `/inv/${dn4.id}`);
+    assert.deepEqual([r.body.data.attendant.name, Number(r.body.data.attendant.amount)], ['Attendant', -2000]);
+    r = await call('POST', `/inv/${dn4.id}/void`, { reason: 'debit note entered twice' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(await shortageOn(s4), 2500, 'voiding the debit note puts it back');
+    assert.equal(await owes(), owedBefore + 2500);
+    const voided = await db('invoice_accounting_events').where({ source_key: `invoice:${dn4.id}:void` }).first();
+    assert.equal(Number(voided.revenue_adjustment), 150);
+    const audit2: any = await auditReceivableIntegrity(db);
+    assert.equal(audit2.issues.length, 0, JSON.stringify(audit2.issues));
+    console.log('PASS a debit note can take missed litres off the shift\'s attendant');
   } finally {
     server?.close();
     await db.destroy();

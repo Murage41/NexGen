@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import {
   createStandaloneDebitNote,
+  getNoteAttendant,
   desktopApproval,
   getCreditAccount,
   getCustomerInvoices,
@@ -348,6 +349,7 @@ export default function InvoiceCustomerWorkspace({
               accountId={customer.id}
               approval={desktopApproval}
               post={createStandaloneDebitNote}
+              attendantPreview={getNoteAttendant}
               onDone={async () => { setDebitNote(false); await loadWorkspace(); await onChanged(); }}
               onCancel={() => setDebitNote(false)}
             />
