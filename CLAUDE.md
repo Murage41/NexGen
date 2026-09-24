@@ -50,10 +50,20 @@ worktree, follows them and keeps them current:
   sentences, no jargon, say what happens to the money. Give a recommendation,
   not a survey.
   Ask only for decisions that are truly the owner's, in one clear question.
-- **Research before suggesting** any change to how the station operates: verify
-  what the code does today (and whether it is reachable on screen), then check
-  how professional ERP/POS systems and standard accounting handle it, and cite
-  a few sources.
+- **Due diligence on every issue the owner raises** (operations, accounting,
+  credit, stock, procurement, payroll, staff access, deployment), before
+  suggesting anything:
+  1. Verify what NexGen does today in the code, with file and line evidence,
+     including whether it is actually reachable on screen and for which role.
+  2. Research how it is handled professionally: ERP/POS systems (Dynamics
+     365, SAP, Odoo, NetSuite, Lightspeed, fuel-station back offices) and
+     standard accounting, administration and procurement practice, plus
+     Kenyan rules where relevant (KRA/eTIMS, EPRA, data protection). Keep it
+     to a few authoritative sources.
+  3. Recommend what fits NexGen, mapped to that practice; say plainly what it
+     won't solve.
+  4. Cite the sources in the reply and record them in the spec in
+     `docs/ROADMAP.md`. Build only after the owner agrees.
 - **One mechanism over many features.** Prefer one general mechanism (an
   existing record type with an option) over new buttons, entry types or
   automatic rules. When the owner says "do away with X", remove X entirely. Keep
@@ -91,7 +101,8 @@ worktree, follows them and keeps them current:
   finish with `node scripts/e2e/fingerprint.cjs check` → `REAL-DB-UNCHANGED`.
 - Never pass `NEXGEN_DATA_DIR` through `cmd /c set ...` in `.claude/launch.json`
   (it was silently lost once and migrated the dev database).
-- **The GitHub repo is public.** Never commit real names, balances, PINs,
+- **The GitHub repo is public and stays public** (the station pulls from it).
+  Never commit real names, balances, PINs,
   tokens or station data. Test PINs exist only in test and scratch databases.
 - Never edit a closed shift, delete a financial row, edit a pushed migration,
   or force/rebase/reset the station PC. Corrections are new dated entries.

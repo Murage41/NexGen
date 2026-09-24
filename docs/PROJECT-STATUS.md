@@ -78,12 +78,13 @@ Last updated: 2026-09-24.
 
 ## Open items for the owner
 
-- **The GitHub repository `Murage41/NexGen` is public.** Committed files must
+- **The GitHub repository `Murage41/NexGen` stays public** (owner decision
+  2026-09-24: the station PC pulls updates from it). So committed files must
   never contain real names, balances, PINs or other station data. Some older
   docs (`RECOVERY-MECHANISM-CORRECTION.md`, `EMPLOYEE-ADMIN-ACCESS-PLAN.md`,
-  `HISTORICAL-DEBT-CLEARANCE.md`, `PAYROLL-REGRESSION-VERIFICATION.md`) already
-  name staff or customers; the owner should decide whether to make the repo
-  private or have those scrubbed.
+  `HISTORICAL-DEBT-CLEARANCE.md`, `PAYROLL-REGRESSION-VERIFICATION.md`) name
+  staff or customers; removing those names is open, awaiting the owner's
+  go-ahead (earlier versions stay in git history).
 - Accepted-for-now gaps (desktop has no login, unsigned installer, eTIMS stays
   with POSitive, dev-mode station processes): `docs/PRODUCTION-SECURITY-AND-COMPLIANCE.md`.
 
