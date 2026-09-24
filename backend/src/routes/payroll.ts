@@ -36,7 +36,7 @@ import {
   reverseEmployeeDebtReceipt,
 } from '../services/employeePay';
 import { settlementError, positiveMoney } from '../services/employeeDebt';
-import { getVarianceStatement, refundVariance, waiveVariance } from '../services/employeeVariances';
+import { getVarianceStatement } from '../services/employeeVariances';
 import { approvalBindings, resolveApprover } from '../services/approval';
 
 const router = Router();
@@ -97,6 +97,7 @@ router.get('/employees/:id', async (req, res) => {
     fail(res, e);
   }
 });
+// An employee pays their shortages, in money (cash, M-Pesa, bank).
 router.post('/employees/:id/receipts', (req, res) =>
   mutate(req, res, `debt-receipt:${req.params.id}`, (trx) =>
     recordEmployeeDebtReceipt(Number(req.params.id), req.body, actor(req), trx),
@@ -129,31 +130,10 @@ router.get('/employees/:id/variances', async (req, res) => {
     fail(res, e);
   }
 });
-// { amount, shift_id?, reason, approval_token? }
-router.post('/employees/:id/variances/waivers', (req: any, res) =>
-  mutate(req, res, `variance-waiver:${req.params.id}`, async (trx) => {
-    const approver = await resolveApprover(
-      actor(req),
-      req.body?.approval_token,
-      approvalBindings.variance_waiver({ for_employee_id: Number(req.params.id), shift_id: req.body?.shift_id, amount: req.body?.amount }),
-      trx,
-    );
-    await waiveVariance(trx, Number(req.params.id), req.body || {}, approver, actor(req));
-    return getVarianceStatement(trx, Number(req.params.id));
-  }),
-);
-// { amount, method: 'cash'|'mpesa', date, reference?, approval_token? }
-router.post('/employees/:id/variances/refunds', (req: any, res) =>
-  mutate(req, res, `variance-refund:${req.params.id}`, async (trx) => {
-    const approver = await resolveApprover(
-      actor(req),
-      req.body?.approval_token,
-      approvalBindings.variance_refund({ for_employee_id: Number(req.params.id), method: req.body?.method, amount: req.body?.amount }),
-      trx,
-    );
-    await refundVariance(trx, Number(req.params.id), req.body || {}, approver, actor(req));
-    return getVarianceStatement(trx, Number(req.params.id));
-  }),
+// Removed 2026-09-24: an employee pays their shortages; nothing is written off
+// or paid back. Older clients get a clear answer.
+router.post(['/employees/:id/variances/waivers', '/employees/:id/variances/refunds'], (_req, res) =>
+  res.status(410).json({ success: false, error: 'Shortages are only paid by the employee. Write-offs and paying back were removed.' }),
 );
 // Retired with debt recovery: variances are repaid separately and never taken
 // from pay.
@@ -321,7 +301,7 @@ router.post(
         const shift = await trx('shifts').where({ id: p.shift_id }).first();
         if (shift?.status !== 'open')
           throw settlementError(
-            'A payment in a closed shift requires a shift accounting correction.',
+            'A payment on a closed shift cannot be changed. Fix it with Move balance on the employee\'s Variances.',
           );
       }
       const line = await trx('payroll_lines')

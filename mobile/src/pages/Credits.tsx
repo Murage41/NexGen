@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { CreditCard, Phone, ChevronRight, Trash2, Users, Briefcase, ArrowDownCircle, ArrowUpCircle, Banknote, UserPlus, Pencil, X } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, balanceMoveApi } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../shared/ui/CustomerAccountForm';
 import { CustomerCreditPanel } from '../../../shared/ui/CustomerCredit';
+import { MoveBalanceButton } from '../../../shared/ui/BalanceMove';
 import { getKenyaDate } from '../utils/timezone';
 
 type FilterTab = 'all' | 'customer' | 'employee';
@@ -189,6 +190,15 @@ export default function Credits() {
                 canRefund={isAdmin}
                 refund={refundCustomerCredit}
                 onRefunded={async () => { await loadAccounts(); await openAccount(acct); }}
+              />
+            </div>
+          )}
+          {isAdmin && isCustomer && acct.billing_mode !== 'invoice' && (
+            <div className="mt-3">
+              <MoveBalanceButton
+                api={balanceMoveApi}
+                initialFrom={{ kind: 'customer', id: acct.id }}
+                onDone={async () => { await loadAccounts(); await openAccount(acct); }}
               />
             </div>
           )}

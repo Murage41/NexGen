@@ -72,7 +72,7 @@ export function EmployeePayView({ load, admin = false, actions, approval }: {
           </p>
         </div>
         <div className="border bg-white rounded-xl p-4">
-          <p className="text-sm text-gray-500">Variances</p>
+          <p className="text-sm text-gray-500">Shortages</p>
           <p className="text-xl font-semibold">{describeVarianceTotals(data.variances?.totals).text}</p>
         </div>
       </div>

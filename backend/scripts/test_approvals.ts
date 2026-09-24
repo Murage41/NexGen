@@ -58,7 +58,7 @@ async function main() {
         ...(options.body ? { body: JSON.stringify(options.body) } : {}),
       });
     const desktop = { 'x-desktop-key': process.env.DESKTOP_KEY! };
-    const subject = { purpose: 'variance_waiver', for_employee_id: attendant, shift_id: 0, amount: 400 };
+    const subject = { purpose: 'balance_move', from_kind: 'customer', from_id: 1, to_kind: 'customer', to_id: 2, shift_id: 0, amount: 400 };
     const verify = (body: any, headers: Record<string, string> = desktop) =>
       call('/auth/verify-pin', { method: 'POST', headers, body });
 
@@ -79,7 +79,7 @@ async function main() {
     assert.equal(
       (await verify(pinFor(owner, '4821'), attendantSession)).status,
       403,
-      'an attendant cannot request a write-off approval',
+      'an attendant cannot request an administrator-only approval',
     );
     const overrideSubject = { purpose: 'credit_override', account_id: 1, shift_id: 1, amount: 500 };
     assert.equal(
@@ -89,7 +89,10 @@ async function main() {
     );
     assert.equal((await verify({ ...subject, purpose: 'payout', employee_id: owner, pin: '4821' })).status, 400, 'unknown purpose');
     assert.equal((await verify({ purpose: 'recovery', amount: 400, employee_id: owner, pin: '4821' })).status, 400, 'debt recovery is no longer approved');
-    assert.equal((await verify({ purpose: 'variance_refund', amount: 400, method: 'cash', employee_id: owner, pin: '4821' })).status, 400, 'decision not described');
+    assert.equal((await verify({ purpose: 'balance_move', amount: 400, employee_id: owner, pin: '4821' })).status, 400, 'decision not described');
+    for (const retiredPurpose of ['variance_waiver', 'variance_settlement', 'variance_refund']) {
+      assert.equal((await verify({ ...subject, purpose: retiredPurpose, employee_id: owner, pin: '4821' })).status, 400, `${retiredPurpose} is no longer approved`);
+    }
     assert.equal((await verify(pinFor(attendant, '9999'))).status, 403, 'an attendant cannot approve');
     assert.equal((await verify(pinFor(retired, '2468'))).status, 403, 'an inactive admin cannot approve');
 
@@ -104,7 +107,7 @@ async function main() {
     assert.equal(okBody.data.approver.name, 'Owner Admin');
     assert(!JSON.stringify(okBody).includes('scrypt'), 'the PIN hash never leaves the server');
     const token: string = okBody.data.approval_token;
-    const binding400 = approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 400 });
+    const binding400 = approvalBindings.balance_move({ from_kind: 'customer', from_id: 1, to_kind: 'customer', to_id: 2, shift_id: 0, amount: 400 });
     assert.equal(auth.verifyApprovalToken(token)?.binding, binding400);
 
     const mobileAdmin = await verify(pinFor(owner, '4821'), { Authorization: `Bearer ${auth.generateToken(owner, 'admin')}` });
@@ -115,7 +118,7 @@ async function main() {
     assert.equal(auth.verifyApprovalToken(auth.generateToken(owner, 'admin')), null, 'a session is not an approval');
     const dot = token.lastIndexOf('.');
     const claims = JSON.parse(Buffer.from(token.slice(0, dot), 'base64').toString());
-    const forged = Buffer.from(JSON.stringify({ ...claims, binding: approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 9000 }) })).toString('base64');
+    const forged = Buffer.from(JSON.stringify({ ...claims, binding: approvalBindings.balance_move({ from_kind: 'customer', from_id: 1, to_kind: 'customer', to_id: 2, shift_id: 0, amount: 9000 }) })).toString('base64');
     assert.equal(auth.verifyApprovalToken(`${forged}.${token.slice(dot + 1)}`), null, 'editing the binding breaks the signature');
     const realNow = Date.now;
     Date.now = () => realNow() - auth.APPROVAL_TOKEN_TTL_MS - 1000;
@@ -134,7 +137,7 @@ async function main() {
     );
     await assert.rejects(() => resolveApprover(null, undefined, binding400, db), /Select the approving administrator/);
     await assert.rejects(
-      () => resolveApprover(null, token, approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 0 }), db),
+      () => resolveApprover(null, token, approvalBindings.balance_move({ from_kind: 'customer', from_id: 1, to_kind: 'customer', to_id: 2, shift_id: 0, amount: 0 }), db),
       /no longer matches/,
       'approval of KES 400 cannot approve KES 0',
     );
@@ -145,58 +148,33 @@ async function main() {
     await db('employees').where({ id: manager }).update({ active: true });
     console.log('PASS session approver, missing approval, mismatched decision, revoked approver');
 
-    // ---- C. Writing off and paying back a variance ----
+    // ---- C. An employee pays shortages in money; nothing is written off or paid back ----
     const today = getKenyaDate();
     const [shiftId] = await db('shifts').insert({ employee_id: attendant, shift_date: today, start_time: `${today}T06:00:00Z`, status: 'closed', wage_paid: 0 });
     await db.transaction((trx) => postShiftVariance(trx, { id: shiftId, employee_id: attendant, shift_date: today }, -300, owner));
     const headers = (key: string, extra: Record<string, string> = desktop) => ({ ...extra, 'Idempotency-Key': key });
-    const waive = (body: any, key: string, extra?: Record<string, string>) =>
-      call(`/payroll/employees/${attendant}/variances/waivers`, { method: 'POST', headers: headers(key, extra), body });
-    let res = await waive({ amount: 100, shift_id: shiftId, reason: 'Meter fault' }, 'waiver-001');
-    assert.equal(res.status, 400, 'the desktop must name an approver');
-    const for100 = auth.generateApprovalToken(owner, approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: shiftId, amount: 100 }));
-    res = await waive({ amount: 150, shift_id: shiftId, reason: 'Meter fault', approval_token: for100 }, 'waiver-002');
-    assert.equal(res.status, 403, 'an approval of KES 100 cannot write off KES 150');
-    res = await waive({ amount: 100, reason: 'Meter fault', approval_token: for100 }, 'waiver-003');
-    assert.equal(res.status, 403, 'an approval for one shift cannot write off oldest first');
-    res = await waive({ amount: 100, shift_id: shiftId, reason: 'Meter fault', approval_token: for100 }, 'waiver-004');
-    assert.equal(res.status, 200);
+    const pay = (body: any, key: string) =>
+      call(`/payroll/employees/${attendant}/receipts`, { method: 'POST', headers: headers(key), body });
+    for (const method of ['write_off', 'surplus']) {
+      // With a reference, so the method is the only thing wrong.
+      const refused = await pay({ amount: 100, payment_method: method, reference: 'REF123', notes: 'x', date: today }, `nocash-${method}`);
+      assert.equal(refused.status, 400, `${method} is not a payment`);
+      assert.match((await refused.json()).error, /cash, M-Pesa or bank/);
+    }
+    for (const route of ['waivers', 'refunds']) {
+      const gone = await call(`/payroll/employees/${attendant}/variances/${route}`, { method: 'POST', headers: headers(`retired-${route}`), body: { amount: 10 } });
+      assert.equal(gone.status, 410, `${route} are retired`);
+    }
+    let res = await pay({ amount: 150, payment_method: 'cash', date: today }, 'repayment-001');
+    assert.equal(res.status, 200, 'a cash payment needs no reference');
+    res = await pay({ amount: 150, payment_method: 'mpesa', date: today }, 'repayment-002');
+    assert.equal(res.status, 400, 'M-Pesa needs its reference');
+    res = await pay({ amount: 500, payment_method: 'cash', date: today }, 'repayment-003');
+    assert.equal(res.status, 409, 'never more than is owed');
     let statement = await getVarianceStatement(db, attendant);
-    assert.equal(statement.totals.owes, 200);
-    const waiver = await db('employee_variance_entries').where({ entry_type: 'waiver' }).first();
-    assert.equal(waiver.approved_by_name, 'Owner Admin');
-    assert(!JSON.stringify(waiver).includes(for100), 'the approval token is never stored');
-    // A signed-in admin on the phone approves as themselves.
-    res = await waive({ amount: 50, reason: 'Customer drove off' }, 'waiver-005', { Authorization: `Bearer ${auth.generateToken(manager, 'admin')}` });
-    assert.equal(res.status, 200);
-    assert.equal((await db('employee_variance_entries').where({ entry_type: 'waiver' }).orderBy('id', 'desc').first()).approved_by_name, 'Manager Admin');
-    assert.equal((await getVarianceStatement(db, attendant)).totals.owes, 150);
-    // A write-off can never exceed what is owed.
-    const tooMuch = auth.generateApprovalToken(owner, approvalBindings.variance_waiver({ for_employee_id: attendant, shift_id: 0, amount: 500 }));
-    res = await waive({ amount: 500, reason: 'All of it', approval_token: tooMuch }, 'waiver-006');
-    assert.equal(res.status, 409);
-
-    // Pay back: only money the attendant repaid that covers nothing.
-    const refund = (body: any, key: string) =>
-      call(`/payroll/employees/${attendant}/variances/refunds`, { method: 'POST', headers: headers(key), body });
-    const refundToken = (amount: number) =>
-      auth.generateApprovalToken(owner, approvalBindings.variance_refund({ for_employee_id: attendant, method: 'cash', amount }));
-    res = await refund({ amount: 10, method: 'cash', date: today, approval_token: refundToken(10) }, 'refund-001');
-    assert.equal(res.status, 409, 'nothing to pay back yet');
-    res = await call(`/payroll/employees/${attendant}/receipts`, {
-      method: 'POST', headers: headers('repayment-001'), body: { amount: 150, payment_method: 'cash', date: today },
-    });
-    assert.equal(res.status, 200, 'a cash repayment needs no reference');
-    const correction = await db('shift_accountability_adjustments').insert({ shift_id: shiftId, adjustment_type: 'shift_correction', amount_delta: 0, variance_before: -300, variance_after: -240, reason: 'test' });
-    await db('employee_variance_entries').insert({ employee_id: attendant, entry_type: 'correction', entry_date: today, amount: -60, shift_id: shiftId, correction_id: correction[0] });
-    statement = await getVarianceStatement(db, attendant);
-    assert.equal(statement.totals.refundable, 60, 'the correction freed 60 of the repayment');
-    res = await refund({ amount: 60, method: 'cash', date: today, approval_token: refundToken(10) }, 'refund-002');
-    assert.equal(res.status, 403, 'bound to the amount');
-    res = await refund({ amount: 60, method: 'cash', date: today, approval_token: refundToken(60) }, 'refund-003');
-    assert.equal(res.status, 200);
-    assert.equal((await getVarianceStatement(db, attendant)).totals.refundable, 0);
-    console.log('PASS write-off and pay-back need an approval bound to employee, shift and amount');
+    assert.deepEqual([statement.totals.owes, statement.totals.credit], [150, 0]);
+    assert.equal((await db('employee_variance_entries').whereIn('entry_type', ['waiver', 'refund'])).length, 0);
+    console.log('PASS shortages are paid in money only; write-offs and paybacks are gone');
 
     // ---- D. Validators, older clients, and log redaction ----
     const reviewed = { readings_reviewed: true, collections_reviewed: true, entries_reviewed: true };

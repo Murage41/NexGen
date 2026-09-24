@@ -174,6 +174,7 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
       this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
     })
     .whereRaw("date(credit.created_at, '+3 hours') BETWEEN ? AND ?", [from, to])
+    .whereNull('credit.move_id')
     .sum({ total: 'credit.amount' })
     .first();
   const moneyPaymentsRow = await db('credit_payments as payment')
@@ -189,8 +190,26 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
       this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
     })
     .whereBetween('payment.date', [from, to])
+    .where((q: any) => q.whereNull('payment.payment_type').orWhereNot('payment.payment_type', 'adjustment'))
     .sum({ total: 'payment.amount' })
     .first();
+  // Balance moves after closed-shift mistakes (services/balanceMoves.ts): no
+  // money moved. Onto customers as credits, off them as non-cash payments.
+  const movedOnRow = await moneyCustomer(db('credits as credit'))
+    .whereNull('credit.deleted_at')
+    .whereNotNull('credit.move_id')
+    .whereRaw("date(credit.created_at, '+3 hours') BETWEEN ? AND ?", [from, to])
+    .sum({ total: 'credit.amount' })
+    .first();
+  const movedOffRow = await moneyCustomerPayment(db)
+    .where('payment.status', 'posted')
+    .where('payment.payment_type', 'adjustment')
+    .whereBetween('payment.date', [from, to])
+    .sum({ total: 'payment.amount' })
+    .first();
+  const moneyBalanceAdjustments = roundMoney(
+    Number((movedOnRow as any)?.total || 0) - Number((movedOffRow as any)?.total || 0),
+  );
   // Gross: credits issued and payments received in the period count even if a
   // later correction reversed them; that correction is its own line.
   const correctedIssuedRow = await moneyCustomer(db('credits as credit'))
@@ -260,10 +279,11 @@ export async function getReceivableActivity(db: Knex, from: string, to: string) 
     money_credit_corrections: moneyCreditCorrections,
     money_payment_reversals: moneyPaymentReversals,
     money_refunds: moneyRefunds,
+    money_balance_adjustments: moneyBalanceAdjustments,
     invoice_receivables_issued: invoiceIssued,
     invoice_adjustments: invoiceAdjustments,
     total_receivables_issued: roundMoney(
-      moneyCreditsIssued + moneyCreditCorrections + moneyPaymentReversals + invoiceIssued + invoiceAdjustments,
+      moneyCreditsIssued + moneyCreditCorrections + moneyPaymentReversals + moneyBalanceAdjustments + invoiceIssued + invoiceAdjustments,
     ),
     money_payments_received: moneyPaymentsReceived,
     invoice_payments_received: invoicePaymentsReceived,
@@ -281,6 +301,7 @@ export async function getDirectReceivableCashInflows(db: Knex, from: string, to:
     .whereNull('payment.deleted_at')
     .where('payment.status', 'posted')
     .whereNull('payment.shift_id')
+    .where((q: any) => q.whereNull('payment.payment_type').orWhereNot('payment.payment_type', 'adjustment'))
     .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where(function (this: any) {
@@ -384,7 +405,8 @@ export async function getCombinedDebtorAging(db: Knex, asOfDate: string) {
     .select(
       'credit.account_id',
       'credit.balance',
-      db.raw("date(credit.created_at, '+3 hours') as due_date"),
+      // A balance move's credit ages from its shift (origin_date).
+      db.raw("COALESCE(credit.origin_date, date(credit.created_at, '+3 hours')) as due_date"),
     );
   const invoiceDocuments = await db('customer_invoices as invoice')
     .join('credit_accounts as account', 'invoice.account_id', 'account.id')

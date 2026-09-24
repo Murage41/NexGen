@@ -38,6 +38,9 @@ async function run() {
       // Closed-shift corrections (migration 045).
       table.string('reversed_at').nullable();
       table.integer('reversed_by_correction_id').nullable();
+      // Balance moves (migration 048).
+      table.integer('move_id').nullable();
+      table.date('origin_date').nullable();
     });
     await db.schema.createTable('credit_payments', (table) => {
       table.increments('id').primary();

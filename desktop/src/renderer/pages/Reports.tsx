@@ -1,8 +1,9 @@
+import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
 import { useState, Fragment } from 'react';
 import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
   getStockReconciliationByShift, getDebtorAging, getCashFlow,
-  exportMonthlyReport, exportStockReconciliation, getShiftCorrections,
+  exportMonthlyReport, exportStockReconciliation, getShiftCorrections, getBalanceMoves,
 } from '../services/api';
 import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
 import {
@@ -58,6 +59,7 @@ export default function Reports() {
   const [corrFrom, setCorrFrom] = useState(getKenyaMonth() + '-01');
   const [corrTo, setCorrTo] = useState(getKenyaDate());
   const [corrData, setCorrData] = useState<any[] | null>(null);
+  const [moveData, setMoveData] = useState<any[] | null>(null);
 
   async function loadDailyReport() {
     setLoading(true);
@@ -116,8 +118,18 @@ export default function Reports() {
   }
   async function loadCorrections() {
     setLoading(true);
-    try { const res = await getShiftCorrections({ from: corrFrom, to: corrTo }); setCorrData(res.data.data || []); }
-    catch { setCorrData(null); }
+    try {
+      const [corr, moves] = await Promise.all([
+        getShiftCorrections({ from: corrFrom, to: corrTo }),
+        getBalanceMoves({ from: corrFrom, to: corrTo }),
+      ]);
+      setCorrData(corr.data.data || []);
+      setMoveData(moves.data.data || []);
+    } catch (err: any) {
+      console.error('[Reports:loadCorrections]', err.response?.data || err.message);
+      setCorrData(null);
+      setMoveData(null);
+    }
     finally { setLoading(false); }
   }
   async function loadCashFlow() {
@@ -150,7 +162,7 @@ export default function Reports() {
     { key: 'stock', label: 'Stock Reconciliation' },
     { key: 'debtors', label: 'Debtor Aging' },
     { key: 'cashflow', label: 'Cash Flow' },
-    { key: 'corrections', label: 'Corrections' },
+    { key: 'corrections', label: 'Mistakes Fixed' },
   ];
 
   return (
@@ -555,17 +567,21 @@ export default function Reports() {
                     )}
                     {monthlyData.attendant_variances && (
                       <div className="border-t border-gray-200 mt-3 pt-1">
-                        <p className="px-4 pt-2 text-xs font-semibold uppercase text-gray-500">Attendant variances (repaid separately, not from pay)</p>
+                        <p className="px-4 pt-2 text-xs font-semibold uppercase text-gray-500">Attendant shortages (paid separately, not from pay)</p>
                         <PnLRow label="Shortages" value={monthlyData.attendant_variances.shortages} indent color="text-red-600" />
-                        <PnLRow label="Surpluses" value={monthlyData.attendant_variances.surpluses} indent color="text-green-700" />
+                        <PnLRow label="Shift surpluses (the station's, not set against shortages)" value={monthlyData.attendant_variances.surpluses} indent color="text-green-700" />
                         {Number(monthlyData.attendant_variances.corrections || 0) !== 0 && (
-                          <PnLRow label="Changed by corrections" value={monthlyData.attendant_variances.corrections} indent />
+                          <PnLRow label="Changed after close (corrections, moves)" value={monthlyData.attendant_variances.corrections} indent />
                         )}
-                        <PnLRow label="Repaid by attendants" value={monthlyData.attendant_variances.repaid} indent />
-                        <PnLRow label="Written off (station loss)" value={monthlyData.attendant_variances.waived} indent color="text-red-600" />
-                        <PnLRow label="Surplus kept by the station" value={monthlyData.attendant_variances.kept_by_station} indent color="text-green-700" />
+                        {Number(monthlyData.attendant_variances.moved || 0) !== 0 && (
+                          <PnLRow label="Other moves onto employees (net)" value={monthlyData.attendant_variances.moved} indent />
+                        )}
+                        <PnLRow label="Paid by attendants" value={monthlyData.attendant_variances.repaid} indent />
+                        {Number(monthlyData.attendant_variances.waived || 0) > 0 && (
+                          <PnLRow label="Written off (before 24 Sep 2026)" value={monthlyData.attendant_variances.waived} indent color="text-red-600" />
+                        )}
                         {Number(monthlyData.attendant_variances.refunded || 0) > 0 && (
-                          <PnLRow label="Paid back to attendants" value={monthlyData.attendant_variances.refunded} indent />
+                          <PnLRow label="Paid back to attendants (before 24 Sep 2026)" value={monthlyData.attendant_variances.refunded} indent />
                         )}
                         <PnLRow label="Owed by attendants at month end" value={monthlyData.attendant_variances.owed_at_end} bold border />
                       </div>
@@ -632,6 +648,20 @@ export default function Reports() {
                     )}
                     {Number(monthlyData.money_refunds || 0) !== 0 && (
                       <PnLRow label="+ Credit Refunded to Customers" value={monthlyData.money_refunds} color="text-amber-600" indent />
+                    )}
+                    {Number(monthlyData.money_balance_adjustments || 0) !== 0 && (
+                      <PnLRow
+                        label="+/- Balance Moves (no money moved)"
+                        value={monthlyData.money_balance_adjustments}
+                        color={Number(monthlyData.money_balance_adjustments) >= 0 ? 'text-amber-600' : 'text-green-700'}
+                        indent
+                      />
+                    )}
+                    {Number(monthlyData.balance_moves_station?.customers_written_off || 0) > 0 && (
+                      <PnLRow label="of which written off by the station" value={monthlyData.balance_moves_station.customers_written_off} color="text-red-600" indent />
+                    )}
+                    {Number(monthlyData.balance_moves_station?.customers_raised || 0) > 0 && (
+                      <PnLRow label="of which raised by the station" value={monthlyData.balance_moves_station.customers_raised} indent />
                     )}
                     <PnLRow label="+ Customer Invoices Issued" value={monthlyData.invoice_receivables_issued} color="text-amber-600" indent />
                     <PnLRow
@@ -1086,13 +1116,26 @@ export default function Reports() {
             </div>
             <button onClick={loadCorrections} disabled={loading}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm mt-4">
-              {loading ? 'Loading...' : 'Show Corrections'}
+              {loading ? 'Loading...' : 'Show'}
             </button>
           </div>
-          {corrData && (
+          {moveData && (
+            <div className="bg-white rounded-lg shadow overflow-hidden mb-6">
+              <div className="p-4 border-b bg-gray-50">
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Balance Moves</h2>
+                <p className="text-xs text-gray-500 mt-1">Mistakes found on closed shifts, fixed by moving an amount between accounts. The shifts themselves are unchanged. No money moved.</p>
+              </div>
+              {moveData.length === 0 ? (
+                <p className="p-6 text-center text-gray-400 text-sm">No balance moves in this period.</p>
+              ) : (
+                <div className="p-4"><BalanceMoveList moves={moveData} /></div>
+              )}
+            </div>
+          )}
+          {corrData && corrData.length > 0 && (
             <div className="bg-white rounded-lg shadow overflow-hidden">
               <div className="p-4 border-b bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Corrections to Closed Shifts</h2>
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Corrections to Closed Shifts (before September 23, 2026)</h2>
                 <p className="text-xs text-gray-500 mt-1">Every correction, by the day it was posted: what changed, who approved it, and its effect on the attendant.</p>
               </div>
               {corrData.length === 0 ? (

@@ -183,7 +183,7 @@ export default function Dashboard() {
               <p className={`text-2xl font-bold ${data.total_outstanding_staff_debts > 0 ? 'text-red-600' : 'text-green-600'}`}>
                 {formatKES(data.total_outstanding_staff_debts)}
               </p>
-              <p className="text-xs text-gray-400 mt-0.5">Owed by attendants (variances)</p>
+              <p className="text-xs text-gray-400 mt-0.5">Owed by attendants (shortages)</p>
             </div>
             <Users className="text-red-400" size={28} />
           </div>

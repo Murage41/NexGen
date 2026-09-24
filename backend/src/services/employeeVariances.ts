@@ -1,33 +1,27 @@
 import type { Knex } from 'knex';
 import { getKenyaDate } from '../utils/timezone';
 import { positiveMoney, settlementError } from './employeeDebt';
-import type { Approver } from './approval';
 
-// Attendant variances: every closed shift's over/short, owed by (or in favour
-// of) the attendant who ran it. Pay is never reduced for it; the employee
-// repays separately. See docs/ATTENDANT-VARIANCES.md.
+// Attendant shortages (owner decision 2026-09-24): an employee owes the
+// shortages of the shifts they ran and pays them. That is all.
+// See docs/ATTENDANT-VARIANCES.md.
 //
-// Entries (employee_variance_entries) are immutable; a mistaken one is marked
-// reversed. Nothing here stores a balance: what recovered each shift and what
-// is owed are derived from the entries on every read by
-// computeVarianceStatement, oldest first:
-//
-// - A shortage is owed. A surplus pays whatever is owed at that point; the rest
-//   can pay later shortages in the same month and stays with the station at
-//   month end. A surplus is never paid out in cash (owner decision 2026-09-22).
-// - A repayment pays what is owed, oldest first. What it doesn't cover is the
-//   employee's money: it pays their next shortages, or is refunded.
-// - A waiver writes off what is owed (a loss the station takes). It never
-//   creates money owed to the employee.
-// - A closed-shift correction changes its shift's variance, so what covered
-//   that shift is recalculated: freed surplus stays with the station, freed
-//   repayments become refundable.
+// - A shift's shortage is owed. A shift's surplus is recorded (the report
+//   shows it) but belongs to the station: it never pays a shortage.
+// - The employee pays in money (cash, M-Pesa, bank), oldest shortage first.
+//   There are no write-offs and no paying back.
+// - If a shortage later turns out smaller (a balance move on their own shift)
+//   after they paid it, what they paid is their credit: it pays their next
+//   shortage automatically.
+// - Entries (employee_variance_entries) are never edited; a mistaken payment
+//   is marked reversed. Nothing stores a balance: computeVarianceStatement
+//   derives it from the entries on every read. Write-offs and paybacks made
+//   before this decision stay in the history and still count.
 
 type Conn = Knex | Knex.Transaction;
 type Trx = Knex.Transaction;
 
 export const VARIANCE_REPAYMENT_METHODS = ['cash', 'mpesa', 'bank_transfer'] as const;
-export const VARIANCE_REFUND_METHODS = ['cash', 'mpesa'] as const;
 
 export type VarianceEntry = {
   id: number;
@@ -53,19 +47,18 @@ export type VarianceEntry = {
 
 const toCents = (value: unknown) => Math.round(Number(value || 0) * 100);
 const toMoney = (cents: number) => cents / 100;
-const monthOf = (date: string) => String(date || '').slice(0, 7);
 const kes = (value: number) =>
   `KES ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-// How a shortage was covered, in cents while computing.
+// What paid a shortage, in cents while computing.
 type Covered = {
-  surplus: number;
-  repaid: number;
-  waived: number;
-  recovered_before: number;
-  cleared_before: number;
+  repaid: number; // money the employee paid (cash, M-Pesa, bank)
+  moved: number; // moved off them by a balance move
+  recovered_before: number; // old system: recovered before the ledger started
+  cleared_before: number; // old system: cleared before the ledger started
+  waived: number; // written off before write-offs were removed (history)
 };
-const emptyCovered = (): Covered => ({ surplus: 0, repaid: 0, waived: 0, recovered_before: 0, cleared_before: 0 });
+const emptyCovered = (): Covered => ({ repaid: 0, moved: 0, recovered_before: 0, cleared_before: 0, waived: 0 });
 
 type Owner = { covered: Covered; charges: Charge[] };
 type Charge = { owner: Owner; remaining: number };
@@ -77,59 +70,45 @@ type RowState = Owner & {
   closed: number;
   entries: VarianceEntry[];
   legacy: EventState[];
-  surplus_used: number;
-  kept_by_station: number;
-  lapsed: number;
-  pool: PoolItem | null;
 };
 type EventState = Owner & { entry: VarianceEntry; applied: number; unused: number };
-type PoolItem = { row: RowState; remaining: number; month: string };
-type CashItem = { owner: EventState; remaining: number; kind: 'repaid' | 'recovered_before' };
+// The employee's money that pays nothing yet (paid more than a shortage turned
+// out to be): it pays their next shortage automatically.
+type CreditItem = { owner: EventState; remaining: number; kind: 'repaid' | 'recovered_before' | 'moved' };
 
 export type VarianceRow = ReturnType<typeof rowView>;
 export type VarianceStatement = ReturnType<typeof computeVarianceStatement>;
 
 function rowView(row: RowState) {
   const owed = row.charges.reduce((sum, c) => sum + c.remaining, 0);
-  const available = row.pool?.remaining || 0;
   const covered = row.covered;
-  const recovered = covered.surplus + covered.repaid + covered.waived + covered.recovered_before + covered.cleared_before;
+  const paid = covered.repaid + covered.moved + covered.recovered_before + covered.cleared_before + covered.waived;
   const corrections = row.entries.filter((e) => e.entry_type === 'correction');
-  const isShortage = row.amount > 0;
   return {
     shift_id: row.shift_id,
     date: row.date,
-    // Signed like the shift page: negative = short, positive = over.
-    variance: toMoney(-row.amount),
-    closed_variance: toMoney(-row.closed),
+    // The shortage on the shift (after any correction), and as it closed.
+    shortage: toMoney(Math.max(0, row.amount)),
+    closed_shortage: toMoney(Math.max(0, row.closed)),
     corrected: corrections.length > 0,
     corrections: corrections.map((e) => ({
       id: e.id,
       correction_id: e.correction_id ?? null,
       date: e.entry_date,
-      change: toMoney(-toCents(e.amount)),
+      change: toMoney(toCents(e.amount)),
       reason: e.reason || null,
     })),
-    recovered: toMoney(recovered),
-    recovered_by: {
-      surplus: toMoney(covered.surplus),
+    paid: toMoney(paid),
+    paid_by: {
       repaid: toMoney(covered.repaid),
-      waived: toMoney(covered.waived),
+      moved: toMoney(covered.moved),
       recovered_before: toMoney(covered.recovered_before),
       cleared_before: toMoney(covered.cleared_before),
+      waived: toMoney(covered.waived),
     },
-    surplus_used: toMoney(row.surplus_used),
-    kept_by_station: toMoney(row.kept_by_station),
-    available: toMoney(available),
     owed: toMoney(owed),
-    // What is left: negative = still owed, positive = surplus still usable.
-    real_variance: toMoney(available - owed),
-    status: isShortage
-      ? (owed > 0 ? 'open' : 'settled')
-      : row.amount < 0
-        ? (available > 0 ? 'available' : row.kept_by_station > 0 ? 'kept' : 'used')
-        : (owed > 0 ? 'open' : 'settled'),
-    before_variances: row.legacy.length > 0 || row.entries.some((e) => Boolean(e.legacy_source)),
+    status: owed > 0 ? 'open' : 'settled',
+    before_ledger: row.legacy.length > 0 || row.entries.some((e) => Boolean(e.legacy_source)),
     legacy: row.legacy.map((ev) => ({
       id: ev.entry.id,
       amount: toMoney(toCents(ev.entry.amount)),
@@ -155,15 +134,15 @@ function eventView(ev: EventState) {
     approved_by_name: e.approved_by_name || null,
     created_by_name: e.created_by_name || null,
     created_at: e.created_at || null,
-    // Credits: how much of it paid shortages, and what it covered nothing of.
+    // Payments: how much of it paid shortages, and what it paid nothing of.
     applied: toMoney(ev.applied),
     unused: toMoney(ev.unused),
-    // Charges (refunds, reversed old repayments): what is still owed of it.
+    // Amounts owed that are not a shift (a move onto them): what is still owed.
     owed: toMoney(owed),
   };
 }
 
-// Pure: the statement of one employee's entries as of a date. Entries of other
+// Pure: one employee's shortages and payments as of a date. Entries of other
 // employees must not be passed in.
 export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
   const rows = new Map<number, RowState>();
@@ -185,10 +164,6 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
         legacy: [],
         covered: emptyCovered(),
         charges: [],
-        surplus_used: 0,
-        kept_by_station: 0,
-        lapsed: 0,
-        pool: null,
       };
       rows.set(id, row);
     }
@@ -203,7 +178,9 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
       row.amount += toCents(entry.amount);
       if (entry.entry_type === 'shift') row.closed += toCents(entry.amount);
       row.entries.push(entry);
-    } else if ((entry.entry_type === 'legacy_settlement' || entry.entry_type === 'legacy_kept') && entry.shift_id) {
+    } else if (entry.entry_type === 'legacy_kept') {
+      // A surplus the old system kept: surpluses are the station's anyway.
+    } else if (entry.entry_type === 'legacy_settlement' && entry.shift_id) {
       rowFor(entry).legacy.push(newEvent(entry));
     } else {
       events.push(newEvent(entry));
@@ -211,23 +188,12 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
   }
 
   const charges: Charge[] = [];
-  let pool: PoolItem[] = [];
-  let cash: CashItem[] = [];
+  let credit: CreditItem[] = [];
   const prune = () => {
     for (let i = charges.length - 1; i >= 0; i -= 1) if (charges[i].remaining <= 0) charges.splice(i, 1);
-    pool = pool.filter((item) => item.remaining > 0);
-    cash = cash.filter((item) => item.remaining > 0);
+    credit = credit.filter((item) => item.remaining > 0);
   };
-  const lapse = (month: string) => {
-    for (const item of pool) {
-      if (item.month < month && item.remaining > 0) {
-        item.row.lapsed += item.remaining;
-        item.row.kept_by_station += item.remaining;
-        item.remaining = 0;
-      }
-    }
-    prune();
-  };
+  // Pays charges oldest first; returns what it paid.
   const payCharges = (targets: Charge[], amount: number, kind: keyof Covered) => {
     let left = amount;
     for (const charge of targets) {
@@ -241,19 +207,10 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
     prune();
     return amount - left;
   };
-  const addCharge = (owner: Owner, amount: number, useSurplus: boolean) => {
+  // Something is owed: the employee's credit pays it first; the rest is owed.
+  const addCharge = (owner: Owner, amount: number) => {
     let left = amount;
-    if (useSurplus) {
-      for (const item of pool) {
-        if (left <= 0) break;
-        const take = Math.min(item.remaining, left);
-        item.remaining -= take;
-        item.row.surplus_used += take;
-        owner.covered.surplus += take;
-        left -= take;
-      }
-    }
-    for (const item of cash) {
+    for (const item of credit) {
       if (left <= 0) break;
       const take = Math.min(item.remaining, left);
       item.remaining -= take;
@@ -268,9 +225,18 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
       owner.charges.push(charge);
     }
   };
+  // A payment pays charges; what is left of money the employee handed over is
+  // their credit. Anything else left simply pays nothing.
+  const pay = (ev: EventState, targets: Charge[], amount: number, kind: keyof Covered, money: boolean) => {
+    const used = payCharges(targets, amount, kind);
+    ev.applied += used;
+    const left = amount - used;
+    if (left <= 0) return;
+    if (money && kind !== 'cleared_before' && kind !== 'waived') credit.push({ owner: ev, remaining: left, kind });
+    else ev.unused += left;
+  };
 
-  // Oldest first by business date; on the same date, in the order recorded (a
-  // shift's row sits where its close was recorded).
+  // Oldest first by business date; on the same date, in the order recorded.
   type Item = { date: string; seq: number; row?: RowState; event?: EventState };
   const items: Item[] = [
     ...[...rows.values()].map((row) => ({ date: row.date, seq: row.seq, row })),
@@ -278,52 +244,21 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
   ].sort((a, b) => a.date.localeCompare(b.date) || a.seq - b.seq);
 
   for (const item of items) {
-    lapse(monthOf(item.date));
     if (item.row) {
       const row = item.row;
-      if (row.amount > 0) {
-        addCharge(row, row.amount, true);
-      } else if (row.amount < 0) {
-        row.pool = { row, remaining: -row.amount, month: monthOf(row.date) };
-        pool.push(row.pool);
-      }
-      // What the old debt system did about this shift, before the surplus pays
-      // anything: the surplus it kept, what it cleared, what the employee
-      // handed over, then anything it still charged.
-      const order = (ev: EventState) => {
-        const amount = toCents(ev.entry.amount);
-        if (ev.entry.entry_type === 'legacy_kept') return 0;
-        return amount > 0 ? 3 : ev.entry.refundable ? 2 : 1;
-      };
+      // A shortage is owed. A surplus is the station's and pays nothing.
+      if (row.amount > 0) addCharge(row, row.amount);
+      // What the old debt system did about this shift: what it cleared, what
+      // the employee handed over, then anything it still charged.
+      const order = (ev: EventState) => (toCents(ev.entry.amount) > 0 ? 3 : ev.entry.refundable ? 2 : 1);
       for (const ev of [...row.legacy].sort((a, b) => order(a) - order(b) || a.entry.id - b.entry.id)) {
         const amount = toCents(ev.entry.amount);
-        if (ev.entry.entry_type === 'legacy_kept') {
-          // Only surplus that is still there: a correction may have shrunk it.
-          const take = Math.min(row.pool?.remaining || 0, amount);
-          if (row.pool) row.pool.remaining -= take;
-          row.kept_by_station += take;
-          ev.applied += take;
-          ev.unused += amount - take;
-          prune();
-        } else if (amount < 0) {
-          const kind = ev.entry.refundable ? 'recovered_before' : 'cleared_before';
-          const used = payCharges(row.charges, -amount, kind);
-          ev.applied += used;
-          const left = -amount - used;
-          if (left > 0) {
-            if (ev.entry.refundable) cash.push({ owner: ev, remaining: left, kind: 'recovered_before' });
-            else ev.unused += left;
-          }
+        if (amount < 0) {
+          const money = Boolean(ev.entry.refundable);
+          pay(ev, row.charges, -amount, money ? 'recovered_before' : 'cleared_before', money);
         } else if (amount > 0) {
-          addCharge(row, amount, false);
+          addCharge(row, amount);
         }
-      }
-      // A surplus pays what is owed at this point; the rest waits in the pool.
-      if (row.pool && row.pool.remaining > 0) {
-        const used = payCharges(charges, row.pool.remaining, 'surplus');
-        row.pool.remaining -= used;
-        row.surplus_used += used;
-        prune();
       }
       continue;
     }
@@ -332,39 +267,34 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
     const amount = toCents(ev.entry.amount);
     switch (ev.entry.entry_type) {
       case 'repayment':
-      case 'legacy_owed_back': {
-        const used = payCharges(charges, -amount, 'repaid');
-        ev.applied += used;
-        if (-amount - used > 0) cash.push({ owner: ev, remaining: -amount - used, kind: 'repaid' });
+      case 'legacy_owed_back':
+        pay(ev, charges, -amount, 'repaid', true);
         break;
-      }
+      case 'move':
+        // A balance move between employees (services/balanceMoves.ts). Onto
+        // them: owed. Off them: money they paid, recorded on someone else.
+        if (amount > 0) addCharge(ev, amount);
+        else if (amount < 0) pay(ev, charges, -amount, 'moved', Boolean(ev.entry.refundable));
+        break;
       case 'waiver': {
+        // History: a write-off recorded before write-offs were removed.
         const target = ev.entry.shift_id ? rows.get(Number(ev.entry.shift_id)) : null;
-        const used = payCharges(target ? target.charges : charges, -amount, 'waived');
-        ev.applied += used;
-        ev.unused += -amount - used;
+        pay(ev, target ? target.charges : charges, -amount, 'waived', false);
         break;
       }
-      case 'refund':
-        addCharge(ev, amount, false);
-        break;
       default:
-        // legacy_reversal, and anything newer this code doesn't know: a charge
-        // is owed like a shortage, a credit pays like a waiver.
-        if (amount > 0) addCharge(ev, amount, true);
-        else if (amount < 0) {
-          const used = payCharges(charges, -amount, 'waived');
-          ev.applied += used;
-          ev.unused += -amount - used;
-        }
+        // History (money paid back, an old repayment reversed), and anything
+        // newer this code doesn't know: an amount owed is owed, a credit pays.
+        if (amount > 0) addCharge(ev, amount);
+        else if (amount < 0) pay(ev, charges, -amount, 'waived', false);
     }
   }
-  lapse(monthOf(asOf));
 
   const owes = charges.reduce((sum, c) => sum + c.remaining, 0);
-  const surplusAvailable = pool.reduce((sum, item) => sum + item.remaining, 0);
-  const refundable = cash.reduce((sum, item) => sum + item.remaining, 0);
+  const creditLeft = credit.reduce((sum, item) => sum + item.remaining, 0);
+  // Only shifts that had a shortage are the employee's; a surplus is the station's.
   const rowViews = [...rows.values()]
+    .filter((row) => row.amount > 0 || row.closed > 0)
     .sort((a, b) => b.date.localeCompare(a.date) || b.seq - a.seq)
     .map(rowView);
   return {
@@ -375,11 +305,10 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
       .map(eventView),
     totals: {
       owes: toMoney(owes),
-      surplus_available: toMoney(surplusAvailable),
-      refundable: toMoney(refundable),
-      // Positive: the employee owes this. Negative: in their favour.
-      net: toMoney(owes - surplusAvailable - refundable),
-      kept_by_station: toMoney([...rows.values()].reduce((sum, row) => sum + row.kept_by_station, 0)),
+      // Money they paid that pays nothing yet: it pays their next shortage.
+      credit: toMoney(creditLeft),
+      // Positive: the employee owes this. Negative: their credit.
+      net: toMoney(owes - creditLeft),
     },
   };
 }
@@ -484,56 +413,50 @@ export async function owedOnShifts(conn: Conn, shiftIds: number[]) {
   return toMoney(owed);
 }
 
-// Activity in a period for reports: shortages and surpluses of shifts in it,
-// corrections, repayments, waivers and refunds posted in it, surplus left with
-// the station at its month ends, and what attendants owed at its end.
+// Activity in a period for reports: shortages of shifts in it (surpluses too,
+// for the station), corrections, moves and payments posted in it, old
+// write-offs and paybacks (history), and what attendants owed at its end.
 export async function varianceActivity(conn: Conn, from: string, to: string) {
   const entries = await loadVarianceEntries(conn, { asOf: to });
   const inPeriod = (date: string | null | undefined) => Boolean(date) && String(date) >= from && String(date) <= to;
   let shortages = 0;
   let surpluses = 0;
   let corrections = 0;
+  let moved = 0;
   let repaid = 0;
   let waived = 0;
   let refunded = 0;
   for (const e of entries) {
     const amount = toCents(e.amount);
-    if (e.entry_type === 'shift' && !e.legacy_source && inPeriod(e.entry_date)) {
+    if (!inPeriod(e.entry_date)) continue;
+    if (e.entry_type === 'shift' && !e.legacy_source) {
       if (amount > 0) shortages += amount;
       else surpluses -= amount;
     }
-    if (e.entry_type === 'correction' && inPeriod(e.entry_date)) corrections += amount;
-    if (e.entry_type === 'repayment' && inPeriod(e.entry_date)) repaid -= amount;
-    if (e.entry_type === 'waiver' && inPeriod(e.entry_date)) waived -= amount;
-    if (e.entry_type === 'refund' && inPeriod(e.entry_date)) refunded += amount;
+    if (e.entry_type === 'correction') corrections += amount;
+    if (e.entry_type === 'move') moved += amount;
+    if (e.entry_type === 'repayment') repaid -= amount;
+    if (e.entry_type === 'waiver') waived -= amount;
+    if (e.entry_type === 'refund') refunded += amount;
   }
   const byEmployee = new Map<number, VarianceEntry[]>();
   for (const entry of entries) {
     byEmployee.set(Number(entry.employee_id), [...(byEmployee.get(Number(entry.employee_id)) || []), entry]);
   }
   let owedAtEnd = 0;
-  let kept = 0;
-  // Surplus left at the end of the period's last month stays with the station
-  // then, so when the period ends on a month end, look from the next day.
-  const next = new Date(`${to}T00:00:00Z`);
-  next.setUTCDate(next.getUTCDate() + 1);
-  const lapseFrom = next.toISOString().slice(0, 10);
-  for (const list of byEmployee.values()) {
-    const statement = computeVarianceStatement(list, lapseFrom);
-    owedAtEnd += toCents(statement.totals.owes);
-    for (const row of statement.rows) {
-      if (inPeriod(row.date) && !row.before_variances) kept += toCents(row.kept_by_station);
-    }
-  }
+  for (const list of byEmployee.values()) owedAtEnd += toCents(computeVarianceStatement(list, to).totals.owes);
   return {
     shortages: toMoney(shortages),
+    // Surpluses belong to the station; they never pay a shortage.
     surpluses: toMoney(surpluses),
-    // Positive: corrections added to what attendants owe.
+    // Positive: corrections and moves on their own shifts added to what is owed.
     corrections: toMoney(corrections),
+    // Other balance moves onto employees (services/balanceMoves.ts); negative: off them.
+    moved: toMoney(moved),
     repaid: toMoney(repaid),
+    // History only: write-offs and paybacks recorded before 24 Sep 2026.
     waived: toMoney(waived),
     refunded: toMoney(refunded),
-    kept_by_station: toMoney(kept),
     owed_at_end: toMoney(owedAtEnd),
   };
 }
@@ -600,35 +523,6 @@ export async function postShiftVariance(
     created_by_employee_id: actorId,
   });
   await syncVarianceAccount(trx, shift.employee_id);
-  return Number(id);
-}
-
-// A closed-shift correction moved the shift's variance from before to after.
-export async function postCorrectionVariance(
-  trx: Trx,
-  input: {
-    shift: { id: number; employee_id: number };
-    correctionId: number;
-    varianceBefore: number;
-    varianceAfter: number;
-    postingDate: string;
-    reason: string;
-    actorId: number | null;
-  },
-) {
-  const change = toCents(input.varianceAfter) - toCents(input.varianceBefore);
-  if (change === 0) return null;
-  const [id] = await trx('employee_variance_entries').insert({
-    employee_id: input.shift.employee_id,
-    entry_type: 'correction',
-    entry_date: input.postingDate,
-    amount: toMoney(-change),
-    shift_id: input.shift.id,
-    correction_id: input.correctionId,
-    reason: input.reason,
-    created_by_employee_id: input.actorId,
-  });
-  await syncVarianceAccount(trx, input.shift.employee_id);
   return Number(id);
 }
 
@@ -789,79 +683,5 @@ export async function chargeLegacyReversal(
     created_by_employee_id: input.actorId ?? null,
   });
   await syncVarianceAccount(trx, input.employeeId);
-  return Number(id);
-}
-
-export async function waiveVariance(
-  trx: Trx,
-  employeeId: number,
-  input: { amount: unknown; shift_id?: unknown; reason: unknown },
-  approver: Approver,
-  actorId: number | null,
-) {
-  const amount = positiveMoney(input.amount);
-  const reason = String(input.reason || '').trim();
-  if (reason.length < 3) throw settlementError('Say why this is written off.', 400);
-  const shiftId = input.shift_id ? Number(input.shift_id) : null;
-  const statement = await getVarianceStatement(trx, employeeId);
-  if (shiftId) {
-    const row = statement.rows.find((r) => r.shift_id === shiftId);
-    if (!row || toCents(row.owed) === 0) throw settlementError(`Nothing is owed on shift #${shiftId}.`, 409);
-    if (toCents(amount) > toCents(row.owed)) {
-      throw settlementError(`Shift #${shiftId} has ${kes(row.owed)} left to recover.`, 409);
-    }
-  } else if (toCents(amount) > toCents(statement.totals.owes)) {
-    throw settlementError(`${statement.employee.name} owes ${kes(statement.totals.owes)}.`, 409);
-  }
-  const [id] = await trx('employee_variance_entries').insert({
-    employee_id: employeeId,
-    entry_type: 'waiver',
-    entry_date: getKenyaDate(),
-    amount: toMoney(-toCents(amount)),
-    shift_id: shiftId,
-    reason: reason.slice(0, 500),
-    approved_by_employee_id: approver.id,
-    approved_by_name: approver.name,
-    created_by_employee_id: actorId,
-  });
-  await syncVarianceAccount(trx, employeeId);
-  return Number(id);
-}
-
-export async function refundVariance(
-  trx: Trx,
-  employeeId: number,
-  input: { amount: unknown; method: unknown; date: unknown; reference?: unknown },
-  approver: Approver,
-  actorId: number | null,
-) {
-  const amount = positiveMoney(input.amount);
-  const method = String(input.method || '');
-  if (!(VARIANCE_REFUND_METHODS as readonly string[]).includes(method)) {
-    throw settlementError('Choose cash or M-Pesa.', 400);
-  }
-  const date = validDate(input.date);
-  const reference = String(input.reference || '').trim().slice(0, 100);
-  const statement = await getVarianceStatement(trx, employeeId);
-  if (toCents(amount) > toCents(statement.totals.refundable)) {
-    throw settlementError(
-      statement.totals.refundable > 0
-        ? `${statement.employee.name} can be paid back up to ${kes(statement.totals.refundable)}.`
-        : `${statement.employee.name} has nothing to be paid back.`,
-      409,
-    );
-  }
-  const [id] = await trx('employee_variance_entries').insert({
-    employee_id: employeeId,
-    entry_type: 'refund',
-    entry_date: date,
-    amount: toMoney(toCents(amount)),
-    method,
-    reference: reference || null,
-    approved_by_employee_id: approver.id,
-    approved_by_name: approver.name,
-    created_by_employee_id: actorId,
-  });
-  await syncVarianceAccount(trx, employeeId);
   return Number(id);
 }

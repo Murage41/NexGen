@@ -281,7 +281,7 @@ export default function Employees() {
         <Metric label="Active employees" value={String(totals.active)} />
         <Metric label="Earnings this month" value={formatKES(totals.earnings)} />
         <Metric label="Payroll due" value={formatKES(totals.due)} />
-        <Metric label="Owed on variances" value={formatKES(totals.debt)} />
+        <Metric label="Owed on shortages" value={formatKES(totals.debt)} />
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
@@ -293,7 +293,7 @@ export default function Employees() {
               <th className="text-left p-3 font-medium">Compensation</th>
               <th className="text-right p-3 font-medium">Month earnings</th>
               <th className="text-right p-3 font-medium">Payroll due</th>
-              <th className="text-right p-3 font-medium">Variance</th>
+              <th className="text-right p-3 font-medium">Shortages</th>
               <th className="text-left p-3 font-medium">Status</th>
               <th className="text-right p-3 font-medium">Actions</th>
             </tr>
@@ -329,7 +329,7 @@ export default function Employees() {
                   <div className="flex justify-end gap-1">
                     <IconButton title="Edit profile" onClick={() => openEdit(employee)}><Pencil size={16} /></IconButton>
                     <IconButton title="Change compensation" onClick={() => openCompensation(employee)}><BadgeDollarSign size={17} /></IconButton>
-                    <Link to={`/employees/${employee.id}/variances`} title="Variances" aria-label="Variances" className="p-2 rounded-lg text-gray-600 hover:bg-gray-100"><ListOrdered size={17} /></Link>
+                    <Link to={`/employees/${employee.id}/variances`} title="Shortages" aria-label="Shortages" className="p-2 rounded-lg text-gray-600 hover:bg-gray-100"><ListOrdered size={17} /></Link>
                     {Boolean(employee.active) && (
                       <IconButton title="Deactivate" danger onClick={() => deactivate(employee)}><UserX size={17} /></IconButton>
                     )}
@@ -524,7 +524,7 @@ function PlanEditor({ plan, setPlan, updateComponent, allowEffectiveDate }: any)
   );
 }
 
-// What the employee owes on their variances, or has in their favour; opens the list.
+// What the employee owes on their shortages, or their credit; opens the list.
 function VarianceCell({ employee }: { employee: any }) {
   const { text, tone } = describeVarianceTotals(employee.variance_totals);
   const colour = tone === 'owes' ? 'text-red-600' : tone === 'favour' ? 'text-green-700' : 'text-gray-500';

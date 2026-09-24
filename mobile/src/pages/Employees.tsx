@@ -420,15 +420,15 @@ function Select({ label, value, onChange, options, disabled = false }: {
   );
 }
 
-// Tapping it opens the employee's Variances.
+// Tapping it opens the employee's Shortages.
 function VarianceMetric({ totals }: { totals: any }) {
   const owes = Number(totals?.owes || 0);
-  const favour = Number(totals?.surplus_available || 0) + Number(totals?.refundable || 0);
+  const credit = Number(totals?.credit || 0);
   return (
     <div>
-      <p className="text-[10px] uppercase text-blue-600">{owes > 0 ? 'Owes' : favour > 0 ? 'In favour' : 'Variances'}</p>
-      <p className={`text-xs font-semibold mt-1 truncate ${owes > 0 ? 'text-red-600' : favour > 0 ? 'text-green-700' : 'text-gray-700'}`}>
-        {owes > 0 ? kes(owes) : favour > 0 ? kes(favour) : 'Nil'}
+      <p className="text-[10px] uppercase text-blue-600">{owes > 0 ? 'Owes' : credit > 0 ? 'Credit' : 'Shortages'}</p>
+      <p className={`text-xs font-semibold mt-1 truncate ${owes > 0 ? 'text-red-600' : credit > 0 ? 'text-green-700' : 'text-gray-700'}`}>
+        {owes > 0 ? kes(owes) : credit > 0 ? kes(credit) : 'Nil'}
       </p>
     </div>
   );

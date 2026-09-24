@@ -126,13 +126,7 @@ export const updateInvoiceConsumption = (shiftId: number, entryId: number, data:
   api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
 export const deleteInvoiceConsumption = (shiftId: number, entryId: number) =>
   api.delete(`/shifts/${shiftId}/invoice-consumption/${entryId}`);
-// Closed-shift corrections: a credit, payment or fuel-on-account entry of a
-// closed shift is reversed and replaced, never edited (shared/ui/ShiftCorrection).
-export const previewShiftCorrection = (shiftId: number, data: Record<string, unknown>) =>
-  api.post(`/shifts/${shiftId}/corrections/preview`, data);
-export const postShiftCorrection = (shiftId: number, data: Record<string, unknown>) =>
-  api.post(`/shifts/${shiftId}/corrections`, data);
-export const shiftCorrectionApi = { preview: previewShiftCorrection, post: postShiftCorrection };
+// Closed-shift corrections posted before closed shifts became unchangeable (history).
 export const getShiftCorrections = (params?: { from?: string; to?: string }) =>
   api.get('/shifts/corrections', { params });
 
@@ -296,11 +290,15 @@ export const getMyPay = () => api.get('/payroll/me');
 export const getEmployeePay = (id: number) => api.get(`/payroll/employees/${id}`);
 export const recordDebtReceipt = (id: number, data: any, key: string) => financialPost(`/payroll/employees/${id}/receipts`, data, key);
 export const reverseDebtReceipt = (id: number, reason: string) => financialPost(`/payroll/receipts/${id}/reverse`, { reason });
-// Attendant variances (Employees, Variances): statement, write-off, pay back.
+// Employee shortages (Employees, Shortages): statement and payments.
 export const getEmployeeVariances = (id: number) => api.get(`/payroll/employees/${id}/variances`);
-export const waiveVariance = (id: number, data: Record<string, unknown>, key: string) => financialPost(`/payroll/employees/${id}/variances/waivers`, data, key);
-export const refundVariance = (id: number, data: Record<string, unknown>, key: string) => financialPost(`/payroll/employees/${id}/variances/refunds`, data, key);
-export const varianceActions = { repay: recordDebtReceipt, reverseRepayment: reverseDebtReceipt, waive: waiveVariance, refund: refundVariance };
+// Balance moves: fixing a closed-shift mistake between customers, employees and the station.
+export const balanceMoveApi = {
+  parties: () => api.get('/balance-moves/parties'),
+  post: (data: Record<string, unknown>, key: string) => financialPost('/balance-moves', data, key),
+};
+export const getBalanceMoves = (params?: Record<string, unknown>) => api.get('/balance-moves', { params });
+export const varianceActions = { repay: recordDebtReceipt, reverseRepayment: reverseDebtReceipt, move: balanceMoveApi };
 // Money owed back to an employee after a closed-shift correction.
 // Paying a customer back credit they hold on account after a correction.
 export const refundCustomerCredit = (id: number, data: Record<string, unknown>) => financialPost(`/credit-accounts/${id}/refunds`, data);

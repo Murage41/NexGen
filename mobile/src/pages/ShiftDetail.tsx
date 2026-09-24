@@ -1,11 +1,11 @@
-import { ShiftCorrectionForm, ShiftCorrectionList, describeShiftBalance, type CorrectionEntry } from '../../../shared/ui/ShiftCorrection';
-import { shiftCorrectionApi } from '../services/api';
+import { ShiftCorrectionList, describeShiftBalance } from '../../../shared/ui/ShiftCorrection';
+import { BalanceMoveList } from '../../../shared/ui/BalanceMove';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
 import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
 
 function compensationComponentLabel(component: any, schedule: string) {
@@ -46,9 +46,6 @@ export default function ShiftDetail() {
   const [receiptForm, setReceiptForm] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
   const [collectingReceipt, setCollectingReceipt] = useState(false);
   const receiptOperation = useRef<{ fingerprint: string; key: string } | null>(null);
-  // A closed shift's entries are corrected, never edited (shared/ui/ShiftCorrection).
-  const [correcting, setCorrecting] = useState<CorrectionEntry | null>(null);
-  const [correctionAccounts, setCorrectionAccounts] = useState<any[]>([]);
 
   useEffect(() => { loadShift(); loadCreditAccounts(); }, [id]);
 
@@ -67,21 +64,6 @@ export default function ShiftDetail() {
         a.type === 'customer' && Number(a.outstanding_balance ?? a.balance ?? 0) > 0
       ));
     } catch { setCreditAccounts([]); }
-  }
-
-  async function openCorrection(entry: CorrectionEntry) {
-    setCorrecting(entry);
-    if (correctionAccounts.length) return;
-    try {
-      const res = await getCreditAccounts();
-      setCorrectionAccounts(res.data.data || res.data || []);
-    } catch { setCorrectionAccounts([]); }
-  }
-
-  async function correctionPosted() {
-    setCorrecting(null);
-    setCorrectionAccounts([]);
-    await Promise.all([loadShift(), loadCreditAccounts()]);
   }
 
   async function loadShift() {
@@ -210,13 +192,8 @@ export default function ShiftDetail() {
 
   const fmt = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const isOpen = shift.status === 'open';
-  const canCorrect = isAdmin && shift.status === 'closed';
+  // Corrections posted before closed shifts became unchangeable (history only).
   const corrections: any[] = shift.corrections || [];
-  const correctButton = (entry: CorrectionEntry) => (
-    <button onClick={() => void openCorrection(entry)} className="ml-2 p-1 text-blue-600" aria-label="Correct this entry">
-      <Pencil size={14} />
-    </button>
-  );
   const isCancelled = shift.status === 'cancelled';
   const expected = shift.expected_sales || 0;
   const totalCash = shift.total_cash || 0;
@@ -643,7 +620,6 @@ export default function ShiftDetail() {
               </div>
               <span className="flex items-center">
                 {fmt(c.amount)}
-                {canCorrect && c.account_id && correctButton({ entry_type: 'credit', entry_id: c.id, account_id: c.account_id, account_name: c.customer_name, amount: Number(c.amount) })}
               </span>
             </div>
           ))}
@@ -668,9 +644,6 @@ export default function ShiftDetail() {
               </div>
               <span className="flex items-center">
                 {fmt(Number(c.retail_amount))}
-                {canCorrect && (c.invoice_line_id
-                  ? <span className="ml-2 text-[10px] text-gray-400">on invoice</span>
-                  : correctButton({ entry_type: 'invoice_consumption', entry_id: c.id, account_id: c.account_id, account_name: c.account_name, litres: Number(c.litres), fuel_type: c.fuel_type, pump_id: c.pump_id }))}
               </span>
             </div>
           ))}
@@ -737,7 +710,6 @@ export default function ShiftDetail() {
                 </div>
                 <p className="font-semibold text-sm flex items-center">
                   {fmt(Number(r.amount))}
-                  {canCorrect && correctButton({ entry_type: 'payment', entry_id: r.id, account_id: r.account_id, account_name: r.account_name, amount: Number(r.amount), payment_method: r.payment_method })}
                 </p>
               </div>
             ))}
@@ -755,31 +727,16 @@ export default function ShiftDetail() {
       {corrections.length > 0 && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-blue-400">
           <p className="font-semibold text-gray-700">Corrections after close</p>
-          <p className="text-xs text-gray-500 mb-1">Nothing was edited. Each correction reversed an entry, kept it on record, and is dated the day it was made.</p>
+          <p className="text-xs text-gray-500 mb-1">Posted before closed shifts became unchangeable. Mistakes are now fixed on the customer's balance or the attendant's variances.</p>
           <ShiftCorrectionList corrections={corrections} />
         </div>
       )}
 
-      {correcting && (
-        <div className="mobile-modal-overlay flex items-end justify-center">
-          <div className="mobile-bottom-sheet max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl p-5">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <h3 className="text-lg font-bold text-gray-800">Correct an entry</h3>
-                <p className="text-xs text-gray-500">Shift #{shift.id} is closed, so the entry is not edited: it is reversed and kept on record.</p>
-              </div>
-              <button onClick={() => setCorrecting(null)} className="p-1 text-gray-500" aria-label="Close"><X size={20} /></button>
-            </div>
-            <ShiftCorrectionForm
-              shiftId={shift.id}
-              entry={correcting}
-              accounts={correctionAccounts}
-              pumps={(shift.readings || []).map((r: any) => ({ pump_id: r.pump_id, pump_label: r.pump_label, nozzle_label: r.nozzle_label, fuel_type: r.fuel_type }))}
-              api={shiftCorrectionApi}
-              onDone={correctionPosted}
-              onCancel={() => setCorrecting(null)}
-            />
-          </div>
+      {(shift.balance_moves || []).length > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-gray-400">
+          <p className="font-semibold text-gray-700">Mistakes fixed later</p>
+          <p className="text-xs text-gray-500 mb-1">This shift is unchanged. These balance moves refer to it.</p>
+          <BalanceMoveList moves={shift.balance_moves} />
         </div>
       )}
 
@@ -859,7 +816,7 @@ export default function ShiftDetail() {
                   onChange={e => setWagePaid(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg p-3 text-base" />
                 <p className="text-xs text-gray-400 mt-1">
-                  Pay the full wage. Shortages are repaid separately under Employees, Variances, never taken from pay.
+                  Pay the full wage. Shortages are paid separately under Employees, Shortages, never taken from pay.
                 </p>
               </div>
             ) : (

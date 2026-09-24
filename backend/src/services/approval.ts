@@ -19,20 +19,13 @@ export const approvalBindings = {
   // Fuel on account past a limit; the retail value is priced by the server.
   consumption_override: (fields: any) =>
     `consumption_override:${Number(fields?.account_id)}:${Number(fields?.shift_id)}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(3)}`,
-  // A closed-shift correction: its preview token hashes the decision and every
-  // figure it changes (services/shiftCorrections.ts).
-  shift_correction: (fields: any) =>
-    `shift_correction:${String(fields?.confirmation_token ?? '')}`,
-  // Writing off what an attendant owes: this employee, this shift (0 = oldest
-  // first), this amount (services/employeeVariances.ts).
-  variance_waiver: (fields: any) =>
-    `variance_waiver:${Number(fields?.for_employee_id)}:${Number(fields?.shift_id) || 0}:${Number(fields?.amount).toFixed(2)}`,
-  // Paying an employee back money they repaid that covers nothing.
-  variance_refund: (fields: any) =>
-    `variance_refund:${Number(fields?.for_employee_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
   // Paying a customer back credit they hold on account.
   customer_refund: (fields: any) =>
     `customer_refund:${Number(fields?.account_id)}:${String(fields?.method ?? '')}:${Number(fields?.amount).toFixed(2)}`,
+  // Moving an amount between accounts after a closed-shift mistake: from whom,
+  // to whom, which shift (0 = none), how much (services/balanceMoves.ts).
+  balance_move: (fields: any) =>
+    `balance_move:${String(fields?.from_kind ?? '')}:${Number(fields?.from_id) || 0}:${String(fields?.to_kind ?? '')}:${Number(fields?.to_id) || 0}:${Number(fields?.shift_id) || 0}:${Number(fields?.amount).toFixed(2)}`,
 };
 
 export type ApprovalPurpose = keyof typeof approvalBindings;
@@ -50,25 +43,17 @@ const positive = (value: unknown) => Number.isFinite(Number(value)) && Number(va
 // malformed client fails at the PIN prompt instead of later with "no longer
 // matches".
 export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): string | null {
-  if (purpose === 'shift_correction') {
-    return /^[0-9a-f]{64}$/.test(String(fields?.confirmation_token ?? ''))
-      ? null
-      : 'The correction being approved is missing. Preview it again.';
-  }
   if (purpose === 'customer_refund') {
     if (!positive(fields?.account_id)) return 'The customer being refunded is missing.';
     if (!['cash', 'mpesa'].includes(String(fields?.method ?? ''))) return 'Choose how the refund is paid.';
     if (!positive(fields?.amount)) return 'The amount being approved is missing.';
     return null;
   }
-  if (purpose === 'variance_waiver') {
-    if (!positive(fields?.for_employee_id)) return 'The employee is missing.';
-    if (!positive(fields?.amount)) return 'The amount being approved is missing.';
-    return null;
-  }
-  if (purpose === 'variance_refund') {
-    if (!positive(fields?.for_employee_id)) return 'The employee being paid back is missing.';
-    if (!['cash', 'mpesa'].includes(String(fields?.method ?? ''))) return 'Choose how the money is paid back.';
+  if (purpose === 'balance_move') {
+    const kinds = ['customer', 'employee', 'station'];
+    if (!kinds.includes(String(fields?.from_kind ?? '')) || !kinds.includes(String(fields?.to_kind ?? ''))) {
+      return 'Choose who the amount moves from and to.';
+    }
     if (!positive(fields?.amount)) return 'The amount being approved is missing.';
     return null;
   }

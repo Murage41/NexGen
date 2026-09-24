@@ -80,15 +80,16 @@ Payments are never erased: the payment is marked reversed and kept on record,
 the customer owes that amount again, and it no longer counts toward the shift's
 cash. Attendants cannot remove payments.
 
-After the shift closes, use the pencil next to the payment or credit instead.
-The correction keeps the original on record, fixes the customer's balance, and
-recalculates the attendant's shortage. See
-[Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
+After the shift closes, the shift itself never changes. Fix a mistake with
+**Move balance** on the customer: move the amount to the right
+customer, to the attendant, or to the Station, with a reason and an
+administrator's approval. See
+[Fixing a Mistake on a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
 
 ## Credit on Account
 
-A customer holds credit when a closed-shift correction leaves them having paid
-more than they owe. Accounting systems do the same with an overpayment: it
+A customer holds credit when a balance move (or an older closed-shift
+correction) leaves them having paid more than they owe. Accounting systems do the same with an overpayment: it
 stays on the customer's account until it is used or refunded.
 
 - The customer list shows **In credit** next to their balance.

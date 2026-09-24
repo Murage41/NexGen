@@ -1,6 +1,7 @@
 import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/CreditLimitPrompt';
-import { ShiftCorrectionForm, ShiftCorrectionList, describeShiftBalance, type CorrectionEntry } from '../../../../shared/ui/ShiftCorrection';
-import { desktopApproval, shiftCorrectionApi } from '../services/api';
+import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
+import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
+import { desktopApproval } from '../services/api';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -9,7 +10,7 @@ import {
   getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
   addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview, getShiftNeighbors, createOperationKey,
 } from '../services/api';
-import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight, RefreshCw, Pencil, X } from 'lucide-react';
+import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
@@ -121,8 +122,6 @@ export default function ShiftDetail() {
   const [closeWarnings, setCloseWarnings] = useState<string[]>([]);
   const [receiptError, setReceiptError] = useState('');
   const [receiptListError, setReceiptListError] = useState('');
-  // A closed shift's entries are corrected, never edited (shared/ui/ShiftCorrection).
-  const [correcting, setCorrecting] = useState<CorrectionEntry | null>(null);
   const [reviewError, setReviewError] = useState('');
   // Current per-fuel-type prices, used to surface KES/L anomalies on the readings table.
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
@@ -736,17 +735,8 @@ export default function ShiftDetail() {
   if (!shift) return <div className="text-red-500">Shift not found</div>;
 
   const isOpen = shift.status === 'open';
-  const canCorrect = shift.status === 'closed';
+  // Corrections posted before closed shifts became unchangeable (history only).
   const corrections: any[] = shift.corrections || [];
-  const correctButton = (entry: CorrectionEntry) => (
-    <button onClick={() => setCorrecting(entry)} className="text-blue-600 hover:text-blue-800" title="Correct this entry">
-      <Pencil size={14} />
-    </button>
-  );
-  async function correctionPosted() {
-    setCorrecting(null);
-    await Promise.all([loadShift(), loadCreditAccounts()]);
-  }
   const isCancelled = shift.status === 'cancelled';
   const hasUnsyncedDraft = readingsDirty
     || collectionsDirty
@@ -1354,7 +1344,7 @@ export default function ShiftDetail() {
                 <th className="text-left p-2 font-medium text-gray-600">Customer</th>
                 <th className="text-left p-2 font-medium text-gray-600">Description</th>
                 <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                {(isOpen || canCorrect) && <th className="p-2"></th>}
+                {isOpen && <th className="p-2"></th>}
               </tr>
             </thead>
             <tbody>
@@ -1368,11 +1358,6 @@ export default function ShiftDetail() {
                       <button onClick={() => handleDeleteCredit(c.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
                     </td>
                   )}
-                  {canCorrect && (
-                    <td className="p-2 text-right">
-                      {c.account_id && correctButton({ entry_type: 'credit', entry_id: c.id, account_id: c.account_id, account_name: c.customer_name, amount: Number(c.amount) })}
-                    </td>
-                  )}
                 </tr>
               ))}
             </tbody>
@@ -1380,7 +1365,7 @@ export default function ShiftDetail() {
               <tr>
                 <td colSpan={2} className="p-2 text-right">Total Credits:</td>
                 <td className="p-2 text-right">{formatKES(totalCredits)}</td>
-                {(isOpen || canCorrect) && <td></td>}
+                {isOpen && <td></td>}
               </tr>
             </tfoot>
           </table>
@@ -1544,7 +1529,7 @@ export default function ShiftDetail() {
                   <th className="text-right p-2 font-medium text-gray-600">Litres</th>
                   <th className="text-right p-2 font-medium text-gray-600">Retail</th>
                   <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                  {(isOpen || canCorrect) && <th className="p-2"></th>}
+                  {isOpen && <th className="p-2"></th>}
                 </tr>
               </thead>
               <tbody>
@@ -1564,13 +1549,6 @@ export default function ShiftDetail() {
                         <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
                       </td>
                     )}
-                    {canCorrect && (
-                      <td className="p-2 text-right">
-                        {c.invoice_line_id
-                          ? <span className="text-xs text-gray-400" title="Correct these litres through the invoice">On invoice</span>
-                          : correctButton({ entry_type: 'invoice_consumption', entry_id: c.id, account_id: c.account_id, account_name: c.account_name, litres: Number(c.litres), fuel_type: c.fuel_type, pump_id: c.pump_id })}
-                      </td>
-                    )}
                   </tr>
                 ))}
               </tbody>
@@ -1578,7 +1556,7 @@ export default function ShiftDetail() {
                 <tr>
                   <td colSpan={4} className="p-2 text-right">Total Invoice Retail:</td>
                   <td className="p-2 text-right">{formatKES(totalInvoiceConsumption)}</td>
-                  {(isOpen || canCorrect) && <td></td>}
+                  {isOpen && <td></td>}
                 </tr>
               </tfoot>
             </table>
@@ -1671,7 +1649,7 @@ export default function ShiftDetail() {
                 <th className="text-left p-2 font-medium text-gray-600">Customer</th>
                 <th className="text-left p-2 font-medium text-gray-600">Method</th>
                 <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                {(isOpen || canCorrect) && <th className="p-2"></th>}
+                {isOpen && <th className="p-2"></th>}
               </tr>
             </thead>
             <tbody>
@@ -1691,11 +1669,6 @@ export default function ShiftDetail() {
                       </button>
                     </td>
                   )}
-                  {canCorrect && (
-                    <td className="p-2 text-center">
-                      {correctButton({ entry_type: 'payment', entry_id: r.id, account_id: r.account_id, account_name: r.account_name, amount: Number(r.amount), payment_method: r.payment_method })}
-                    </td>
-                  )}
                 </tr>
               ))}
             </tbody>
@@ -1703,7 +1676,7 @@ export default function ShiftDetail() {
               <tr>
                 <td colSpan={2} className="p-2 text-right">Total Collected:</td>
                 <td className="p-2 text-right">{formatKES(totalCreditReceipts)}</td>
-                {(isOpen || canCorrect) && <td></td>}
+                {isOpen && <td></td>}
               </tr>
             </tfoot>
           </table>
@@ -1717,32 +1690,16 @@ export default function ShiftDetail() {
       {corrections.length > 0 && (
         <div className="bg-white rounded-lg shadow p-4 mb-4 border-l-4 border-blue-400">
           <h2 className="text-lg font-semibold text-gray-700 mb-1">Corrections after close</h2>
-          <p className="text-xs text-gray-500 mb-2">Nothing on this shift was edited. Each correction reversed an entry, kept it on record, and is dated the day it was made.</p>
+          <p className="text-xs text-gray-500 mb-2">Posted before closed shifts became unchangeable. Mistakes are now fixed on the customer's balance or the attendant's variances.</p>
           <ShiftCorrectionList corrections={corrections} />
         </div>
       )}
 
-      {correcting && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <h2 className="text-lg font-semibold">Correct an entry on shift #{shift.id}</h2>
-                <p className="text-xs text-gray-500">The shift is closed, so the entry is not edited: it is reversed and kept on record.</p>
-              </div>
-              <button onClick={() => setCorrecting(null)} className="text-gray-400 hover:text-gray-700"><X size={18} /></button>
-            </div>
-            <ShiftCorrectionForm
-              shiftId={shift.id}
-              entry={correcting}
-              accounts={creditAccounts}
-              pumps={(shift.readings || []).map((r: any) => ({ pump_id: r.pump_id, pump_label: r.pump_label, nozzle_label: r.nozzle_label, fuel_type: r.fuel_type }))}
-              api={shiftCorrectionApi}
-              approval={desktopApproval}
-              onDone={correctionPosted}
-              onCancel={() => setCorrecting(null)}
-            />
-          </div>
+      {(shift.balance_moves || []).length > 0 && (
+        <div className="bg-white rounded-lg shadow p-4 mb-4 border-l-4 border-gray-400">
+          <h2 className="text-lg font-semibold text-gray-700 mb-1">Mistakes fixed later</h2>
+          <p className="text-xs text-gray-500 mb-2">This shift is unchanged. These balance moves refer to it.</p>
+          <BalanceMoveList moves={shift.balance_moves} />
         </div>
       )}
 
@@ -1816,7 +1773,7 @@ export default function ShiftDetail() {
                   className="w-full border border-gray-300 rounded-lg p-2"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  Pay the full wage. Shortages are repaid separately under Employees, Variances, never taken from pay.
+                  Pay the full wage. Shortages are paid separately under Employees, Shortages, never taken from pay.
                 </p>
               </div>
             ) : (

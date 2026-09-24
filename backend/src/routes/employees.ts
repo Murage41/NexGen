@@ -73,7 +73,7 @@ async function attachCompensation<T extends { id: number }>(employees: T[]): Pro
       current_period_earnings: earningsByEmployee.get(employee.id) || 0,
       payroll_balance_due: payrollDueByEmployee.get(employee.id) || 0,
       outstanding_staff_debt: variances.get(employee.id)?.owes || 0,
-      variance_totals: variances.get(employee.id) || { owes: 0, surplus_available: 0, refundable: 0, net: 0, kept_by_station: 0 },
+      variance_totals: variances.get(employee.id) || { owes: 0, credit: 0, net: 0 },
     };
   }));
 }

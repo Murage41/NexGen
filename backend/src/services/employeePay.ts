@@ -222,7 +222,7 @@ export async function reverseEmployeeDebtReceipt(
     const shift = await db('shifts').where({ id: payment.shift_id }).first();
     if (!shift || shift.status !== 'open')
       throw settlementError(
-        'This receipt is on a closed shift. Use Correct next to it on the shift instead.',
+        "This receipt is on a closed shift, which cannot be changed. Fix it with Move balance on the employee's Variances.",
       );
   }
   await reverseVarianceRepayment(db, paymentId, { reason: String(reason).trim(), actorId });

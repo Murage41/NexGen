@@ -1,3 +1,4 @@
+import { stationMoveTotals } from '../services/balanceMoves';
 import { Router } from 'express';
 import db from '../database';
 import { computeBookStock, computeAllTankStocks, getFIFOCostByFuelType, reverseBatchConsumption, consumeBatchesFIFO, recomputeCache } from '../services/stockCalculator';
@@ -811,6 +812,8 @@ async function computeMonthlyReport(month: string) {
       money_credit_corrections: receivableActivity.money_credit_corrections,
       money_payment_reversals: receivableActivity.money_payment_reversals,
       money_refunds: receivableActivity.money_refunds,
+      money_balance_adjustments: receivableActivity.money_balance_adjustments,
+      balance_moves_station: await stationMoveTotals(db, startDate, endDate),
       // Credit customers held on account (owed to them), after corrections.
       opening_customer_credits: openingReceivables.money_customer_credits,
       closing_customer_credits: closingReceivables.money_customer_credits,

@@ -20,10 +20,8 @@ export type ApprovalPurpose =
   | 'deduction'
   | 'credit_override'
   | 'consumption_override'
-  | 'shift_correction'
   | 'customer_refund'
-  | 'variance_waiver'
-  | 'variance_refund';
+  | 'balance_move';
 
 export function useApprover(approval?: ApprovalApi) {
   const [approvers, setApprovers] = useState<{ id: number; name: string }[]>([]);

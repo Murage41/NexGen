@@ -53,11 +53,9 @@ import { getShiftReview, updateShiftReview } from '../services/shiftReview';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
 import { computeShiftAccountability } from '../services/shiftAccountability';
+import { listBalanceMoves } from '../services/balanceMoves';
 import {
   listShiftCorrections,
-  parseCorrectionRequest,
-  postShiftCorrection,
-  previewShiftCorrection,
 } from '../services/shiftCorrections';
 
 // Scripts import the formula from here; it lives in the service.
@@ -403,6 +401,11 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         collections: collections || null,
         close_reconciliation: closeReconciliation || null,
         corrections,
+        // Mistakes on this shift fixed later by moving balances; the shift itself
+        // is unchanged. Administrators only (they name customers and amounts).
+        balance_moves: viewer?.role === 'admin' && shift.status === 'closed'
+          ? await listBalanceMoves(db, { shiftId: Number(shift.id) })
+          : [],
         review: shiftReview || null,
         activity_timeline: activityTimeline,
         expenses,
@@ -1469,63 +1472,24 @@ router.delete('/:id/invoice-consumption/:entryId', requireAdmin, async (req, res
   }
 });
 
-// Closed-shift fuel on account used to be corrected from the invoice customer
-// page. Corrections now start from the closed shift (POST /:id/corrections) so
-// credits, payments and litres share one audited path; old clients get a clear
-// answer instead of a silent 404.
-router.post(['/:id/invoice-consumption/:entryId/correction-preview', '/:id/invoice-consumption/:entryId/correct'], requireAdmin, (_req, res) => {
-  res.status(410).json({
-    success: false,
-    error: 'Correct fuel on account from the closed shift page: open the shift and use Correct next to the entry.',
-  });
-});
-
-/**
- * Closed-shift corrections (services/shiftCorrections.ts). A closed record is
- * never edited: the original is reversed and kept, a linked replacement is
- * added when needed, and the attendant's shortage follows the change.
- *
- * POST /shifts/:id/corrections/preview  - changes nothing; returns the effects
- *   and a confirmation_token.
- * POST /shifts/:id/corrections          - posts it: needs that token and an
- *   administrator's approval (their own session, or approval_token from
- *   /auth/verify-pin with purpose 'shift_correction').
- * Body: { entry_type: 'credit'|'payment'|'invoice_consumption', entry_id,
- *         kind: 'wrong_customer'|'wrong_amount'|'not_valid',
- *         account_id?, amount?, litres?, pump_id?, note? }
- */
-router.post('/:id/corrections/preview', requireAdmin, async (req: any, res) => {
-  try {
-    const request = parseCorrectionRequest(Number(req.params.id), req.body);
-    const recordedBy = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
-    res.json({ success: true, data: await previewShiftCorrection(db, request, recordedBy) });
-  } catch (err: any) {
-    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
-  }
-});
-
-router.post('/:id/corrections', requireAdmin, async (req: any, res) => {
-  try {
-    const request = parseCorrectionRequest(Number(req.params.id), req.body);
-    const confirmationToken = String(req.body?.confirmation_token || '');
-    if (!/^[0-9a-f]{64}$/.test(confirmationToken)) {
-      return res.status(400).json({ success: false, error: 'Preview this correction before posting it.' });
-    }
-    const sessionEmployeeId = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
-    const result = await db.transaction(async (trx) => {
-      const approver = await resolveApprover(
-        sessionEmployeeId,
-        req.body?.approval_token,
-        approvalBindings.shift_correction({ confirmation_token: confirmationToken }),
-        trx,
-      );
-      return postShiftCorrection(trx, request, { approver, recordedBy: sessionEmployeeId, confirmationToken });
+// A closed shift is never changed (docs/CLOSED-SHIFT-CORRECTIONS.md). Mistakes
+// found after close are fixed by moving the amount between the accounts it
+// affects (POST /balance-moves). Corrections posted before this stay on record.
+router.post(
+  [
+    '/:id/corrections',
+    '/:id/corrections/preview',
+    '/:id/invoice-consumption/:entryId/correction-preview',
+    '/:id/invoice-consumption/:entryId/correct',
+  ],
+  requireAdmin,
+  (_req, res) => {
+    res.status(410).json({
+      success: false,
+      error: 'A closed shift cannot be changed. Fix the mistake with Move balance (Credit Accounts or the employee\'s Variances).',
     });
-    res.status(201).json({ success: true, data: result });
-  } catch (err: any) {
-    res.status(err.http || err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
-  }
-});
+  },
+);
 
 /**
  * POST /shifts/:id/credit-receipts
@@ -1627,7 +1591,7 @@ router.post('/:id/credit-receipts/:paymentId/reverse', requireAdmin, async (req:
       const shift = await trx('shifts').where({ id: shiftId }).first('status');
       if (shift?.status !== 'open') {
         throw Object.assign(
-          new Error('This shift has closed. Use Correct next to the payment on the shift instead.'),
+          new Error('This shift has closed and cannot be changed. Fix the mistake with Move balance on Credit Accounts.'),
           { http: 409 },
         );
       }

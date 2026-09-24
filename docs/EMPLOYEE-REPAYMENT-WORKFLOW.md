@@ -2,14 +2,14 @@
 
 Since update #7 (22 Sep 2026) employees are paid their full compensation on
 every plan, and shift close and payroll no longer recover debt. Shortages are
-kept as the attendant's variances and repaid separately: see
-[Attendant Variances](ATTENDANT-VARIANCES.md) for closing a shift, recording a
-repayment (directly or into an open shift's drawer), writing off, and paying an
-employee back.
+kept on the attendant's Shortages list and paid separately, in money: see
+[Attendant Shortages](ATTENDANT-VARIANCES.md) for closing a shift and recording
+a payment (directly or into an open shift's drawer). Since 24 Sep 2026 nothing
+is written off or paid back.
 
-A repayment taken on a closed shift is corrected from the shift with the pencil
-next to it, since changing it changes an already reconciled drawer; see
-[Correcting a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
+A repayment taken on a closed shift is never changed. If it never came in, or
+went on the wrong employee, fix it with **Move balance** on their Shortages list; see
+[Fixing a Mistake on a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
 
 ## What employees and administrators can see
 
@@ -23,9 +23,9 @@ employee statement from payroll. Both see:
 - Each payment's date, method, reference and drawer where applicable.
 - The earnings covered by new payroll payments and deductions, including
   partial settlements and remaining amounts.
-- Their variances: every shift's over or short, what recovered it, repayments,
-  write-offs and pay-backs, and the staff-debt records from before variances
-  started under Earlier records.
+- Their shortages: every short shift, what they paid towards it, write-offs and
+  pay-backs made before 24 Sep 2026, and the staff-debt records from before the
+  list started under Earlier records.
 - Earnings not yet in payroll, including recorded shift cash and deductions.
 
 **Print statement** prints the current statement. Employees cannot change pay,

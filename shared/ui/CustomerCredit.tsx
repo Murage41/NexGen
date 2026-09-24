@@ -71,7 +71,7 @@ export function CustomerCreditPanel({
           <div>
             <p className="font-semibold text-green-900">In credit: {kes(held)}</p>
             <p className="text-xs text-green-800">
-              Paid ahead after a correction. It pays their next credit automatically when that shift closes.
+              Paid ahead. It pays their next credit automatically when that shift closes.
             </p>
           </div>
           {canRefund && !open && (

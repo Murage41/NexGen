@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect, Fragment } from 'react';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, desktopApproval } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, balanceMoveApi, desktopApproval } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 import { CustomerCreditPanel } from '../../../../shared/ui/CustomerCredit';
+import { MoveBalanceButton } from '../../../../shared/ui/BalanceMove';
 import { Users, X, Banknote, Trash2, ChevronDown, ChevronUp, Search, Plus, Pencil } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
 
@@ -319,6 +320,14 @@ export default function CreditAccounts() {
                                 approval={desktopApproval}
                                 refund={refundCustomerCredit}
                                 onRefunded={refreshAfterRefund}
+                              />
+                            )}
+                            {expandedAccount.type === 'customer' && expandedAccount.billing_mode !== 'invoice' && (
+                              <MoveBalanceButton
+                                api={balanceMoveApi}
+                                approval={desktopApproval}
+                                initialFrom={{ kind: 'customer', id: expandedAccount.id }}
+                                onDone={refreshAfterRefund}
                               />
                             )}
                             {/* Credits (line items) */}

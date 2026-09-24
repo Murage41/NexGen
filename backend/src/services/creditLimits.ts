@@ -130,12 +130,14 @@ export async function overdueBeyond(
       .sum({ total: 'balance' })
       .first()
     : await db('credits as c')
-      .join('shifts as s', 's.id', 'c.shift_id')
+      // A balance move's credit has no shift; it ages from its origin_date
+      // (services/balanceMoves.ts).
+      .leftJoin('shifts as s', 's.id', 'c.shift_id')
       .where('c.account_id', account.id)
       .whereNull('c.deleted_at')
       .where('c.balance', '>', 0)
-      .where('s.shift_date', '<', cutoff)
-      .min({ oldest: 's.shift_date' })
+      .whereRaw('COALESCE(s.shift_date, c.origin_date) < ?', [cutoff])
+      .min({ oldest: db.raw('COALESCE(s.shift_date, c.origin_date)') })
       .sum({ total: 'c.balance' })
       .first();
   if (!row?.oldest) return null;

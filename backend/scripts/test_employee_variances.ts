@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 
-// Attendant variances (services/employeeVariances.ts, migration 047). Part one
-// checks the netting rules on plain entries; part two carries a realistic old
+// Attendant shortages (services/employeeVariances.ts, migration 047). Part one
+// checks the rules on plain entries; part two carries a realistic old
 // staff-debt history over and checks nothing is lost. Runs on a private
 // temporary database; never touches data/nexgen.db.
 
@@ -28,135 +28,103 @@ const shift = (date: string, variance: number, extra: Partial<Entry> = {}) =>
 
 async function netting() {
   const { computeVarianceStatement: statement } = await import('../src/services/employeeVariances');
+  const owedOf = (s: any) => Math.round(s.rows.reduce((sum: number, r: any) => sum + r.owed, 0) * 100) / 100;
 
-  // A. The ASPrime Cashier Variance Manager screenshot, one month:
-  // 52.42 - 57.84 + 1.88 + 90.28 - 0.38 = 86.36 owed.
+  // A. The ASPrime Cashier Variance Manager screenshot, one month. The
+  // employee owes the short shifts only: 52.42 + 1.88 + 90.28 = 144.58. The
+  // surpluses (57.84, 0.38) are the station's and are not listed.
   {
-    const entries = [
+    const s = statement([
       shift('2026-09-14', -52.42),
       shift('2026-09-15', 57.84),
       shift('2026-09-16', -1.88),
       shift('2026-09-17', -90.28),
       shift('2026-09-21', 0.38),
-    ];
-    const s = statement(entries, '2026-09-22');
-    assert.equal(s.totals.owes, 86.36);
-    assert.equal(s.totals.net, 86.36);
-    assert.equal(s.totals.surplus_available, 0);
-    const byDate = new Map(s.rows.map((r) => [r.date, r]));
-    assert.equal(byDate.get('2026-09-14')!.recovered_by.surplus, 52.42);
-    assert.equal(byDate.get('2026-09-14')!.real_variance, 0);
-    assert.equal(byDate.get('2026-09-15')!.surplus_used, 57.84);
-    // 5.42 left from the 57.84 surplus, then the 0.38 surplus.
-    assert.equal(byDate.get('2026-09-17')!.real_variance, -86.36);
-    assert.equal(byDate.get('2026-09-17')!.recovered, 3.92);
-    assert.equal(s.rows.reduce((sum, r) => Math.round((sum + r.real_variance) * 100) / 100, 0), -86.36);
-    console.log('PASS the ASPrime example nets to 86.36 within the month');
+    ], '2026-09-22');
+    assert.equal(s.totals.owes, 144.58);
+    assert.equal(s.totals.credit, 0);
+    assert.deepEqual(s.rows.map((r) => r.date), ['2026-09-17', '2026-09-16', '2026-09-14'], 'only the short shifts');
+    assert.equal(owedOf(s), 144.58);
+    console.log('PASS the employee owes the short shifts; surpluses are the station\'s and not listed');
   }
 
-  // B. Unused surplus stays with the station at month end.
+  // B. A surplus never pays a shortage, in any month or order.
   {
-    const s = statement([shift('2026-09-30', 100), shift('2026-10-01', -60)], '2026-10-02');
-    assert.equal(s.totals.owes, 60);
-    assert.equal(s.totals.kept_by_station, 100);
-    assert.equal(s.rows.find((r) => r.date === '2026-09-30')!.status, 'kept');
-    // Still this month: the surplus is available, not kept.
-    const same = statement([shift('2026-09-30', 100)], '2026-09-30');
-    assert.equal(same.totals.surplus_available, 100);
-    assert.equal(same.totals.net, -100);
-    assert.equal(same.rows[0].status, 'available');
-    console.log('PASS unused surplus stays with the station at month end');
+    assert.equal(statement([shift('2026-09-30', 100), shift('2026-10-01', -60)], '2026-10-02').totals.owes, 60);
+    assert.equal(statement([shift('2026-08-31', -100), shift('2026-09-01', 30)], '2026-09-10').totals.owes, 100);
+    const only = statement([shift('2026-09-30', 100)], '2026-09-30');
+    assert.deepEqual([only.totals.owes, only.totals.credit, only.rows.length], [0, 0, 0]);
+    console.log('PASS a surplus never pays a shortage');
   }
 
-  // C. A surplus pays what is owed from an earlier month; D. order within a
-  // month does not matter.
+  // C. Payments pay the oldest shortage first; money paid beyond a shortage
+  // that later shrank is credit, which pays the next shortage.
   {
-    const c = statement([shift('2026-08-31', -100), shift('2026-09-01', 30)], '2026-09-10');
-    assert.equal(c.totals.owes, 70);
-    const d1 = statement([shift('2026-09-02', 50), shift('2026-09-05', -80)], '2026-09-10');
-    const d2 = statement([shift('2026-09-02', -80), shift('2026-09-05', 50)], '2026-09-10');
-    assert.equal(d1.totals.owes, 30);
-    assert.equal(d2.totals.owes, 30);
-    console.log('PASS surplus pays older months, and order within a month does not matter');
-  }
-
-  // E. A correction that reduces a repaid shortage makes the difference
-  // refundable; a refund uses it up.
-  {
-    const short = shift('2026-09-01', -100);
-    const entries = [
-      short,
-      entry('repayment', '2026-09-02', -100, { refundable: true }),
-      entry('correction', '2026-09-05', -40, { shift_id: short.shift_id, shift_date: '2026-09-01' }),
-    ];
-    let s = statement(entries, '2026-09-05');
-    assert.equal(s.totals.owes, 0);
-    assert.equal(s.totals.refundable, 40);
-    assert.equal(s.rows[0].variance, -60);
-    assert.equal(s.rows[0].closed_variance, -100);
+    const first = shift('2026-09-01', -100);
+    const second = shift('2026-09-03', -50);
+    let s = statement([first, second, entry('repayment', '2026-09-04', -120, { refundable: true })], '2026-09-04');
+    assert.deepEqual([s.totals.owes, s.rows.find((r) => r.shift_id === first.shift_id)!.owed, s.rows.find((r) => r.shift_id === second.shift_id)!.owed], [30, 0, 30]);
+    const paid = [first, entry('repayment', '2026-09-02', -100, { refundable: true }),
+      entry('correction', '2026-09-05', -40, { shift_id: first.shift_id, shift_date: '2026-09-01' })];
+    s = statement(paid, '2026-09-05');
+    assert.deepEqual([s.totals.owes, s.totals.credit], [0, 40]);
+    assert.equal(s.rows[0].shortage, 60);
+    assert.equal(s.rows[0].closed_shortage, 100);
     assert.equal(s.rows[0].corrected, true);
-    s = statement([...entries, entry('refund', '2026-09-06', 40)], '2026-09-06');
-    assert.equal(s.totals.refundable, 0);
-    assert.equal(s.totals.owes, 0);
-    console.log('PASS a correction frees a repayment as refundable; a refund uses it');
+    s = statement([...paid, shift('2026-09-06', -70)], '2026-09-06');
+    assert.deepEqual([s.totals.owes, s.totals.credit], [30, 0], 'credit pays the next shortage automatically');
+    console.log('PASS payments pay oldest first; credit from a shrunk shortage pays the next one');
   }
 
-  // F. A correction that frees surplus leaves it with the station, never
-  // refundable.
+  // D. History: write-offs and paybacks from before 24 Sep 2026 still count.
+  // A write-off never becomes credit; a payback uses credit up.
   {
     const short = shift('2026-09-01', -100);
-    const s = statement([
-      short,
-      shift('2026-09-03', 100),
-      entry('correction', '2026-10-05', -40, { shift_id: short.shift_id, shift_date: '2026-09-01' }),
-    ], '2026-10-05');
-    assert.equal(s.totals.owes, 0);
-    assert.equal(s.totals.refundable, 0);
-    assert.equal(s.totals.kept_by_station, 40);
-    console.log('PASS surplus freed by a correction stays with the station');
-  }
-
-  // G. A waiver never creates money owed to the employee.
-  {
-    const short = shift('2026-09-01', -100);
-    const s = statement([
+    let s = statement([
       short,
       entry('waiver', '2026-09-02', -100, { shift_id: short.shift_id }),
       entry('correction', '2026-09-03', -30, { shift_id: short.shift_id, shift_date: '2026-09-01' }),
     ], '2026-09-03');
-    assert.equal(s.totals.owes, 0);
-    assert.equal(s.totals.refundable, 0);
+    assert.deepEqual([s.totals.owes, s.totals.credit], [0, 0]);
     const waiver = s.events.find((e) => e.type === 'waiver')!;
-    assert.equal(waiver.applied, 70);
-    assert.equal(waiver.unused, 30);
-    console.log('PASS a waiver only writes off what is owed');
+    assert.deepEqual([waiver.applied, waiver.unused], [70, 30]);
+    const repayment = entry('repayment', '2026-09-02', -100, { refundable: true });
+    const refunded = [
+      short,
+      repayment,
+      entry('correction', '2026-09-05', -40, { shift_id: short.shift_id, shift_date: '2026-09-01' }),
+      entry('refund', '2026-09-06', 40),
+    ];
+    s = statement(refunded, '2026-09-06');
+    assert.deepEqual([s.totals.owes, s.totals.credit], [0, 0]);
+    // Reversing a repayment that was partly paid back leaves the payback owed.
+    s = statement(refunded.map((e) => (e.id === repayment.id ? { ...e, status: 'reversed' } : e)), '2026-09-07');
+    assert.equal(s.totals.owes, 100);
+    console.log('PASS old write-offs and paybacks still count, as history');
   }
 
-  // H. Carried-over history: what the old system recovered in cash comes back
-  // as refundable when a correction reduces the shortage; what it cleared
-  // does not.
+  // E. Carried-over history: what the old system recovered in cash becomes
+  // credit when the shortage later shrinks; what it cleared does not.
   {
     const old = shift('2026-08-28', -1362.32, { legacy_source: 'shift_close_reconciliations:93' });
     const legacy = (amount: number, refundable: boolean) =>
       entry('legacy_settlement', '2026-08-28', amount, { shift_id: old.shift_id, shift_date: '2026-08-28', refundable });
     let s = statement([old, legacy(-1203, true)], '2026-09-22');
     assert.equal(s.totals.owes, 159.32);
-    assert.equal(s.rows[0].recovered_by.recovered_before, 1203);
-    assert.equal(s.rows[0].before_variances, true);
+    assert.equal(s.rows[0].paid_by.recovered_before, 1203);
+    assert.equal(s.rows[0].before_ledger, true);
     s = statement([old, legacy(-1203, true),
       entry('correction', '2026-09-22', -200, { shift_id: old.shift_id, shift_date: '2026-08-28' })], '2026-09-22');
-    assert.equal(s.totals.owes, 0);
-    assert.equal(s.totals.refundable, 40.68);
+    assert.deepEqual([s.totals.owes, s.totals.credit], [0, 40.68]);
 
     const cleared = shift('2026-08-17', -428.56);
     const clear = entry('legacy_settlement', '2026-08-17', -428.56, { shift_id: cleared.shift_id, shift_date: '2026-08-17' });
     s = statement([cleared, clear,
       entry('correction', '2026-09-22', -100, { shift_id: cleared.shift_id, shift_date: '2026-08-17' })], '2026-09-22');
-    assert.equal(s.totals.owes, 0);
-    assert.equal(s.totals.refundable, 0);
+    assert.deepEqual([s.totals.owes, s.totals.credit], [0, 0]);
 
     // Part cleared, part repaid: the cleared part goes first, so a reduction
-    // frees the repaid part (the rule corrections used before).
+    // frees the repaid part.
     const mixed = shift('2026-08-20', -100);
     s = statement([
       mixed,
@@ -164,43 +132,27 @@ async function netting() {
       entry('legacy_settlement', '2026-08-20', -70, { shift_id: mixed.shift_id, shift_date: '2026-08-20', refundable: false }),
       entry('correction', '2026-09-22', -50, { shift_id: mixed.shift_id, shift_date: '2026-08-20' }),
     ], '2026-09-22');
-    assert.equal(s.totals.refundable, 30);
+    assert.equal(s.totals.credit, 30);
 
-    // A surplus the station kept before variances started.
+    // A surplus the old system kept is not the employee's; corrected later to
+    // a shortage of 100, only that shortage is owed.
     const kept = shift('2026-09-09', 500.6);
-    s = statement([kept, entry('legacy_kept', '2026-09-09', 500.6, { shift_id: kept.shift_id, shift_date: '2026-09-09' })], '2026-09-22');
-    assert.equal(s.totals.net, 0);
-    assert.equal(s.rows[0].status, 'kept');
-    assert.equal(s.rows[0].kept_by_station, 500.6);
-    // Corrected later to a shortage of 100: the kept surplus was never real,
-    // so only the shortage is owed.
-    s = statement([kept, entry('legacy_kept', '2026-09-09', 500.6, { shift_id: kept.shift_id, shift_date: '2026-09-09' }),
-      entry('correction', '2026-09-22', 600.6, { shift_id: kept.shift_id, shift_date: '2026-09-09' })], '2026-09-22');
-    assert.equal(s.totals.owes, 100);
-    assert.equal(s.rows[0].kept_by_station, 0);
-    console.log('PASS carried-over recoveries follow the old refund rule');
+    const keptEntry = entry('legacy_kept', '2026-09-09', 500.6, { shift_id: kept.shift_id, shift_date: '2026-09-09' });
+    s = statement([kept, keptEntry], '2026-09-22');
+    assert.deepEqual([s.totals.net, s.rows.length], [0, 0]);
+    s = statement([kept, keptEntry, entry('correction', '2026-09-22', 600.6, { shift_id: kept.shift_id, shift_date: '2026-09-09' })], '2026-09-22');
+    assert.deepEqual([s.totals.owes, s.rows[0].shortage], [100, 100]);
+    console.log('PASS carried-over recoveries become credit when a shortage shrinks');
   }
 
-  // I. Money owed back pays the next shortage; reversing a repayment that was
-  // refunded leaves the refund owed.
+  // F. Credit from the old records pays the next shortage.
   {
-    let s = statement([
+    const s = statement([
       entry('legacy_owed_back', '2026-09-22', -0.05, { refundable: true }),
       shift('2026-09-23', -10),
     ], '2026-09-23');
     assert.equal(s.totals.owes, 9.95);
-    const short = shift('2026-09-01', -100);
-    const repayment = entry('repayment', '2026-09-02', -100, { refundable: true });
-    const base = [
-      short,
-      repayment,
-      entry('correction', '2026-09-05', -100, { shift_id: short.shift_id, shift_date: '2026-09-01' }),
-      entry('refund', '2026-09-06', 100),
-    ];
-    assert.equal(statement(base, '2026-09-06').totals.net, 0);
-    s = statement(base.map((e) => (e.id === repayment.id ? { ...e, status: 'reversed' } : e)), '2026-09-07');
-    assert.equal(s.totals.owes, 100);
-    console.log('PASS owed-back credit pays the next shortage; a refunded repayment reversed is owed');
+    console.log('PASS credit from the old records pays the next shortage');
   }
 }
 
@@ -305,23 +257,22 @@ async function carryOver() {
     assert.equal(m.totals.owes, 2212.77);
     assert.equal(m.totals.net, 2212.77);
     const row = (id: number) => m.rows.find((r) => r.shift_id === id)!;
-    assert.equal(row(s93).real_variance, -159.32);
-    assert.equal(row(s93).recovered, 1203);
-    assert.equal(row(s93).recovered_by.recovered_before, 1203);
-    assert.equal(row(s97).real_variance, -1951.99);
-    assert.equal(row(s107).real_variance, -101.46);
+    assert.equal(row(s93).owed, 159.32);
+    assert.equal(row(s93).paid, 1203);
+    assert.equal(row(s93).paid_by.recovered_before, 1203);
+    assert.equal(row(s97).owed, 1951.99);
+    assert.equal(row(s107).owed, 101.46);
     assert.equal(row(s72).status, 'settled');
-    assert.equal(row(s72).recovered_by.recovered_before, 83.63);
-    assert.equal(row(s82).status, 'kept');
-    assert.equal(row(s105).kept_by_station, 11.04);
+    assert.equal(row(s72).paid_by.recovered_before, 83.63);
+    assert.equal(m.rows.some((r) => r.shift_id === s82 || r.shift_id === s105), false, "surplus shifts are the station's, not listed");
     assert.equal(m.rows.some((r) => r.shift_id === old), false, 'shifts before close figures stay in the old history');
-    for (const r of m.rows) assert.equal(r.before_variances, true);
+    for (const r of m.rows) assert.equal(r.before_ledger, true);
 
     const e = await getVarianceStatement(db, ema);
     assert.equal(e.totals.net, 0);
-    assert.equal(e.rows.find((r) => r.shift_id === s92)!.recovered_by.cleared_before, 4196.92);
+    assert.equal(e.rows.find((r) => r.shift_id === s92)!.paid_by.cleared_before, 4196.92);
     const f = await getVarianceStatement(db, francis);
-    assert.equal(f.totals.refundable, 0.05);
+    assert.equal(f.totals.credit, 0.05);
     assert.equal(f.totals.net, -0.05);
     const owedBack = await db('staff_debt_adjustments').where({ shift_id: s28 }).first();
     assert.equal(owedBack.status, 'migrated');
