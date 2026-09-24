@@ -1,22 +1,16 @@
 # Codex Project Notes
 
-## Station PC Update Rule
+Every agent working on NexGen (Claude Code, Codex or any other) follows the same
+project files. Read them first; they are the single source of truth:
 
-When a code or documentation change is intended to be pulled onto the station PC:
+- `CLAUDE.md`: session rules (start/end of session, cost discipline, what never
+  to do, definition of done). It applies to Codex as written.
+- `docs/PROJECT-STATUS.md`: current state, station version, pending updates.
+- `docs/ROADMAP.md`: what is left to build, in order.
+- `docs/ENGINEERING-STANDARDS.md`: how to build, test and deploy, including the
+  station PC update rule (§7): commit and push only when the owner asks,
+  `git merge --ff-only` per update, backup before migrations,
+  `npm run build:mobile`, `npm run station:bg`, one command block per update.
 
-1. Run the relevant checks for the change.
-2. Stage, commit, and push the change to `origin/main`.
-3. Confirm `git status --short` is clean.
-4. Only then give the station PC update commands.
-
-Use `git pull --ff-only` in station PC instructions. If it fails, stop and review
-the station PC's local changes instead of forcing, rebasing, or resetting.
-
-Include `npm run build:mobile` in station PC update commands before restarting
-the station stack. The ngrok/backend mobile URL serves `/mobile` from
-`mobile/dist`, so mobile UI changes are not visible there until the mobile
-bundle is rebuilt.
-
-Use `npm run station:bg` for normal station operation. It runs backend, desktop,
-and ngrok only. The full `npm run dev:bg` stack also starts the mobile Vite dev
-server and should be reserved for development/testing.
+Keep those files current at the end of every session instead of adding rules
+here, so all agents stay consistent.

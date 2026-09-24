@@ -148,3 +148,6 @@ ecosystem.config.js.bak
 
 # Claude Code internal
 .claude/
+
+# Scratch copy of the dev database for end-to-end tests (scripts/e2e)
+.e2e-data/
