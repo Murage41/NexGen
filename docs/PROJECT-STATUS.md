@@ -5,13 +5,16 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-09-24.
+Last updated: 2026-09-25.
 
 ## Station PC
 
 - **Running `7e9fd54`** (confirmed by the owner 2026-09-24: updates #8, #9 and
   #10 applied, all checks passed). Latest migration there: `050`.
-- **Pending station updates: none.** The next one will be **#11**.
+- **Pending station update: #11, M6 attendant access** (pushed 2026-09-25,
+  commit "Show attendants only what they need on the phone"). No migration;
+  the phone app must be rebuilt (`npm run build:mobile`). The next one after
+  it will be **#12**.
 - The station has its own database. It is changed only by fast-forwarding to
   pushed commits, one command block per update, as in
   `docs/ENGINEERING-STANDARDS.md` §7.
@@ -57,6 +60,11 @@ Last updated: 2026-09-24.
   `docs/CREDIT-CUSTOMERS-AND-LIMITS.md`.
 - **Approvals:** desktop picks an admin and takes their PIN; the phone uses the
   signed-in admin. Tokens are bound to the exact decision.
+- **Attendants (M6):** read-only Credits (money customers' credit only),
+  Pumps and Tanks (levels only); invoice customers by name only; a blind open
+  shift (no expected total, variance or "Shortage" until an admin closes it);
+  home screen shows the shift status only. Enforced on the server. See
+  `docs/ATTENDANT-ACCESS.md`.
 
 ## Milestones
 
@@ -65,13 +73,13 @@ Last updated: 2026-09-24.
   corrections evolved into Move balance and the shortages ledger); **M2 closed
   2026-09-24** (diesel main pump set to roll over at 100,000 L and confirmed on
   the station; old-log PIN check returned 0).
-- **Next: M6, what attendants can see.** The owner decided on 2026-09-24:
-  tank fuel levels, money customers' credit, no invoice customers (names only,
-  to record fuel on account), only their own debts, and no variance or
-  expected totals on an open shift (a blind close); also pumps shown,
-  customers' phone numbers and statements hidden, and only the shift status
-  on the attendant's home screen. The spec is `docs/ROADMAP.md` §1. Then M7, M8,
-  M9, phone invoice actions, a UI and design review, Tier 4, Tier 5.
+- **M6, what attendants can see: done, pushed 2026-09-25 as station update
+  #11** (`docs/ROADMAP.md` §1, `docs/ATTENDANT-ACCESS.md`).
+  All 31 backend suites pass, including the new `test:attendant-access`
+  (14 planted bugs all caught); checked in the browser on a scratch copy of
+  station data as an attendant on and off shift, and as an admin.
+- **Next: M7** (tank low-stock alert), then M8, M9, phone invoice actions, a
+  UI and design review, Tier 4, Tier 5.
 - 2026-09-24: the project's rules and status moved into committed files
   (`CLAUDE.md`, this file, `docs/ROADMAP.md`, `docs/ENGINEERING-STANDARDS.md`,
   `scripts/e2e/`), and the roadmap was re-checked against the code.
@@ -85,13 +93,20 @@ Last updated: 2026-09-24.
   `HISTORICAL-DEBT-CLEARANCE.md`, `PAYROLL-REGRESSION-VERIFICATION.md`) name
   staff or customers; removing those names is open, awaiting the owner's
   go-ahead (earlier versions stay in git history).
+- **Real customer names in a committed test:** `backend/scripts/test_credit_limits.ts`
+  (since M5) uses names that match real station customers. Renaming them is
+  open, awaiting the owner's go-ahead (as with the older docs above).
 - Accepted-for-now gaps (desktop has no login, unsigned installer, eTIMS stays
   with POSitive, dev-mode station processes): `docs/PRODUCTION-SECURITY-AND-COMPLIANCE.md`.
 
 ## Station facts that code must respect
 
-- Pumps: petrol, diesel main, diesel 2. Meters roll over at 1,000,000, except
-  the diesel main pump's litres at 100,000 (configured per pump).
+- Pumps: petrol, diesel main, diesel 2. Every meter has 6 digits and rolls
+  over after 999,999.99 (litres and KES), except the diesel main pump's litres,
+  which roll over after 99,999.999 (confirmed by the owner 2026-09-25;
+  configured per pump as 1,000,000 and 100,000). NexGen stores readings as
+  running totals past each rollover; screens show the pump's own display
+  (the total less every full turn).
 - Pump prices are the owner's: EPRA's published (Nairobi) prices plus the
   owner's transport cost, not EPRA prices as published.
 - One or two attendants per shift; attendants are mostly paid daily; payroll

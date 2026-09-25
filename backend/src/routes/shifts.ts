@@ -64,6 +64,18 @@ export { computeShiftAccountability };
 
 const router = Router();
 
+// A blind close (M6): while a shift is open its attendant does not see what the
+// pumps say should be handed in, or the running over/short. They record what
+// they have; the administrator closing the shift sees the result.
+const BLIND_CLOSE_FIELDS = [
+  'expected_sales',
+  'expected_shift_total',
+  'sales_accounted',
+  'sales_variance',
+  'total_accounted',
+  'variance',
+] as const;
+
 function staleShiftWrite(section: 'readings' | 'collections', currentRevision: number) {
   const label = section === 'readings' ? 'Pump readings' : 'Cash and M-Pesa collections';
   return Object.assign(
@@ -427,7 +439,9 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         outstanding_debts: outstandingDebts,
         total_outstanding_debt,
         attendant_variances: variances.totals,
-        ...accountability,
+        ...(viewer?.role !== 'admin' && shift.status === 'open'
+          ? Object.fromEntries(Object.entries(accountability).filter(([key]) => !(BLIND_CLOSE_FIELDS as readonly string[]).includes(key)))
+          : accountability),
       },
     });
   } catch (err: any) {
@@ -1913,7 +1927,7 @@ router.get('/staff-debts/:employeeId', requireAuth, async (req: any, res) => {
 router.put('/:id/repay-debt', requireAdmin, (_req, res) => res.status(410).json({ success: false, error: 'Record repayments under Employees, Variances.' }));
 
 // GET per-shift tank stock summary
-router.get('/:id/tank-summary', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
+router.get('/:id/tank-summary', requireAuth, requireOwnShiftOrAdmin, async (req: any, res) => {
   try {
     const shift = await db('shifts').where({ id: req.params.id }).first();
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
@@ -1928,6 +1942,8 @@ router.get('/:id/tank-summary', requireAuth, requireOwnShiftOrAdmin, async (req,
           'tanks.label as tank_label',
           'tanks.fuel_type',
         );
+      // Cost of the fuel sold is for administrators (M6).
+      if (req.employee?.role !== 'admin') for (const snapshot of snapshots) delete snapshot.cogs;
       return res.json({ success: true, data: { shift_id: shift.id, status: 'closed', tanks: snapshots } });
     }
 

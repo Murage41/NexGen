@@ -162,7 +162,9 @@ router.get('/', async (_req, res) => {
   }
 });
 
-router.get('/:id/stock-summary', async (req, res) => {
+// Stock value, cost and dip variance: administrators only. Attendants see
+// levels from the tank list (M6).
+router.get('/:id/stock-summary', requireAdmin, async (req, res) => {
   try {
     const tank = await db('tanks').where({ id: req.params.id }).first();
     if (!tank) return res.status(404).json({ success: false, error: 'Tank not found' });
@@ -249,7 +251,7 @@ router.get('/:id/stock-summary', async (req, res) => {
 });
 
 // GET stock adjustments for a tank
-router.get('/:id/adjustments', async (req, res) => {
+router.get('/:id/adjustments', requireAdmin, async (req, res) => {
   try {
     const tank = await db('tanks').where({ id: req.params.id }).first();
     if (!tank) return res.status(404).json({ success: false, error: 'Tank not found' });
@@ -490,7 +492,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 });
 
 // GET tank stock ledger (audit trail)
-router.get('/:id/ledger', async (req, res) => {
+router.get('/:id/ledger', requireAdmin, async (req, res) => {
   try {
     const { from, to, limit } = req.query;
     let query = db('tank_stock_ledger')

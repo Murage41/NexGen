@@ -1,9 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Plus, Fuel } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import { useAuth } from '../context/AuthContext';
 import { getPumps, createPump, getTanks } from '../services/api';
 
+// Readings are stored as running totals that keep counting past a rollover;
+// the pump shows the total less every full turn (as in ShiftRecord.tsx).
+function onPumpDisplay(cumulative: number, capacity: number): number {
+  if (!(capacity > 0)) return cumulative;
+  return Math.round((cumulative - Math.floor(cumulative / capacity) * capacity) * 100) / 100;
+}
+
 export default function Pumps() {
+  const { isAdmin } = useAuth();
   const [pumps, setPumps] = useState<any[]>([]);
   const [tanks, setTanks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,11 +71,11 @@ export default function Pumps() {
       <PageHeader
         title="Pumps"
         back
-        right={
+        right={isAdmin ? (
           <button onClick={() => setShowAdd(true)} className="p-2 bg-blue-600 text-white rounded-xl">
             <Plus size={20} />
           </button>
-        }
+        ) : undefined}
       />
 
       {pumps.length === 0 ? (
@@ -89,6 +98,14 @@ export default function Pumps() {
                   </div>
                   {p.nozzle_label && <p className="text-xs text-gray-400 ml-7">Nozzle: {p.nozzle_label}</p>}
                   {p.tank_label && <p className="text-xs text-gray-400 ml-7">Tank: {p.tank_label}</p>}
+                  {p.last_closing_litres != null && (
+                    <p className="text-xs text-gray-500 ml-7">
+                      Last closing: {onPumpDisplay(Number(p.last_closing_litres), Number(p.meter_capacity_litres) || 1000000).toLocaleString('en-KE', { maximumFractionDigits: 2 })} L · KES {onPumpDisplay(Number(p.last_closing_amount), Number(p.meter_capacity_amount) || 1000000).toLocaleString('en-KE', { maximumFractionDigits: 2 })}
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-400 ml-7">
+                    Meter rolls over at {Number(p.meter_capacity_litres || 1000000).toLocaleString('en-KE')} L · KES {Number(p.meter_capacity_amount || 1000000).toLocaleString('en-KE')}
+                  </p>
                 </div>
               </div>
             </div>

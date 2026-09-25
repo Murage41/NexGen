@@ -15,7 +15,15 @@ router.get('/', async (req, res) => {
     const showAll = req.query.all === 'true';
     let query = db('pumps')
       .leftJoin('tanks', 'pumps.tank_id', 'tanks.id')
-      .select('pumps.*', 'tanks.label as tank_label')
+      .select(
+        'pumps.*',
+        'tanks.label as tank_label',
+        // The meter at the end of the last closed shift: the next shift's opening.
+        db.raw(`(SELECT pr.closing_litres FROM pump_readings pr JOIN shifts s ON s.id = pr.shift_id
+          WHERE pr.pump_id = pumps.id AND s.status = 'closed' ORDER BY s.end_time DESC, s.id DESC LIMIT 1) AS last_closing_litres`),
+        db.raw(`(SELECT pr.closing_amount FROM pump_readings pr JOIN shifts s ON s.id = pr.shift_id
+          WHERE pr.pump_id = pumps.id AND s.status = 'closed' ORDER BY s.end_time DESC, s.id DESC LIMIT 1) AS last_closing_amount`),
+      )
       .orderBy('pumps.label');
     if (!showAll) query = query.where('pumps.active', true);
     const pumps = await query;

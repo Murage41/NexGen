@@ -397,14 +397,21 @@ export default function Credits() {
         ) : undefined}
       />
 
-      {/* Summary card */}
-      <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
-        <p className="text-xs text-gray-400 uppercase tracking-wide">Total Outstanding</p>
-        <p className="text-2xl font-bold text-red-600">{fmt(totalOutstanding)}</p>
-        <p className="text-xs text-gray-400 mt-1">{filtered.length} account{filtered.length !== 1 ? 's' : ''}</p>
-      </div>
+      {/* Attendants see each customer's credit, not the station's total or a
+          customer's history (M6). */}
+      {isAdmin ? (
+        <>
+          <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
+            <p className="text-xs text-gray-400 uppercase tracking-wide">Total Outstanding</p>
+            <p className="text-2xl font-bold text-red-600">{fmt(totalOutstanding)}</p>
+            <p className="text-xs text-gray-400 mt-1">{filtered.length} account{filtered.length !== 1 ? 's' : ''}</p>
+          </div>
 
-      <p className="text-xs text-gray-500 mb-3">Employees' variances are kept under Employees.</p>
+          <p className="text-xs text-gray-500 mb-3">Employees' variances are kept under Employees.</p>
+        </>
+      ) : (
+        <p className="text-xs text-gray-500 mb-3">Check a customer's credit before serving them on account.</p>
+      )}
 
       {/* Accounts list */}
       {filtered.length === 0 ? (
@@ -417,7 +424,8 @@ export default function Credits() {
           {filtered.map((a: any) => (
             <button
               key={a.id}
-              onClick={() => openAccount(a)}
+              onClick={isAdmin ? () => openAccount(a) : undefined}
+              disabled={!isAdmin}
               className="bg-white rounded-xl p-4 shadow-sm w-full text-left flex items-center justify-between"
             >
               <div className="flex-1 min-w-0">
@@ -434,6 +442,11 @@ export default function Credits() {
                   </div>
                 )}
                 {a.type === 'customer' && <div className="mt-1"><CreditLimitSummary account={a} /></div>}
+                {a.available_credit != null && (
+                  <p className={`mt-0.5 text-xs font-medium ${Number(a.available_credit) > 0 ? 'text-gray-700' : 'text-red-700'}`}>
+                    Can still take {fmt(Number(a.available_credit))} on credit
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2 ml-3">
                 <div className="text-right">
@@ -444,7 +457,7 @@ export default function Credits() {
                     <p className="text-[11px] font-medium text-green-700">In credit {fmt(Number(a.credit_on_account))}</p>
                   )}
                 </div>
-                <ChevronRight size={18} className="text-gray-400" />
+                {isAdmin && <ChevronRight size={18} className="text-gray-400" />}
               </div>
             </button>
           ))}

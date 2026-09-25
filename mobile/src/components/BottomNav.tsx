@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Gauge, Receipt, CreditCard, Menu, DollarSign } from 'lucide-react';
+import { LayoutDashboard, Gauge, Receipt, CreditCard, Menu } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getStaleShifts } from '../services/api';
 
@@ -34,7 +34,8 @@ export default function BottomNav() {
     { to: '/', icon: LayoutDashboard, label: 'Home' },
     { to: '/my-shift', icon: Gauge, label: 'My Shift' },
     { to: '/my-pay', icon: Receipt, label: 'My Pay' },
-    { to: '/prices', icon: DollarSign, label: 'Prices' },
+    { to: '/credits', icon: CreditCard, label: 'Credits' },
+    { to: '/more', icon: Menu, label: 'More' },
   ];
 
   const tabs = isAdmin ? adminTabs : attendantTabs;

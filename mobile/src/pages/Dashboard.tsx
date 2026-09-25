@@ -41,7 +41,7 @@ export default function Dashboard() {
       </div>
 
       {data?.stale_open_shifts?.count > 0 && (
-        <button type="button" onClick={() => navigate('/shifts?status=open&sort=oldest')} className="mb-4 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900">
+        <button type="button" onClick={() => navigate(isAdmin ? '/shifts?status=open&sort=oldest' : '/my-shift')} className="mb-4 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900">
           <AlertTriangle size={18} className="mt-0.5 shrink-0" />
           <span>
             <strong>{data.stale_open_shifts.count} open shift{data.stale_open_shifts.count === 1 ? '' : 's'} need review.</strong>
@@ -62,20 +62,23 @@ export default function Dashboard() {
             <p className="text-xs text-gray-400">
               Started {new Date(data.current_shift.start_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
             </p>
-            <button
-              onClick={() => navigate(`/shifts/${data.current_shift.id}`)}
-              className="mt-2 w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
-            >
-              View Shift Details
-            </button>
+            {/* Attendants open only their own shift. */}
+            {(isAdmin || Number(data.current_shift.employee_id) === Number(user?.id)) && (
+              <button
+                onClick={() => navigate(`/shifts/${data.current_shift.id}`)}
+                className="mt-2 w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
+              >
+                View Shift Details
+              </button>
+            )}
           </div>
         ) : (
           <p className="text-sm text-gray-400">No active shift</p>
         )}
       </div>
 
-      {/* Today's Summary */}
-      {data && (
+      {/* Today's figures are the owner's; attendants get the shift status only. */}
+      {isAdmin && data && (
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div className="bg-white rounded-xl p-3 shadow-sm">
             <DollarSign size={20} className="text-green-500 mb-1" />
@@ -105,7 +108,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {data?.today_collections?.credit_receipts > 0 && (
+      {isAdmin && data?.today_collections?.credit_receipts > 0 && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
           <p className="text-sm font-semibold text-gray-700 mb-2">Today's Received</p>
           <div className="space-y-1 text-sm">
@@ -130,7 +133,7 @@ export default function Dashboard() {
       )}
 
       {/* Weekly mini chart (simplified for mobile) */}
-      {data?.weekly_sales && (
+      {isAdmin && data?.weekly_sales && (
         <div className="bg-white rounded-xl p-4 shadow-sm">
           <p className="text-sm font-semibold text-gray-700 mb-3">This Week</p>
           <div className="flex items-end gap-1 h-24">

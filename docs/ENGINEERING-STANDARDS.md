@@ -78,7 +78,14 @@ cache instead of recomputing; computing at event time and never updating.
   When a decision gains a field, add it to the binding on both sides.
 - **Role checks are server-side** (`requireAdmin`, `requireOwnShiftOrAdmin`).
   Hiding a button is not a permission. Attendant-facing payloads are filtered
-  on the server (see the dashboard's non-admin subset in `routes/dashboard.ts`).
+  on the server (see the dashboard's non-admin branch in `routes/dashboard.ts`).
+- **What attendants see** is fixed in `docs/ATTENDANT-ACCESS.md` (M6). A new
+  `GET` route that returns money, cost, stock variance or anyone else's data
+  is `requireAdmin` unless an attendant screen needs it; then send only the
+  fields that screen needs and add the route to `test_attendant_access.ts`.
+  Don't assume a router is admin-only: several were open until M6 found them.
+  A page served to both roles must not read fields the attendant payload
+  leaves out (the phone's home screen would have crashed on them).
 - **Double-submit safety:** money mutations that can be retried (shift close,
   payments, moves, payroll) go through `services/idempotency.ts`
   (`runIdempotent`).
@@ -131,6 +138,9 @@ cache instead of recomputing; computing at event time and never updating.
   `backend/data/nexgen.db`:
   1. `node scripts/e2e/copy-db.cjs` (copy + saves the real DB fingerprint)
   2. `NEXGEN_DATA_DIR="$PWD/.e2e-data" node node_modules/tsx/dist/cli.mjs scripts/e2e/add-test-admin.ts`
+     ("E2E Test Admin", PIN 9731); for the attendant's phone views also run
+     `scripts/e2e/add-test-attendant.ts` the same way ("E2E Test Attendant",
+     PIN 9732). The phone app runs at `http://localhost:5174/mobile/`.
   3. Start `e2e-backend`, `e2e-desktop` (or `e2e-mobile`) from
      `.claude/launch.json` (they run `node scripts/e2e/start.cjs <part>`).
      If the file lacks them, add entries with `runtimeExecutable: "node"`,

@@ -7,6 +7,8 @@ import { computeBookStock } from '../services/stockCalculator';
 import { getKenyaDate } from '../utils/timezone';
 
 const router = Router();
+// Dips carry the book-versus-measured stock variance: administrators only (M6).
+router.use(requireAdmin);
 
 /**
  * Phase 1C — cumulative variance % for a tank in a given month.

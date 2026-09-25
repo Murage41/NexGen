@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Droplets, Pencil, Trash2, ChevronRight, AlertTriangle } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import { useAuth } from '../context/AuthContext';
 import { getTanks, createTank, updateTank, deleteTank, getCurrentShift } from '../services/api';
 
 const FUEL_COLORS: Record<string, { badge: string; icon: string }> = {
@@ -13,6 +14,8 @@ const emptyForm = { label: '', fuel_type: 'petrol', capacity_litres: '' };
 
 export default function Tanks() {
   const navigate = useNavigate();
+  // Attendants see fuel levels only: no changes, dips or stock history (M6).
+  const { isAdmin } = useAuth();
   const [tanks, setTanks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasOpenShift, setHasOpenShift] = useState(false);
@@ -104,14 +107,14 @@ export default function Tanks() {
       <PageHeader
         title="Tanks & Stock"
         back
-        right={
+        right={isAdmin ? (
           <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
             <Plus size={20} />
           </button>
-        }
+        ) : undefined}
       />
 
-      {hasOpenShift && (
+      {isAdmin && hasOpenShift && (
         <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
           <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
           <p className="text-xs text-amber-700">A shift is currently open. Editing and deleting tanks is disabled until the shift is closed.</p>
@@ -128,7 +131,7 @@ export default function Tanks() {
         <div className="text-center mt-20">
           <Droplets size={48} className="mx-auto text-gray-300 mb-3" />
           <p className="text-gray-400">No tanks configured</p>
-          <button onClick={openAdd} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Add First Tank</button>
+          {isAdmin && <button onClick={openAdd} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm">Add First Tank</button>}
         </div>
       ) : (
         <div className="space-y-3">
@@ -150,7 +153,7 @@ export default function Tanks() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      {!hasOpenShift && (
+                      {isAdmin && !hasOpenShift && (
                         <>
                           <button
                             onClick={() => openEdit(tank)}
@@ -186,13 +189,15 @@ export default function Tanks() {
                 </div>
 
                 {/* Dips link */}
-                <button
-                  onClick={() => navigate(`/tanks/${tank.id}/dips`)}
-                  className="w-full border-t border-gray-100 px-4 py-2.5 flex items-center justify-between text-sm text-blue-600 hover:bg-blue-50 active:bg-blue-50"
-                >
-                  <span>View Dips & Stock History</span>
-                  <ChevronRight size={16} />
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => navigate(`/tanks/${tank.id}/dips`)}
+                    className="w-full border-t border-gray-100 px-4 py-2.5 flex items-center justify-between text-sm text-blue-600 hover:bg-blue-50 active:bg-blue-50"
+                  >
+                    <span>View Dips & Stock History</span>
+                    <ChevronRight size={16} />
+                  </button>
+                )}
               </div>
             );
           })}

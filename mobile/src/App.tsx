@@ -63,6 +63,11 @@ export default function App() {
               <Route path="/my-shift" element={<MyShift />} />
               <Route path="/my-pay" element={<EmployeePay />} />
               <Route path="/prices" element={<FuelPricing />} />
+              {/* Read-only views: the server refuses attendants' changes (M6). */}
+              <Route path="/credits" element={<Credits />} />
+              <Route path="/pumps" element={<Pumps />} />
+              <Route path="/tanks" element={<Tanks />} />
+              <Route path="/more" element={<More />} />
               <Route path="/shifts/:id" element={<ShiftDetail />} />
               <Route path="/shifts/:id/record" element={<ShiftRecord />} />
             </>

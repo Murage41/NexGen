@@ -15,6 +15,27 @@ const router = Router();
 
 router.get('/', async (req: any, res) => {
   try {
+    // Attendants see whether a shift is open, who is on and since when. The
+    // station's sales, collections, variance and profit are the owner's (M6):
+    // during an open shift, today's sales is the shift's expected total.
+    if (req.employee?.role !== 'admin') {
+      const [open, stale] = await Promise.all([
+        db('shifts')
+          .join('employees', 'shifts.employee_id', 'employees.id')
+          .where('shifts.status', 'open')
+          .select('shifts.id', 'shifts.employee_id', 'shifts.shift_date', 'shifts.start_time', 'shifts.status', 'employees.name as employee_name')
+          .first(),
+        listStaleOpenShifts(db),
+      ]);
+      return res.json({
+        success: true,
+        data: {
+          current_shift: open ? decorateShiftStaleness(open, stale.stale_shift_hours) : null,
+          stale_open_shifts: stale,
+        },
+      });
+    }
+
     const today = getKenyaDate();
     const monthStart = today.slice(0, 7) + '-01';
 
@@ -492,24 +513,7 @@ router.get('/', async (req: any, res) => {
       drift_check: driftSummary,
     };
 
-    // Employee-access rollout (Tier 1): this endpoint is shared by both roles
-    // (mobile's home screen calls it regardless of role), but it carries full
-    // business P&L. Non-admin callers get the operational subset only —
-    // mobile's Dashboard.tsx never reads the stripped fields, so this is a
-    // pure narrowing with no UI regression, not a redesign of the response.
-    const isAdmin = req.employee?.role === 'admin';
-    const data = isAdmin ? fullData : {
-      today_sales: fullData.today_sales,
-      today_litres_petrol: fullData.today_litres_petrol,
-      today_litres_diesel: fullData.today_litres_diesel,
-      today_variance: fullData.today_variance,
-      today_collections: fullData.today_collections,
-      current_shift: fullData.current_shift,
-      stale_open_shifts: fullData.stale_open_shifts,
-      weekly_sales: fullData.weekly_sales,
-    };
-
-    res.json({ success: true, data });
+    res.json({ success: true, data: fullData });
   } catch (err: any) {
     console.error('[dashboard:get] ERROR', err.message, err.stack);
     res.status(500).json({ success: false, error: err.message });

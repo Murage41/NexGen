@@ -33,6 +33,8 @@ import {
 } from '../services/invoiceConsumptionHistory';
 
 const router = Router();
+// Invoices, balances and consumption are administrators' figures (M6).
+router.use(requireAdmin);
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

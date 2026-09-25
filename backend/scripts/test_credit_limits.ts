@@ -238,8 +238,7 @@ async function main() {
     assert(attendantList.every((a: any) => a.type === 'customer'), 'attendants still see customers only');
     assert(attendantList.every((a: any) => !('kra_pin' in a)), 'attendants do not receive KRA PINs');
     assert(attendantList.find((a: any) => a.id === kauId).credit_check, 'attendants can see a customer is over their limit');
-    const attendantDetail = (await call('GET', `/credit-accounts/${kauId}`, attendantSession)).body.data;
-    assert(!('kra_pin' in attendantDetail) && attendantDetail.limit_overrides.length === 0, 'nor KRA PINs or approval history in detail');
+    assert.equal((await call('GET', `/credit-accounts/${kauId}`, attendantSession)).status, 403, 'customer history and approvals are for administrators (M6)');
     console.log('PASS account list and detail carry limits, live status and override history');
 
     assert.equal((await db.raw('PRAGMA integrity_check'))[0].integrity_check, 'ok');

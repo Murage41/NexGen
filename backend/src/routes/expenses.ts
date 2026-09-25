@@ -19,7 +19,9 @@ function isPayrollCategory(category: string): boolean {
     .includes(String(category || '').trim().toLowerCase());
 }
 
-router.get('/', async (req, res) => {
+// Station spending is for administrators; attendants record their own shift's
+// expenses on the shift (M6).
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const { from, to, date_from, date_to, category } = req.query;
     let query = db('expenses').whereNull('deleted_at').orderBy('date', 'desc');

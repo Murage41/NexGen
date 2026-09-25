@@ -192,6 +192,9 @@ export default function ShiftDetail() {
 
   const fmt = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const isOpen = shift.status === 'open';
+  // A blind close: the attendant does not see the running over/short (the
+  // server does not send it either).
+  const blind = isOpen && !isAdmin;
   // Corrections posted before closed shifts became unchangeable (history only).
   const corrections: any[] = shift.corrections || [];
   const isCancelled = shift.status === 'cancelled';
@@ -401,19 +404,23 @@ export default function ShiftDetail() {
       )}
 
       {/* Accountability Card */}
-      <div className={`rounded-xl p-4 mb-4 ${variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-        <p className="text-[10px] text-gray-500 uppercase font-semibold mb-2">Accountability</p>
+      <div className={`rounded-xl p-4 mb-4 ${blind ? 'bg-white shadow-sm' : variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+        <p className="text-[10px] text-gray-500 uppercase font-semibold mb-2">{blind ? 'Recorded so far' : 'Accountability'}</p>
 
-        <div className="flex justify-between text-sm mb-1">
-          <span className="text-gray-500">Expected (Pump Sales)</span>
-          <span className="font-bold">{fmt(expected)}</span>
-        </div>
-        <div className="flex justify-between text-sm mb-1">
-          <span className="text-gray-500">Expected Shift Total</span>
-          <span className="font-bold">{fmt(expectedShiftTotal)}</span>
-        </div>
+        {!blind && (
+          <>
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-gray-500">Expected (Pump Sales)</span>
+              <span className="font-bold">{fmt(expected)}</span>
+            </div>
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-gray-500">Expected Shift Total</span>
+              <span className="font-bold">{fmt(expectedShiftTotal)}</span>
+            </div>
+          </>
+        )}
 
-        <div className="border-t border-gray-200 pt-1 mt-1 space-y-0.5 text-sm">
+        <div className={`${blind ? '' : 'border-t border-gray-200 pt-1 mt-1 '}space-y-0.5 text-sm`}>
           <div className="flex justify-between">
             <span className="text-gray-400">Cash Received</span>
             <span>{fmt(totalCash)}</span>
@@ -468,22 +475,30 @@ export default function ShiftDetail() {
           )}
         </div>
 
-        <div className="border-t border-gray-200 pt-1 mt-1 flex justify-between text-sm">
-          <span className="font-semibold text-gray-700">Shift Accounted</span>
-          <span className="font-bold">{fmt(totalAccounted)}</span>
-        </div>
+        {blind ? (
+          <p className="border-t border-gray-200 pt-2 mt-2 text-xs text-gray-500">
+            The shift's result is worked out when an administrator closes it.
+          </p>
+        ) : (
+          <>
+            <div className="border-t border-gray-200 pt-1 mt-1 flex justify-between text-sm">
+              <span className="font-semibold text-gray-700">Shift Accounted</span>
+              <span className="font-bold">{fmt(totalAccounted)}</span>
+            </div>
 
-        <div className="border-t border-gray-300 pt-2 mt-2 flex justify-between items-center">
-          <span className="text-xs text-gray-500 uppercase font-semibold">Variance</span>
-          <span className={`text-lg font-bold ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {variance >= 0 ? '+' : ''}{fmt(variance)}
-          </span>
-        </div>
-        {variance < 0 && (
-          <div className="flex items-center gap-1 justify-end mt-0.5">
-            <AlertTriangle size={12} className="text-red-500" />
-            <span className="text-xs text-red-500">Shortage</span>
-          </div>
+            <div className="border-t border-gray-300 pt-2 mt-2 flex justify-between items-center">
+              <span className="text-xs text-gray-500 uppercase font-semibold">Variance</span>
+              <span className={`text-lg font-bold ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {variance >= 0 ? '+' : ''}{fmt(variance)}
+              </span>
+            </div>
+            {variance < 0 && (
+              <div className="flex items-center gap-1 justify-end mt-0.5">
+                <AlertTriangle size={12} className="text-red-500" />
+                <span className="text-xs text-red-500">Shortage</span>
+              </div>
+            )}
+          </>
         )}
       </div>
 

@@ -18,7 +18,7 @@ outcome into `docs/PROJECT-STATUS.md`, and update any user doc it changes.
 
 | Order | Item | Size |
 |---|---|---|
-| 1 | M6: what attendants can see (view-only access, blind open shift) | M |
+| 1 | ~~M6: what attendants can see (view-only access, blind open shift)~~ **done 2026-09-25, station update #11** | M |
 | 2 | M7: tank low-stock alert | S |
 | 3 | M8: station profile, logo, PDF documents | M |
 | 4 | M9: deliveries as Order → GRN → supplier invoice | L |
@@ -32,6 +32,15 @@ The owner sets the order; ask before reordering.
 ---
 
 ## 1. M6: what attendants can see (owner decisions 2026-09-24)
+
+**Done 2026-09-25 (station update #11).** Owner guide:
+`docs/ATTENDANT-ACCESS.md`; tests: `npm run test:attendant-access`. Building it
+found that "everything else" was *not* all admin-only: `GET /tank-dips`,
+every `GET /customer-invoices` route, `GET /expenses` and the closed shift's
+`cogs` in `/shifts/:id/tank-summary` were open to attendants. All are now
+admin-only (no attendant screen used them). The phone's Pumps page also shows
+the last closing reading as the pump displays it (`GET /pumps` gained
+`last_closing_litres` / `last_closing_amount`, stored running totals).
 
 **Principle: least privilege.** An attendant sees what they need to serve
 customers and run their own shift, plus their own pay and shortages. They never

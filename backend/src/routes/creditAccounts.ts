@@ -22,6 +22,34 @@ router.use(requireAuth);
 
 const hasLimits = (account: any) => account.credit_limit != null || account.credit_age_limit_days != null;
 
+// Attendants read only their own employee account. A customer's history,
+// phone and invoices are for administrators (M6: least privilege).
+function mayViewAccount(req: any, account: any) {
+  if (req.employee?.role === 'admin') return true;
+  return account.type === 'employee' && Number(account.employee_id) === Number(req.employee?.id);
+}
+
+// What an attendant needs to decide whether to serve a customer on credit.
+// Money customers: balance and limits. Invoice customers: the name only, to
+// record fuel taken on account; their balances and invoices stay private.
+function attendantView(account: any) {
+  const base = { id: account.id, name: account.name, type: account.type, billing_mode: account.billing_mode };
+  if (account.billing_mode === 'invoice') return base;
+  const limit = account.credit_limit == null ? null : Number(account.credit_limit);
+  const owed = Number(account.credit_check?.exposure_before ?? account.outstanding_balance ?? 0);
+  return {
+    ...base,
+    outstanding_balance: account.outstanding_balance,
+    credit_on_account: account.credit_on_account,
+    credit_limit: account.credit_limit,
+    credit_age_limit_days: account.credit_age_limit_days,
+    available_credit: limit === null ? null : roundMoney(Math.max(0, limit - owed)),
+    credit_check: account.credit_check
+      ? { breaches: account.credit_check.breaches.map((b: any) => ({ rule: b.rule, message: b.message })) }
+      : undefined,
+  };
+}
+
 // Shift credit entry still matches customers by name for cached clients, so two
 // customers may not share a name (ignoring case and surrounding spaces).
 async function nameTaken(name: string, exceptId: number | null = null) {
@@ -91,8 +119,10 @@ router.get('/', async (req, res) => {
       if (account.type === 'customer' && hasLimits(account)) {
         account.credit_check = await evaluateCreditLimits(account, 0, db);
       }
-      // A tax identifier isn't needed to serve a customer at the pump.
-      if (!isAdmin) delete account.kra_pin;
+    }
+    if (!isAdmin) {
+      const visible = accounts.map(attendantView).sort((a: any, b: any) => a.name.localeCompare(b.name));
+      return res.json({ success: true, data: visible });
     }
     res.json({ success: true, data: accounts });
   } catch (err: any) {
@@ -105,7 +135,7 @@ router.get('/:id', async (req, res) => {
   try {
     const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
-    if ((req as any).employee?.role !== 'admin' && account.type === 'employee' && Number(account.employee_id) !== Number((req as any).employee?.id)) return res.status(403).json({ success: false, error: 'You may only view your own employee account.' });
+    if (!mayViewAccount(req, account)) return res.status(403).json({ success: false, error: 'Only an administrator can open a customer account. You may view your own account only.' });
 
     let credits: any[] = [];
     let payments: any[] = [];
@@ -414,7 +444,7 @@ router.get('/:id/statement', async (req, res) => {
   try {
     const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
-    if ((req as any).employee?.role !== 'admin' && account.type === 'employee' && Number(account.employee_id) !== Number((req as any).employee?.id)) return res.status(403).json({ success: false, error: 'You may only view your own employee statement.' });
+    if (!mayViewAccount(req, account)) return res.status(403).json({ success: false, error: 'Only an administrator can open a customer statement. You may view your own statement only.' });
 
     let entries: Array<{
       date: string;
