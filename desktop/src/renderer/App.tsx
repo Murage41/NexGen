@@ -5,7 +5,8 @@ import {
   CreditCard, Receipt, BarChart3, Settings, Droplets, Truck, FileSpreadsheet,
   WalletCards,
 } from 'lucide-react';
-import { getStaleShifts } from './services/api';
+import { getStaleShifts, getTanks } from './services/api';
+import { isLowStock } from '../../../shared/ui/TankLowStock';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
 import ShiftDetail from './pages/ShiftDetail';
@@ -44,13 +45,19 @@ const STALE_SHIFT_POLL_MS = 2 * 60 * 1000;
 export default function App() {
   const location = useLocation();
   const [staleShiftCount, setStaleShiftCount] = useState(0);
+  const [lowTankCount, setLowTankCount] = useState(0);
 
   useEffect(() => {
     let live = true;
-    const check = () =>
+    const check = () => {
       getStaleShifts()
         .then((res) => { if (live) setStaleShiftCount(res.data.data.count); })
         .catch(() => {});
+      // Tanks below their order level (M7).
+      getTanks()
+        .then((res) => { if (live) setLowTankCount((res.data.data || []).filter(isLowStock).length); })
+        .catch(() => {});
+    };
     check();
     const timer = setInterval(check, STALE_SHIFT_POLL_MS);
     return () => { live = false; clearInterval(timer); };
@@ -86,6 +93,14 @@ export default function App() {
                   className="rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-semibold leading-none text-gray-900"
                 >
                   {staleShiftCount}
+                </span>
+              )}
+              {to === '/tank-stock' && lowTankCount > 0 && (
+                <span
+                  title={`${lowTankCount} tank${lowTankCount === 1 ? '' : 's'} below the order level`}
+                  className="rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold leading-none text-white"
+                >
+                  {lowTankCount}
                 </span>
               )}
             </NavLink>

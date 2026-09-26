@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate';
 import { createTankStockAdjustmentSchema } from '../schemas';
 import { computeBookStock, recomputeCache, recomputeDipsForTankFromDate } from '../services/stockCalculator';
 import { getKenyaDate } from '../utils/timezone';
+import { averageDailySalesByTank, tanksWithStockNow } from '../services/tankStock';
 
 const router = Router();
 
@@ -152,9 +153,26 @@ async function applyNegativeAdjustmentToBatches(
   };
 }
 
-router.get('/', async (_req, res) => {
+// The "order more at" level (M7): empty means no warning, otherwise litres
+// from 0 up to the tank's capacity.
+function parseReorderLevel(value: unknown, capacity: number): { ok: true; value: number | null } | { ok: false; error: string } {
+  if (value === null || value === undefined || value === '') return { ok: true, value: null };
+  const level = Number(value);
+  if (!Number.isFinite(level) || level < 0) return { ok: false, error: 'The order level must be a number of litres, 0 or more.' };
+  if (level > capacity) return { ok: false, error: `The order level cannot be more than the tank holds (${capacity.toLocaleString('en-KE')} L).` };
+  return { ok: true, value: Math.round(level * 100) / 100 };
+}
+
+router.get('/', async (req: any, res) => {
   try {
-    const tanks = await db('tanks').orderBy('label');
+    // Fuel in each tank now: book stock less the open shift's sales so far.
+    const tanks = await tanksWithStockNow(db);
+    // Litres sold per day guide the administrator's order levels. Sales
+    // figures are not for attendants (M6).
+    if (req.employee?.role === 'admin') {
+      const daily = await averageDailySalesByTank(db, getKenyaDate());
+      for (const tank of tanks) tank.avg_daily_litres = daily[Number(tank.id)] || 0;
+    }
     res.json({ success: true, data: tanks });
   } catch (err: any) {
     console.error('[tanks:list] ERROR', err.message, err.stack);
@@ -444,7 +462,9 @@ router.get('/:id', async (req, res) => {
 router.post('/', requireAdmin, async (req, res) => {
   try {
     const { label, fuel_type, capacity_litres } = req.body;
-    const [id] = await db('tanks').insert({ label, fuel_type, capacity_litres });
+    const level = parseReorderLevel(req.body.reorder_level_litres, Number(capacity_litres));
+    if (!level.ok) return res.status(400).json({ success: false, error: level.error });
+    const [id] = await db('tanks').insert({ label, fuel_type, capacity_litres, reorder_level_litres: level.value });
     const tank = await db('tanks').where({ id }).first();
     res.status(201).json({ success: true, data: tank });
   } catch (err: any) {
@@ -455,11 +475,28 @@ router.post('/', requireAdmin, async (req, res) => {
 
 router.put('/:id', requireAdmin, async (req, res) => {
   try {
-    if (await hasOpenShift()) {
-      return res.status(400).json({ success: false, error: 'Cannot edit tanks while a shift is open. Close the shift first.' });
-    }
+    console.log('[tanks:update]', { id: req.params.id, body: req.body });
+    const current = await db('tanks').where({ id: req.params.id }).first();
+    if (!current) return res.status(404).json({ success: false, error: 'Tank not found' });
     const { label, fuel_type, capacity_litres } = req.body;
-    await db('tanks').where({ id: req.params.id }).update({ label, fuel_type, capacity_litres });
+    // The order level is a setting and can change any time. Name, fuel and
+    // size shape stock history, so they wait until no shift is open.
+    const changesTank = (label !== undefined && label !== current.label)
+      || (fuel_type !== undefined && fuel_type !== current.fuel_type)
+      || (capacity_litres !== undefined && Number(capacity_litres) !== Number(current.capacity_litres));
+    if (changesTank && await hasOpenShift()) {
+      return res.status(400).json({ success: false, error: "A tank's name, fuel and size cannot change while a shift is open. Close the shift first. The order level can change any time." });
+    }
+    const capacity = capacity_litres !== undefined ? Number(capacity_litres) : Number(current.capacity_litres);
+    const update: Record<string, unknown> = { label, fuel_type, capacity_litres };
+    if ('reorder_level_litres' in req.body) {
+      const level = parseReorderLevel(req.body.reorder_level_litres, capacity);
+      if (!level.ok) return res.status(400).json({ success: false, error: level.error });
+      update.reorder_level_litres = level.value;
+    } else if (current.reorder_level_litres != null && Number(current.reorder_level_litres) > capacity) {
+      return res.status(400).json({ success: false, error: "The tank's order level is more than its new size. Lower the order level too." });
+    }
+    await db('tanks').where({ id: req.params.id }).update(update);
     const tank = await db('tanks').where({ id: req.params.id }).first();
     res.json({ success: true, data: tank });
   } catch (err: any) {

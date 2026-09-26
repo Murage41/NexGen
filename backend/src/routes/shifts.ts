@@ -15,7 +15,8 @@ import {
   updateCollectionsSchema,
   updateReadingsSchema,
 } from '../schemas';
-import { computeBookStock, recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
+import { recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from '../services/stockCalculator';
+import { shiftTankMovement } from '../services/tankStock';
 import { compensate } from '../services/meterRollover';
 import { recomputeAccountBalance } from '../services/accountBalance';
 import { computeMpesaFee } from '../services/mpesaFees';
@@ -1733,41 +1734,13 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
       const shiftDate = shift.shift_date || (shift.start_time || '').slice(0, 10);
       const shiftStartTs = toSqliteDateTime(shift.start_time);
 
-      const openingStocks: Record<number, number> = {};
-      for (const t of allTanks) {
-        openingStocks[t.id] = await computeBookStock(t.id, shiftStartTs, trx);
-      }
-
-      const allReadings = await trx('pump_readings')
-        .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-        .where('pump_readings.shift_id', req.params.id)
-        .where('pumps.active', true)
-        .whereNotNull('pumps.tank_id')
-        .select('pumps.tank_id', 'pump_readings.litres_sold');
-
+      // The same movement an open shift shows live (services/tankStock.ts).
+      const movement = await shiftTankMovement(trx, Number(req.params.id), shiftStartTs, closeTimeSql);
       const tankDeductions: Record<number, number> = {};
-      for (const r of allReadings) {
-        const tankId = r.tank_id;
-        tankDeductions[tankId] = (tankDeductions[tankId] || 0) + parseFloat(r.litres_sold || 0);
-      }
-
-      const shiftDeliveries = await trx('fuel_deliveries')
-        .select('tank_id')
-        .sum('litres as total_litres')
-        .whereNull('deleted_at')
-        .whereRaw('datetime(COALESCE(delivery_timestamp, created_at)) > datetime(?)', [shiftStartTs])
-        .whereRaw('datetime(COALESCE(delivery_timestamp, created_at)) <= datetime(?)', [closeTimeSql])
-        .groupBy('tank_id');
-      const deliveriesByTank: Record<number, number> = {};
-      for (const d of shiftDeliveries) {
-        deliveriesByTank[d.tank_id] = parseFloat(d.total_litres) || 0;
-      }
+      for (const t of allTanks) tankDeductions[t.id] = movement[t.id].sales;
 
       for (const t of allTanks) {
-        const sales = tankDeductions[t.id] || 0;
-        const deliveries = deliveriesByTank[t.id] || 0;
-        const opening = openingStocks[t.id];
-        const closing = opening + deliveries - sales;
+        const { opening, deliveries, sales, closing } = movement[t.id];
 
         // Warn if stock goes negative (don't block — fuel was physically sold)
         if (closing < 0) {
@@ -1947,48 +1920,25 @@ router.get('/:id/tank-summary', requireAuth, requireOwnShiftOrAdmin, async (req:
       return res.json({ success: true, data: { shift_id: shift.id, status: 'closed', tanks: snapshots } });
     }
 
-    // Open shift: compute live
-    const allTanks = await db('tanks').select('id', 'label', 'fuel_type', 'current_stock_litres');
-    const shiftDate = shift.shift_date || (shift.start_time || '').slice(0, 10);
-
-    const pumpSales = await db('pump_readings')
-      .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-      .where('pump_readings.shift_id', req.params.id)
-      .where('pumps.active', true)
-      .whereNotNull('pumps.tank_id')
-      .select('pumps.tank_id', 'pump_readings.litres_sold');
-
-    const salesByTank: Record<number, number> = {};
-    for (const r of pumpSales) {
-      salesByTank[r.tank_id] = (salesByTank[r.tank_id] || 0) + (parseFloat(r.litres_sold) || 0);
-    }
-
-    const deliveries = await db('fuel_deliveries')
-      .select('tank_id')
-      .sum('litres as total_litres')
-      .where('date', shiftDate)
-      .groupBy('tank_id');
-    const deliveriesByTank: Record<number, number> = {};
-    for (const d of deliveries) {
-      deliveriesByTank[d.tank_id] = parseFloat(d.total_litres) || 0;
-    }
-
-    // For open shift, current_stock_litres hasn't been decremented yet
-    // So opening = current_stock (since sales haven't been deducted)
-    const tanks = allTanks.map((t: any) => {
-      const currentStock = parseFloat(t.current_stock_litres) || 0;
-      const sales = salesByTank[t.id] || 0;
-      const dels = deliveriesByTank[t.id] || 0;
-      return {
-        tank_id: t.id,
-        tank_label: t.label,
-        fuel_type: t.fuel_type,
-        opening_stock_litres: currentStock,
-        deliveries_litres: dels,
-        sales_litres: sales,
-        closing_stock_litres: currentStock + dels - sales,
-      };
-    });
+    // Open shift: live, worked out exactly as the close will record it. (It
+    // once took today's book stock, which already holds today's deliveries,
+    // and added those deliveries again.)
+    const allTanks = await db('tanks').select('id', 'label', 'fuel_type');
+    const movement = await shiftTankMovement(
+      db,
+      Number(shift.id),
+      toSqliteDateTime(shift.start_time),
+      toSqliteDateTime(new Date().toISOString()),
+    );
+    const tanks = allTanks.map((t: any) => ({
+      tank_id: t.id,
+      tank_label: t.label,
+      fuel_type: t.fuel_type,
+      opening_stock_litres: movement[t.id].opening,
+      deliveries_litres: movement[t.id].deliveries,
+      sales_litres: movement[t.id].sales,
+      closing_stock_litres: movement[t.id].closing,
+    }));
 
     res.json({ success: true, data: { shift_id: shift.id, status: 'open', tanks } });
   } catch (err: any) {

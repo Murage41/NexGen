@@ -10,6 +10,7 @@ import {
 import { getCurrentReceivableTotals } from '../services/receivableReporting';
 import { totalOwedByAttendants } from '../services/employeeVariances';
 import { decorateShiftStaleness, listStaleOpenShifts } from '../services/shiftOperations';
+import { lowStockTanks, tanksWithStockNow } from '../services/tankStock';
 
 const router = Router();
 
@@ -19,19 +20,22 @@ router.get('/', async (req: any, res) => {
     // station's sales, collections, variance and profit are the owner's (M6):
     // during an open shift, today's sales is the shift's expected total.
     if (req.employee?.role !== 'admin') {
-      const [open, stale] = await Promise.all([
+      const [open, stale, tanksNow] = await Promise.all([
         db('shifts')
           .join('employees', 'shifts.employee_id', 'employees.id')
           .where('shifts.status', 'open')
           .select('shifts.id', 'shifts.employee_id', 'shifts.shift_date', 'shifts.start_time', 'shifts.status', 'employees.name as employee_name')
           .first(),
         listStaleOpenShifts(db),
+        tanksWithStockNow(db),
       ]);
       return res.json({
         success: true,
         data: {
           current_shift: open ? decorateShiftStaleness(open, stale.stale_shift_hours) : null,
           stale_open_shifts: stale,
+          // Tanks below their order level (M7): both roles see the warning.
+          low_stock: lowStockTanks(tanksNow),
         },
       });
     }
@@ -505,6 +509,7 @@ router.get('/', async (req: any, res) => {
       // Phase 1 quick wins
       epra_alerts: epraAlerts,
       stock_health: stockHealth,
+      low_stock: lowStockTanks(await tanksWithStockNow(db)),
       // Existing
       current_shift: currentShiftWithAge,
       stale_open_shifts: staleOpenShifts,

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboard } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { LowStockNotice } from '../../../shared/ui/TankLowStock';
 import { Fuel, DollarSign, TrendingUp, TrendingDown, Gauge, LogOut, AlertTriangle } from 'lucide-react';
 
 export default function Dashboard() {
@@ -39,6 +40,9 @@ export default function Dashboard() {
           <LogOut size={20} />
         </button>
       </div>
+
+      {/* Tanks below their order level: everyone sees it (M7). */}
+      <LowStockNotice tanks={data?.low_stock} onOpen={() => navigate('/tanks')} />
 
       {data?.stale_open_shifts?.count > 0 && (
         <button type="button" onClick={() => navigate(isAdmin ? '/shifts?status=open&sort=oldest' : '/my-shift')} className="mb-4 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900">

@@ -11,12 +11,12 @@ The bottom bar has **Home, My Shift, My Pay, Credits, More**.
 
 | Screen | What the attendant sees |
 |---|---|
-| Home | Whether a shift is open, who is on it and since when. A warning if a shift has been open too long. "View Shift Details" only on their own shift. |
+| Home | Whether a shift is open, who is on it and since when. A warning if a shift has been open too long, and "Fuel is low" when a tank is below its order level (`docs/TANK-LOW-STOCK.md`). "View Shift Details" only on their own shift. |
 | My Shift | Their shifts. |
 | My Pay | Their pay, payments, and the shortages they owe and have paid. |
 | Credits | Money (credit) customers: name, what they owe, their limits, how much more they can take on credit, and an "Over limit" or "Overdue" warning. No phone numbers, no statements, no total owed to the station. |
 | More → Pumps | Each pump's fuel, tank, last closing meter reading (as the pump shows it), and where the meters roll over. |
-| More → Tanks & Stock | Each tank's fuel level, capacity and how full it is. |
+| More → Tanks & Stock | The fuel in each tank now, its capacity, how full it is and its order level. |
 | More → Fuel Pricing | Today's pump prices. |
 
 ## An open shift is "blind"

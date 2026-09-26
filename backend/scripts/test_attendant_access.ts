@@ -126,7 +126,7 @@ async function main() {
     const tanks = await get('/tanks', attendant);
     assert.equal(tanks.status, 200);
     assert.equal(Number(tanks.body.data[0].current_stock_litres), 12000, 'fuel level');
-    onlyKeys(tanks.body.data[0], ['id', 'label', 'fuel_type', 'capacity_litres', 'current_stock_litres', 'created_at'], 'tank');
+    onlyKeys(tanks.body.data[0], ['id', 'label', 'fuel_type', 'capacity_litres', 'current_stock_litres', 'created_at', 'reorder_level_litres', 'stock_now_litres'], 'tank');
     for (const url of [`/tanks/${tankId}/stock-summary`, `/tanks/${tankId}/ledger`, `/tanks/${tankId}/adjustments`, '/tank-dips', `/tank-dips/trends?tank_id=${tankId}`]) {
       assert.equal((await get(url, attendant)).status, 403, `${url} is for administrators`);
     }
@@ -149,7 +149,7 @@ async function main() {
 
     const home = await get('/dashboard', otherAttendant);
     assert.equal(home.status, 200);
-    assert.deepEqual(Object.keys(home.body.data).sort(), ['current_shift', 'stale_open_shifts'], 'no sales, collections, variance or weekly chart');
+    assert.deepEqual(Object.keys(home.body.data).sort(), ['current_shift', 'low_stock', 'stale_open_shifts'], 'no sales, collections, variance or weekly chart');
     onlyKeys(home.body.data.current_shift, ['id', 'employee_id', 'shift_date', 'start_time', 'status', 'employee_name', 'open_duration_hours', 'is_stale'], 'current shift');
     assert.equal(home.body.data.current_shift.employee_name, 'Day Attendant', 'who is on');
     const adminHome = (await get('/dashboard', admin)).body.data;

@@ -12,7 +12,10 @@ Last updated: 2026-09-26.
 - **Running `157a9ec`** (confirmed by the owner 2026-09-26: update #11 applied
   in the stop-first order, all phone checks passed). Latest migration there:
   `050`.
-- **Pending station updates: none.** The next one will be **#12**.
+- **Pending station update: #12, M7 low fuel warning** (pushed 2026-09-26,
+  commit "Warn when a tank's fuel is low"). Migration `051`, so the update
+  backs up the database (with NexGen stopped) before starting it again. The
+  next one after it will be **#13**.
 - The station has its own database. It is changed only by fast-forwarding to
   pushed commits, one command block per update, as in
   `docs/ENGINEERING-STANDARDS.md` §7.
@@ -59,6 +62,11 @@ Last updated: 2026-09-26.
   `docs/CREDIT-CUSTOMERS-AND-LIMITS.md`.
 - **Approvals:** desktop picks an admin and takes their PIN; the phone uses the
   signed-in admin. Tokens are bound to the exact decision.
+- **Tanks (M7):** each tank has an optional "order more at" level; everyone
+  sees a "Fuel is low" warning when the fuel in the tank now (book stock less
+  the open shift's sales so far, `services/tankStock.ts`) is below it. The open
+  shift's tank card uses the same calculation as the close. See
+  `docs/TANK-LOW-STOCK.md`.
 - **Attendants (M6):** read-only Credits (money customers' credit only),
   Pumps and Tanks (levels only); invoice customers by name only; a blind open
   shift (no expected total, variance or "Shortage" until an admin closes it);
@@ -77,8 +85,12 @@ Last updated: 2026-09-26.
   All 31 backend suites pass, including the new `test:attendant-access`
   (14 planted bugs all caught); checked in the browser on a scratch copy of
   station data as an attendant on and off shift, and as an admin.
-- **Next: M7** (tank low-stock alert), then M8, M9, phone invoice actions, a
-  UI and design review, Tier 4, Tier 5.
+- **M7, low fuel warning: done, pushed 2026-09-26 as station update #12** (`docs/ROADMAP.md` §2, `docs/TANK-LOW-STOCK.md`). It also
+  fixes the open shift's Tank Stock card, which counted that day's deliveries
+  twice. Checked on a scratch copy on desktop and phone, as admin and
+  attendant.
+- **Next: M8** (station profile, logo, PDF documents), then M9, phone invoice
+  actions, a UI and design review, Tier 4, Tier 5.
 - 2026-09-24: the project's rules and status moved into committed files
   (`CLAUDE.md`, this file, `docs/ROADMAP.md`, `docs/ENGINEERING-STANDARDS.md`,
   `scripts/e2e/`), and the roadmap was re-checked against the code.

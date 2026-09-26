@@ -2,13 +2,27 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Gauge, Receipt, CreditCard, Menu } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getStaleShifts } from '../services/api';
+import { getStaleShifts, getTanks } from '../services/api';
+import { isLowStock } from '../../../shared/ui/TankLowStock';
 
 const STALE_SHIFT_POLL_MS = 2 * 60 * 1000;
 
 export default function BottomNav() {
   const { isAdmin } = useAuth();
   const [staleShiftCount, setStaleShiftCount] = useState(0);
+  const [lowTankCount, setLowTankCount] = useState(0);
+
+  // Tanks below their order level (M7), for everyone: Tanks sits under More.
+  useEffect(() => {
+    let live = true;
+    const check = () =>
+      getTanks()
+        .then((res) => { if (live) setLowTankCount((res.data.data || []).filter(isLowStock).length); })
+        .catch(() => {});
+    check();
+    const timer = setInterval(check, STALE_SHIFT_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -60,6 +74,11 @@ export default function BottomNav() {
               {to === '/shifts' && staleShiftCount > 0 && (
                 <span className="absolute -top-1 -right-2 rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-tight text-gray-900">
                   {staleShiftCount}
+                </span>
+              )}
+              {to === '/more' && lowTankCount > 0 && (
+                <span className="absolute -top-1 -right-2 rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-tight text-white">
+                  {lowTankCount}
                 </span>
               )}
             </span>

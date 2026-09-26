@@ -19,7 +19,7 @@ outcome into `docs/PROJECT-STATUS.md`, and update any user doc it changes.
 | Order | Item | Size |
 |---|---|---|
 | 1 | ~~M6: what attendants can see (view-only access, blind open shift)~~ **done, on the station 2026-09-26 (update #11, `157a9ec`)** | M |
-| 2 | M7: tank low-stock alert | S |
+| 2 | ~~M7: tank low-stock alert~~ **done 2026-09-26, station update #12** | S |
 | 3 | M8: station profile, logo, PDF documents | M |
 | 4 | M9: deliveries as Order → GRN → supplier invoice | L |
 | 5 | Invoice actions on the phone | M |
@@ -126,22 +126,62 @@ a blind shift removes the easy running balance, not all arithmetic.
 
 ## 2. M7: tank low-stock alert
 
+**Done 2026-09-26 (station update #12), as recommended below; the owner
+agreed the same day.** Owner guide: `docs/TANK-LOW-STOCK.md`; tests:
+`npm run test:tank-low-stock` (10 planted bugs caught). Two details settled
+while building: the order level can change during an open shift (a tank's
+name, fuel and size still cannot), and the daily-sales guide counts a shift's
+sales on the day it closed, as book stock does.
+
 **Asked:** an alert when tank stock is low, configurable per tank.
 
-**Today:** `tanks` has `capacity_litres` and `current_stock_litres`, no
-threshold. The dashboard shows fill percentages; `stock_health` is about
-variance, not level.
+**Today (verified 2026-09-26):**
+- `tanks` has `capacity_litres` and `current_stock_litres`, no threshold
+  (no low-stock field anywhere in backend, desktop, mobile or shared). The
+  dashboard's `stock_health` (`routes/dashboard.ts` ≈ line 329) is about dip
+  variance, not level.
+- `current_stock_litres` is book stock: deliveries + adjustments − litres
+  sold by **closed** shifts (`services/stockCalculator.ts`, `computeBookStock`).
+  An open shift's sales are not in it, and the station's shifts can run over
+  a day.
+- **Bug found:** `GET /shifts/:id/tank-summary` for an open shift
+  (`routes/shifts.ts` ≈ line 1945) adds that day's deliveries on top of book
+  stock that already includes them. On the station copy the diesel main tank
+  showed 7,898 L instead of 2,898 L (a 5,000 L delivery counted twice).
+- The stale-shift badge (`desktop/src/renderer/App.tsx`,
+  `mobile/src/components/BottomNav.tsx`) is the pattern for a nav badge.
 
-**Build:**
-1. Migration: `tanks.low_stock_threshold_litres` (nullable = no alert); set it
-   on the tank form in litres, showing the percentage too. Consider a default
-   (e.g. 10% of capacity).
-2. A `low_stock` list in the dashboard payload for both roles.
-3. One persistent dashboard banner + nav badge (the stale-shift badge
-   pattern), not repeated pop-ups.
+**Practice:** automatic tank gauges raise a per-tank *Delivery Needed*
+warning when the product level falls below a programmed limit, separate
+from a lower *Low Product* alarm (Veeder-Root,
+veeder.com/us/blog/warnings-and-alarms-veeder-root-automatic-tank-gauges).
+ERPs keep a per-item minimum; falling below it triggers replenishment (Odoo
+reordering rules, odoo.com/documentation/19.0/applications/inventory_and_mrp/inventory/warehouses_storage/replenishment/reordering_rules.html).
+The minimum is set as a *reorder point*: average daily usage × days from
+order to delivery + safety stock (NetSuite,
+netsuite.com/portal/resource/articles/inventory-management/reorder-point-rop.shtml).
 
-**Watch:** `current_stock_litres` is a recomputed cache; the alert is only as
-good as it. A later ordering flow (M9) should link from the alert.
+**Recommendation (agreed by the owner 2026-09-26):**
+1. One setting per tank, **"Order more at" (litres)**, blank = no alert; no
+   automatic default (tanks sell very differently: on the station copy,
+   2026-09-08 to 21, about 177 L/day petrol, 220 L/day diesel main, 88 L/day
+   diesel 2). The admin tank form shows it as a % of capacity and, as a guide,
+   the tank's average litres sold per day over the last 14 days.
+2. **Stock now** = book stock − the open shift's litres sold so far (from its
+   readings). One function used by the alert, the tank lists and the open
+   shift's tank card (which fixes the double-counted delivery).
+3. `low_stock` in the dashboard payload for **both roles** (tank, litres now,
+   order level). One persistent banner on the home screens (desktop and
+   phone) and a count badge on the Tanks nav item (desktop sidebar, phone
+   More tab). No pop-ups, no automatic orders.
+4. Migration `051`: `tanks.reorder_level_litres` (nullable). Admin-only to set.
+5. Tests: stock now with an open shift, the alert on and off, the
+   double-count regression, the attendant payload.
+
+**Won't solve:** book stock is not measured stock, so losses the dips haven't
+recorded make the alert late; an open shift's sales count only once its
+readings are entered; nobody is notified unless NexGen is open (no SMS);
+it does not place orders (M9 should link from the alert).
 
 ---
 

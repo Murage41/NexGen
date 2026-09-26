@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboard } from '../services/api';
+import { LowStockNotice } from '../../../../shared/ui/TankLowStock';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Fuel, DollarSign, TrendingUp, TrendingDown, AlertCircle, Gauge, Droplets, CreditCard, Users, BarChart3 } from 'lucide-react';
 
@@ -61,6 +62,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <LowStockNotice tanks={data.low_stock} onOpen={() => navigate('/tank-stock')} />
 
       {staleOpenShifts && staleOpenShifts.count > 0 && (
         <button

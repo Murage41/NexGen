@@ -104,6 +104,11 @@ cache instead of recomputing; computing at event time and never updating.
   `setError(err.response?.data?.error || err.message || 'Operation failed')`.
 - **Shared UI.** Components used by both desktop and mobile live in
   `shared/ui/` and take their API calls as props.
+- **Fuel in a tank** comes from `services/tankStock.ts`: `tanksWithStockNow`
+  (book stock less the open shift's sales) and `shiftTankMovement` (a shift's
+  opening, deliveries, sales, closing; the close saves it). Don't rebuild it
+  from `current_stock_litres` plus deliveries: that already holds them (the
+  open-shift tank card once counted a day's deliveries twice).
 - **Match the surrounding code**: naming, comment density, idioms. Comments say
   why, in plain words.
 - **Wording shown to the owner** is plain English: short sentences, no jargon,
@@ -146,6 +151,9 @@ cache instead of recomputing; computing at event time and never updating.
      If the file lacks them, add entries with `runtimeExecutable: "node"`,
      `runtimeArgs: ["scripts/e2e/start.cjs", "<part>"]`, ports 3099 / 5183 / 5174.
      **Never** pass `NEXGEN_DATA_DIR` through `cmd /c set ...` in launch.json.
+     The e2e backend does not reload on code changes: restart it after editing
+     backend code. If the browser pane is hidden, clicks fail; read pages with
+     `get_page_text` and drive them with page scripts instead.
   4. `NEXGEN_DATA_DIR="$PWD/.e2e-data" npm run audit:receivables -w backend`
   5. Stop the servers, then `node scripts/e2e/fingerprint.cjs check` must print
      `REAL-DB-UNCHANGED`. If not, stop and tell the owner.

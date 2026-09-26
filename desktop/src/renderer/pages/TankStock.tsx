@@ -10,10 +10,11 @@ import {
 import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen, SlidersHorizontal, FileText } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getKenyaDate } from '../utils/timezone';
+import { OrderLevelField, isLowStock } from '../../../../shared/ui/TankLowStock';
 
 const today = () => getKenyaDate();
 
-const emptyTankForm = { label: '', fuel_type: 'petrol', capacity_litres: '' };
+const emptyTankForm = { label: '', fuel_type: 'petrol', capacity_litres: '', reorder_level_litres: '' };
 const emptyDeliveryForm = { tank_id: '', supplier_id: '', litres: '', cost_per_litre: '', date: today(), invoice_number: '' };
 const emptyDipForm = { tank_id: '', measured_litres: '', dip_date: today(), variance_category: 'unclassified', variance_notes: '' };
 const emptyAdjustmentForm = { tank_id: '', reference_dip_id: '', reason: '', notes: '', cost_per_litre: '' };
@@ -93,6 +94,8 @@ export default function TankStock() {
 
   // Modal state
   const [tankModal, setTankModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
+  // During an open shift only the order level of an existing tank can change.
+  const lockTankDetails = hasOpenShift && !!tankModal.editing;
   const [deliveryModal, setDeliveryModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
   const [dipModal, setDipModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
   const [adjustmentModal, setAdjustmentModal] = useState<{ open: boolean }>({ open: false });
@@ -139,7 +142,12 @@ export default function TankStock() {
     setTankModal({ open: true, editing: null });
   }
   function openEditTank(tank: any) {
-    setTankForm({ label: tank.label, fuel_type: tank.fuel_type, capacity_litres: String(tank.capacity_litres) });
+    setTankForm({
+      label: tank.label,
+      fuel_type: tank.fuel_type,
+      capacity_litres: String(tank.capacity_litres),
+      reorder_level_litres: tank.reorder_level_litres == null ? '' : String(Number(tank.reorder_level_litres)),
+    });
     setError('');
     setTankModal({ open: true, editing: tank });
   }
@@ -147,7 +155,11 @@ export default function TankStock() {
     e.preventDefault();
     setSaving(true); setError('');
     try {
-      const payload = { ...tankForm, capacity_litres: parseFloat(tankForm.capacity_litres) };
+      const payload = {
+        ...tankForm,
+        capacity_litres: parseFloat(tankForm.capacity_litres),
+        reorder_level_litres: tankForm.reorder_level_litres === '' ? null : parseFloat(tankForm.reorder_level_litres),
+      };
       if (tankModal.editing) {
         await updateTank(tankModal.editing.id, payload);
       } else {
@@ -396,7 +408,7 @@ export default function TankStock() {
       {hasOpenShift && (
         <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2 text-sm text-amber-700">
           <AlertTriangle size={16} className="flex-shrink-0" />
-          A shift is currently open. Editing tanks and recording dips is disabled until the shift is closed.
+          A shift is currently open. A tank's name, fuel and size, and recording dips, wait until it closes. Order levels can change any time.
         </div>
       )}
 
@@ -419,11 +431,14 @@ export default function TankStock() {
       {/* Stock Summary Cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         {tanks.map((tank: any) => {
-          const stock = parseFloat(tank.current_stock_litres || 0);
+          // The fuel in the tank now: book stock less the open shift's sales.
+          const stock = Number(tank.stock_now_litres ?? tank.current_stock_litres ?? 0);
+          const book = parseFloat(tank.current_stock_litres || 0);
           const capacity = parseFloat(tank.capacity_litres || 1);
           const pct = Math.min(100, Math.max(0, (stock / capacity) * 100));
+          const low = isLowStock(tank);
           return (
-            <div key={tank.id} className={`bg-white rounded-lg shadow p-4 border-l-4 ${tank.fuel_type === 'petrol' ? 'border-blue-500' : 'border-amber-500'}`}>
+            <div key={tank.id} className={`bg-white rounded-lg shadow p-4 border-l-4 ${low ? 'border-red-500' : tank.fuel_type === 'petrol' ? 'border-blue-500' : 'border-amber-500'}`}>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-semibold text-gray-800">{tank.label}</h3>
                 <span className={`px-2 py-0.5 rounded text-xs font-medium ${tank.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -432,9 +447,12 @@ export default function TankStock() {
               </div>
               <p className="text-sm text-gray-500 mb-2">Capacity: {fmt(tank.capacity_litres)} L</p>
               <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-500">Book Stock:</span>
-                <span className={`font-bold ${stock < 0 ? 'text-red-600' : 'text-gray-800'}`}>{fmt(stock)} L</span>
+                <span className="text-gray-500">In the tank now:</span>
+                <span className={`font-bold ${stock < 0 || low ? 'text-red-600' : 'text-gray-800'}`}>{fmt(stock)} L</span>
               </div>
+              {Math.abs(book - stock) >= 0.01 && (
+                <p className="text-xs text-gray-400 mb-1">Book stock {fmt(book)} L, less the open shift's sales so far</p>
+              )}
               <div className="w-full bg-gray-200 rounded-full h-2">
                 <div
                   className={`h-2 rounded-full ${pct <= 15 ? 'bg-red-500' : pct <= 30 ? 'bg-amber-400' : tank.fuel_type === 'petrol' ? 'bg-blue-500' : 'bg-amber-500'}`}
@@ -442,6 +460,11 @@ export default function TankStock() {
                 />
               </div>
               <p className="text-xs text-gray-400 mt-1">{pct.toFixed(1)}% full</p>
+              <p className={`text-xs mt-1 ${low ? 'font-semibold text-red-600' : 'text-gray-500'}`}>
+                {tank.reorder_level_litres == null
+                  ? 'No order level set'
+                  : `${low ? 'Order more: below ' : 'Order more at '}${fmt(tank.reorder_level_litres)} L`}
+              </p>
             </div>
           );
         })}
@@ -510,6 +533,8 @@ export default function TankStock() {
                 <th className="text-left p-3 font-medium text-gray-600">Fuel Type</th>
                 <th className="text-right p-3 font-medium text-gray-600">Capacity (L)</th>
                 <th className="text-right p-3 font-medium text-gray-600">Book Stock (L)</th>
+                <th className="text-right p-3 font-medium text-gray-600">In Tank Now (L)</th>
+                <th className="text-right p-3 font-medium text-gray-600">Order At (L)</th>
                 <th className="p-3 font-medium text-gray-600 w-20"></th>
               </tr>
             </thead>
@@ -526,19 +551,20 @@ export default function TankStock() {
                   <td className={`p-3 text-right font-medium ${parseFloat(tank.current_stock_litres) < 0 ? 'text-red-600' : ''}`}>
                     {fmt(tank.current_stock_litres)}
                   </td>
+                  <td className={`p-3 text-right font-medium ${isLowStock(tank) ? 'text-red-600' : ''}`}>{fmt(tank.stock_now_litres)}</td>
+                  <td className="p-3 text-right">{tank.reorder_level_litres == null ? '-' : fmt(tank.reorder_level_litres)}</td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-end">
+                      {/* The order level can change during a shift; the rest waits. */}
+                      <button onClick={() => openEditTank(tank)} className="p-1 text-gray-400 hover:text-blue-600 rounded" title="Edit tank"><Pencil size={14} /></button>
                       {!hasOpenShift && (
-                        <>
-                          <button onClick={() => openEditTank(tank)} className="p-1 text-gray-400 hover:text-blue-600 rounded"><Pencil size={14} /></button>
-                          <button onClick={() => setDeleteConfirm({ type: 'tank', item: tank })} className="p-1 text-gray-400 hover:text-red-500 rounded"><Trash2 size={14} /></button>
-                        </>
+                        <button onClick={() => setDeleteConfirm({ type: 'tank', item: tank })} className="p-1 text-gray-400 hover:text-red-500 rounded"><Trash2 size={14} /></button>
                       )}
                     </div>
                   </td>
                 </tr>
               ))}
-              {tanks.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-gray-400">No tanks configured.</td></tr>}
+              {tanks.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-gray-400">No tanks configured.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -803,24 +829,34 @@ export default function TankStock() {
             </div>
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
             <form onSubmit={handleSaveTank} className="space-y-4">
+              {lockTankDetails && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">A shift is open: only the order level can change now.</p>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Label *</label>
-                <input type="text" required value={tankForm.label} onChange={e => setTankForm({ ...tankForm, label: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. Tank A — Petrol" />
+                <input type="text" required disabled={lockTankDetails} value={tankForm.label} onChange={e => setTankForm({ ...tankForm, label: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" placeholder="e.g. Tank A — Petrol" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fuel Type *</label>
-                <select value={tankForm.fuel_type} onChange={e => setTankForm({ ...tankForm, fuel_type: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2">
+                <select disabled={lockTankDetails} value={tankForm.fuel_type} onChange={e => setTankForm({ ...tankForm, fuel_type: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100">
                   <option value="petrol">Petrol</option>
                   <option value="diesel">Diesel</option>
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Capacity (Litres) *</label>
-                <input type="number" required min="1" value={tankForm.capacity_litres} onChange={e => setTankForm({ ...tankForm, capacity_litres: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. 20000" />
+                <input type="number" required min="1" disabled={lockTankDetails} value={tankForm.capacity_litres} onChange={e => setTankForm({ ...tankForm, capacity_litres: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" placeholder="e.g. 20000" />
               </div>
+              <OrderLevelField
+                value={tankForm.reorder_level_litres}
+                onChange={(value) => setTankForm({ ...tankForm, reorder_level_litres: value })}
+                capacity={parseFloat(tankForm.capacity_litres) || 0}
+                avgDailyLitres={tankModal.editing?.avg_daily_litres}
+                inputClassName="w-full border border-gray-300 rounded-lg p-2"
+              />
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setTankModal({ open: false, editing: null })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
                 <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
