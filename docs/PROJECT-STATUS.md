@@ -5,16 +5,14 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-09-25.
+Last updated: 2026-09-26.
 
 ## Station PC
 
-- **Running `7e9fd54`** (confirmed by the owner 2026-09-24: updates #8, #9 and
-  #10 applied, all checks passed). Latest migration there: `050`.
-- **Pending station update: #11, M6 attendant access** (pushed 2026-09-25,
-  commit "Show attendants only what they need on the phone"). No migration;
-  the phone app must be rebuilt (`npm run build:mobile`). The next one after
-  it will be **#12**.
+- **Running `157a9ec`** (confirmed by the owner 2026-09-26: update #11 applied
+  in the stop-first order, all phone checks passed). Latest migration there:
+  `050`.
+- **Pending station updates: none.** The next one will be **#12**.
 - The station has its own database. It is changed only by fast-forwarding to
   pushed commits, one command block per update, as in
   `docs/ENGINEERING-STANDARDS.md` §7.
@@ -39,6 +37,7 @@ Last updated: 2026-09-25.
 | 8 | `05f0482` | Closed shifts never edited: Move balance; employees simply pay shortages | 048 |
 | 9 | `ab6adda` | Invoice credit/debit notes by fuel, litres and price; DN- bills; credit held for the next invoice | 049 |
 | 10 | `7e9fd54` | Invoice notes can name the shift's attendant | 050 |
+| 11 | `157a9ec` | Attendants see only what they need; blind open shift (M6) | none |
 
 ## How the system works now (recent decisions that code must respect)
 
@@ -73,8 +72,8 @@ Last updated: 2026-09-25.
   corrections evolved into Move balance and the shortages ledger); **M2 closed
   2026-09-24** (diesel main pump set to roll over at 100,000 L and confirmed on
   the station; old-log PIN check returned 0).
-- **M6, what attendants can see: done, pushed 2026-09-25 as station update
-  #11** (`docs/ROADMAP.md` §1, `docs/ATTENDANT-ACCESS.md`).
+- **M6, what attendants can see: done, on the station since 2026-09-26
+  (update #11)** (`docs/ROADMAP.md` §1, `docs/ATTENDANT-ACCESS.md`).
   All 31 backend suites pass, including the new `test:attendant-access`
   (14 planted bugs all caught); checked in the browser on a scratch copy of
   station data as an attendant on and off shift, and as an admin.

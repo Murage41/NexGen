@@ -159,11 +159,14 @@ pushed commits.
    `git status --short` clean.
 2. Give the owner **one command block per pending update, in order**, each
    ending with its own short check. Never one combined jump.
-3. Each block: `git fetch origin` (first block), `git merge --ff-only <commit>`,
+3. Each block, in this order: `npm run dev:stop` **first**, then
+   `git fetch origin` (first block), `git merge --ff-only <commit>`,
    `npm run backup:database -w backend` (always when a migration is included),
-   `npm run dev:stop`, `npm install` (when dependencies changed),
-   `npm run build:mobile` (the phone app is served from `mobile/dist`),
-   `npm run station:bg`.
+   `npm install` (when dependencies changed), `npm run build:mobile` (the
+   phone app is served from `mobile/dist`), `npm run station:bg`.
+   Why stop first (the owner caught this, 2026-09-25): the station backend runs
+   `tsx watch`, so a merge while it runs restarts it on the new files, and it
+   migrates the database on start, i.e. **before** the backup step.
 4. If a fast-forward fails, stop and review; never force, rebase or reset the
    station.
 5. Record the station's confirmed commit and pending updates in

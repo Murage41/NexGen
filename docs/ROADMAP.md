@@ -18,7 +18,7 @@ outcome into `docs/PROJECT-STATUS.md`, and update any user doc it changes.
 
 | Order | Item | Size |
 |---|---|---|
-| 1 | ~~M6: what attendants can see (view-only access, blind open shift)~~ **done 2026-09-25, station update #11** | M |
+| 1 | ~~M6: what attendants can see (view-only access, blind open shift)~~ **done, on the station 2026-09-26 (update #11, `157a9ec`)** | M |
 | 2 | M7: tank low-stock alert | S |
 | 3 | M8: station profile, logo, PDF documents | M |
 | 4 | M9: deliveries as Order → GRN → supplier invoice | L |
@@ -33,7 +33,7 @@ The owner sets the order; ask before reordering.
 
 ## 1. M6: what attendants can see (owner decisions 2026-09-24)
 
-**Done 2026-09-25 (station update #11).** Owner guide:
+**Done: on the station since 2026-09-26 (update #11, `157a9ec`).** Owner guide:
 `docs/ATTENDANT-ACCESS.md`; tests: `npm run test:attendant-access`. Building it
 found that "everything else" was *not* all admin-only: `GET /tank-dips`,
 every `GET /customer-invoices` route, `GET /expenses` and the closed shift's
