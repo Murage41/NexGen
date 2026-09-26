@@ -3,6 +3,17 @@ import sqlite3 from 'sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { getDataDirectory } from '../utils/dataDirectory';
+
+// Uploaded supplier invoice PDFs are files (routes/fuelDeliveries.ts), so each
+// backup copies them beside the database copy. Issued customer documents live
+// inside the database (stored_documents) and need nothing extra.
+export const UPLOADED_FILES_DIR = path.join(getDataDirectory(), 'invoice-documents');
+
+function countFiles(directory: string): number {
+  return fs.readdirSync(directory, { withFileTypes: true })
+    .reduce((n, entry) => n + (entry.isDirectory() ? countFiles(path.join(directory, entry.name)) : 1), 0);
+}
 
 export async function verifiedDatabaseBackup(db: Knex, directory: string) {
   fs.mkdirSync(directory, { recursive: true });
@@ -39,9 +50,18 @@ export async function verifiedDatabaseBackup(db: Knex, directory: string) {
       },
     );
   });
+  let filesCopied = 0;
+  let filesPath: string | null = null;
+  if (fs.existsSync(UPLOADED_FILES_DIR)) {
+    filesPath = path.join(directory, filename.replace(/\.db$/, '-files'));
+    fs.cpSync(UPLOADED_FILES_DIR, path.join(filesPath, 'invoice-documents'), { recursive: true });
+    filesCopied = countFiles(filesPath);
+  }
   return {
     file: filename,
     path: destination,
     size_bytes: fs.statSync(destination).size,
+    uploaded_files_copied: filesCopied,
+    uploaded_files_path: filesPath,
   };
 }

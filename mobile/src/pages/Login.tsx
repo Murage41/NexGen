@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getAuthEmployees, login as apiLogin } from '../services/api';
+import { getAuthEmployees, login as apiLogin, stationLogoUrl } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Fuel } from 'lucide-react';
 
@@ -8,6 +8,7 @@ export default function Login() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [pin, setPin] = useState('');
+  const [logoFailed, setLogoFailed] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -63,11 +64,18 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-900 to-blue-700 flex flex-col items-center justify-center px-6">
-      <div className="text-center mb-8">
-        <Fuel size={48} className="text-blue-300 mx-auto mb-2" />
-        <h1 className="text-3xl font-bold text-white">NexGen</h1>
-        <p className="text-blue-200 text-sm">Petrol Station Manager</p>
-      </div>
+      {/* The station's logo (M8), on white so its colours show; the name if it cannot load. */}
+      {logoFailed ? (
+        <div className="text-center mb-8">
+          <Fuel size={48} className="text-blue-300 mx-auto mb-2" />
+          <h1 className="text-3xl font-bold text-white">NexGen</h1>
+          <p className="text-blue-200 text-sm">Petrol Station Manager</p>
+        </div>
+      ) : (
+        <div className="mb-6 w-full max-w-sm rounded-2xl bg-white px-5 py-4 shadow-xl">
+          <img src={stationLogoUrl()} alt="NexGen" className="w-full" onError={() => setLogoFailed(true)} />
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
         {loading ? (

@@ -305,3 +305,8 @@ export const varianceActions = { repay: recordDebtReceipt, reverseRepayment: rev
 export const refundCustomerCredit = (id: number, data: Record<string, unknown>) => financialPost(`/credit-accounts/${id}/refunds`, data);
 
 export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/${id}/supplement`);
+
+// ============ Station profile and documents (M8) ============
+// Public picture: usable directly in an <img>, including the sign-in page.
+export const stationLogoUrl = () => `${baseURL}/station-profile/logo`;
+export const getInvoiceDocument = (id: number) => api.get(`/customer-invoices/${id}/document`, { responseType: 'blob' });

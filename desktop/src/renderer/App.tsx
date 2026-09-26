@@ -5,7 +5,7 @@ import {
   CreditCard, Receipt, BarChart3, Settings, Droplets, Truck, FileSpreadsheet,
   WalletCards,
 } from 'lucide-react';
-import { getStaleShifts, getTanks } from './services/api';
+import { getStaleShifts, getTanks, stationLogoUrl } from './services/api';
 import { isLowStock } from '../../../shared/ui/TankLowStock';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
@@ -46,6 +46,7 @@ export default function App() {
   const location = useLocation();
   const [staleShiftCount, setStaleShiftCount] = useState(0);
   const [lowTankCount, setLowTankCount] = useState(0);
+  const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -67,9 +68,18 @@ export default function App() {
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
       <aside className="w-56 bg-gray-900 text-white flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-gray-700">
-          <h1 className="text-xl font-bold text-blue-400">NexGen</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Petrol Station Manager</p>
+        <div className="p-3 border-b border-gray-700">
+          {/* The station's logo (M8), on white so its colours show; the name if it cannot load. */}
+          {logoFailed ? (
+            <>
+              <h1 className="text-xl font-bold text-blue-400">NexGen</h1>
+              <p className="text-xs text-gray-400 mt-0.5">Petrol Station Manager</p>
+            </>
+          ) : (
+            <div className="rounded-md bg-white px-2 py-1.5">
+              <img src={stationLogoUrl()} alt="NexGen" className="w-full" onError={() => setLogoFailed(true)} />
+            </div>
+          )}
         </div>
         <nav className="flex-1 py-2 overflow-y-auto">
           {navItems.map(({ to, icon: Icon, label }) => (

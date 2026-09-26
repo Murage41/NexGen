@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { UPLOADED_FILES_DIR } from '../services/databaseBackup';
 import fs from 'fs/promises';
 import path from 'path';
 import db from '../database';
@@ -27,7 +28,9 @@ function invoiceHasSettlement(invoice: any): boolean {
 }
 
 const BACKEND_ROOT = path.resolve(__dirname, '..', '..');
-const INVOICE_STORAGE_DIR = path.join(BACKEND_ROOT, 'data', 'invoice-documents', 'fuel-deliveries');
+// In the data folder (backend/data on the station), so backups copy it
+// (services/databaseBackup.ts) and test runs never touch the real one.
+const INVOICE_STORAGE_DIR = path.join(UPLOADED_FILES_DIR, 'fuel-deliveries');
 const MAX_INVOICE_PDF_BYTES = 8 * 1024 * 1024;
 
 function routeError(message: string, status = 400): Error & { status?: number } {

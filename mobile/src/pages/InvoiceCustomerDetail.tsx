@@ -20,7 +20,9 @@ import {
   getInvoiceCustomerMonitor,
   getInvoicePayments,
   updateCreditAccount,
+  getInvoiceDocument,
 } from '../services/api';
+import { DocumentButton } from '../../../shared/ui/DocumentButton';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../shared/ui/CustomerAccountForm';
 
 type CustomerSummary = {
@@ -472,6 +474,12 @@ export default function InvoiceCustomerDetail() {
                 <div className="text-right"><p className="text-gray-400">Total</p><p className="font-medium">{fmt(invoice.total_amount)}</p></div>
                 <div className="text-right"><p className="text-gray-400">Balance</p><p className="font-bold text-red-600">{fmt(invoice.balance)}</p></div>
               </div>
+              {/* The saved customer copy (M8); drafts have none yet. */}
+              {invoice.status !== 'draft' && (
+                <div className="mt-2 flex justify-end">
+                  <DocumentButton load={() => getInvoiceDocument(invoice.id)} className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700" />
+                </div>
+              )}
             </div>
           ))}
           {invoices.length === 0 && (

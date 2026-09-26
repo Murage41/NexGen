@@ -104,6 +104,15 @@ cache instead of recomputing; computing at event time and never updating.
   `setError(err.response?.data?.error || err.message || 'Operation failed')`.
 - **Shared UI.** Components used by both desktop and mobile live in
   `shared/ui/` and take their API calls as props.
+- **Documents** (M8): a new document type builds its body with
+  `services/documentLayout.ts` (shared header, footer and "not a tax invoice"
+  notice) and is saved once through `services/documents.ts`
+  (`stored_documents`, in the database). A saved document is served as it is,
+  never re-rendered. Save it right after the record is issued, without failing
+  the issue.
+- **Uploaded files** live under the data folder (`getDataDirectory()`), never a
+  fixed `backend/data` path, so test runs stay isolated and backups copy them
+  (`services/databaseBackup.ts`).
 - **Fuel in a tank** comes from `services/tankStock.ts`: `tanksWithStockNow`
   (book stock less the open shift's sales) and `shiftTankMovement` (a shift's
   opening, deliveries, sales, closing; the close saves it). Don't rebuild it

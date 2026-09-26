@@ -9,13 +9,14 @@ Last updated: 2026-09-26.
 
 ## Station PC
 
-- **Running `157a9ec`** (confirmed by the owner 2026-09-26: update #11 applied
-  in the stop-first order, all phone checks passed). Latest migration there:
-  `050`.
-- **Pending station update: #12, M7 low fuel warning** (pushed 2026-09-26,
-  commit "Warn when a tank's fuel is low"). Migration `051`, so the update
-  backs up the database (with NexGen stopped) before starting it again. The
-  next one after it will be **#13**.
+- **Running `3131f77`** (confirmed by the owner 2026-09-26: update #12 applied
+  in the stop-first order with a backup before the migration; all checks
+  passed, order levels set on the tanks). Latest migration there: `051`.
+- **Pending station update: #13, M8 station profile, logo and PDF documents**
+  (pushed 2026-09-26, commit "Station profile, logo and PDF documents").
+  Migration `052` (backup first, NexGen stopped), a new dependency
+  (`npm install`), and the phone app rebuilt. Then the owner fills in the
+  station profile in Settings. The next one after it will be **#14**.
 - The station has its own database. It is changed only by fast-forwarding to
   pushed commits, one command block per update, as in
   `docs/ENGINEERING-STANDARDS.md` §7.
@@ -41,6 +42,7 @@ Last updated: 2026-09-26.
 | 9 | `ab6adda` | Invoice credit/debit notes by fuel, litres and price; DN- bills; credit held for the next invoice | 049 |
 | 10 | `7e9fd54` | Invoice notes can name the shift's attendant | 050 |
 | 11 | `157a9ec` | Attendants see only what they need; blind open shift (M6) | none |
+| 12 | `3131f77` | Low fuel warning per tank; open-shift tank card fixed (M7) | 051 |
 
 ## How the system works now (recent decisions that code must respect)
 
@@ -62,6 +64,12 @@ Last updated: 2026-09-26.
   `docs/CREDIT-CUSTOMERS-AND-LIMITS.md`.
 - **Approvals:** desktop picks an admin and takes their PIN; the phone uses the
   signed-in admin. Tokens are bound to the exact decision.
+- **Documents (M8):** one station profile (desktop Settings) feeds every
+  document; invoices, DN- bills and credit notes get a PDF saved inside the
+  database when issued and served unchanged ever after; every document says
+  it is not a tax invoice (eTIMS stays with POSitive). The NexGen logo ships
+  with the app (`backend/assets/`). Backups also copy uploaded supplier PDFs.
+  See `docs/STATION-PROFILE-AND-DOCUMENTS.md`.
 - **Tanks (M7):** each tank has an optional "order more at" level; everyone
   sees a "Fuel is low" warning when the fuel in the tank now (book stock less
   the open shift's sales so far, `services/tankStock.ts`) is below it. The open
@@ -85,12 +93,18 @@ Last updated: 2026-09-26.
   All 31 backend suites pass, including the new `test:attendant-access`
   (14 planted bugs all caught); checked in the browser on a scratch copy of
   station data as an attendant on and off shift, and as an admin.
-- **M7, low fuel warning: done, pushed 2026-09-26 as station update #12** (`docs/ROADMAP.md` §2, `docs/TANK-LOW-STOCK.md`). It also
+- **M7, low fuel warning: done, on the station since 2026-09-26 (update #12)** (`docs/ROADMAP.md` §2, `docs/TANK-LOW-STOCK.md`). It also
   fixes the open shift's Tank Stock card, which counted that day's deliveries
   twice. Checked on a scratch copy on desktop and phone, as admin and
   attendant.
-- **Next: M8** (station profile, logo, PDF documents), then M9, phone invoice
-  actions, a UI and design review, Tier 4, Tier 5.
+- **M8, station profile, logo and PDF documents: done, pushed 2026-09-26 as
+  station update #13** (`docs/ROADMAP.md` §3,
+  `docs/STATION-PROFILE-AND-DOCUMENTS.md`). The logo was rebuilt from canopy
+  photos and chosen by the owner. Building it also found that backups held
+  only the database (uploaded supplier invoice PDFs were in none) and that
+  those uploads were written to `backend/data` even in test runs; both fixed.
+- **Next: M9** (deliveries as Order → GRN → supplier invoice), then phone
+  invoice actions, a UI and design review, Tier 4, Tier 5.
 - 2026-09-24: the project's rules and status moved into committed files
   (`CLAUDE.md`, this file, `docs/ROADMAP.md`, `docs/ENGINEERING-STANDARDS.md`,
   `scripts/e2e/`), and the roadmap was re-checked against the code.

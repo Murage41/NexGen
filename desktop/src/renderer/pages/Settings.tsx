@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Settings2, Users, Fuel, Database, DollarSign, Save, HardDrive, ChevronRight, Gauge, ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
 import { backupDatabase, getCurrentShift, getActivePumps, getOperationalSettings, runOperationalIntegrity, setOpeningReadings, updateOperationalSettings, getMpesaFeeConfigs, getCurrentMpesaFeeConfig, createMpesaFeeConfig } from '../services/api';
 import { getKenyaDate } from '../utils/timezone';
+import StationProfileSettings from '../components/StationProfileSettings';
 
 const numVal = (v: number | string | null | undefined) => {
   if (v === null || v === undefined || v === '' || Number(v) === 0) return '';
@@ -12,9 +13,6 @@ const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select
 
 export default function Settings() {
   const navigate = useNavigate();
-  const [stationName, setStationName] = useState('');
-  const [stationAddress, setStationAddress] = useState('');
-  const [saved, setSaved] = useState(false);
 
   // Opening readings state
   const [currentShift, setCurrentShift] = useState<any>(null);
@@ -44,10 +42,6 @@ export default function Settings() {
   const [showMpesaHistory, setShowMpesaHistory] = useState(false);
 
   useEffect(() => {
-    const name = localStorage.getItem('station_name') || '';
-    const address = localStorage.getItem('station_address') || '';
-    setStationName(name);
-    setStationAddress(address);
     loadOpenShift();
     getOperationalSettings()
       .then((response) => setStaleShiftHours(String(response.data.data.stale_shift_hours || 30)))
@@ -135,13 +129,6 @@ export default function Settings() {
     } finally {
       setSavingReadings(false);
     }
-  }
-
-  function saveStationInfo() {
-    localStorage.setItem('station_name', stationName);
-    localStorage.setItem('station_address', stationAddress);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   }
 
   async function saveOperationalSettings() {
@@ -278,43 +265,8 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Station Info */}
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-700 mb-4">Station Information</h2>
-        <div className="space-y-4 max-w-lg">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Station Name</label>
-            <input
-              type="text"
-              value={stationName}
-              onChange={e => setStationName(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg p-2"
-              placeholder="Enter station name"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
-            <textarea
-              value={stationAddress}
-              onChange={e => setStationAddress(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg p-2"
-              rows={2}
-              placeholder="Station address"
-            />
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={saveStationInfo}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-            >
-              <Save size={18} /> Save
-            </button>
-            {saved && (
-              <span className="text-green-600 text-sm font-medium">Saved successfully!</span>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* Station profile: what documents show (M8) */}
+      <StationProfileSettings />
 
       {/* Quick Links */}
       <div className="bg-white rounded-lg shadow p-6 mb-6">

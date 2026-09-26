@@ -387,3 +387,28 @@ export const createExpenseSchema = z.object({
 });
 
 export const updateExpenseSchema = createExpenseSchema.partial();
+
+// --- Station profile (M8) ---
+// Every field optional; blank clears it. Documents read these for their header
+// and footer (services/documentLayout.ts).
+const profileText = (max: number) => z.string().trim()
+  .max(max, `must be ${max} characters or fewer`)
+  .transform((value) => value || null)
+  .nullish();
+
+export const updateStationProfileSchema = z.object({
+  trading_name: profileText(120),
+  registered_name: profileText(160),
+  physical_address: profileText(300),
+  postal_address: profileText(200),
+  phone: profileText(60),
+  email: z.string().trim().max(160)
+    .refine((value) => value === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 'Enter a valid email address')
+    .transform((value) => value || null)
+    .nullish(),
+  kra_pin: kraPin(),
+  vat_number: profileText(40),
+  mpesa_details: profileText(200),
+  bank_details: profileText(300),
+  document_footer: profileText(400),
+});

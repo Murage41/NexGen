@@ -31,6 +31,7 @@ import {
   getInvoiceConsumptionHistory,
   type ConsumptionHistoryStatus,
 } from '../services/invoiceConsumptionHistory';
+import { creditNoteDocument, invoiceDocument, saveDocumentAfterPosting } from '../services/documents';
 
 const router = Router();
 // Invoices, balances and consumption are administrators' figures (M6).
@@ -300,6 +301,7 @@ router.post('/debit-notes', requireAdmin, async (req: any, res) => {
     req.body = { ...req.body, note_type: 'debit_note', correction: 'litres' };
     const approver = await noteApproval(req, accountId, null);
     const bill = await postStandaloneDebitNote(db, { ...noteInput(req, approver), accountId });
+    await saveDocumentAfterPosting(db, 'customer_invoice', Number(bill.id), req.employee?.id);
     res.status(201).json({ success: true, data: bill });
   } catch (err: any) {
     console.error('[customerInvoices:debitNote] ERROR', err.message);
@@ -307,6 +309,35 @@ router.post('/debit-notes', requireAdmin, async (req: any, res) => {
   }
 });
 
+
+// GET /:id/document and /adjustments/:noteId/document — the saved PDF of an
+// invoice, debit-note bill or credit note, served unchanged every time (M8).
+function sendDocument(res: any, doc: any) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${String(doc.document_number).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf"`);
+  res.setHeader('X-Document-SHA256', doc.sha256);
+  res.send(Buffer.from(doc.content));
+}
+
+router.get('/:id/document', async (req: any, res) => {
+  console.log('[customerInvoices:document]', { invoiceId: req.params.id });
+  try {
+    sendDocument(res, await invoiceDocument(db, Number(req.params.id), req.employee?.id));
+  } catch (err: any) {
+    console.error('[customerInvoices:document] ERROR', err.message);
+    res.status(err.http || 500).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
+router.get('/adjustments/:noteId/document', async (req: any, res) => {
+  console.log('[customerInvoices:noteDocument]', { noteId: req.params.noteId });
+  try {
+    sendDocument(res, await creditNoteDocument(db, Number(req.params.noteId), req.employee?.id));
+  } catch (err: any) {
+    console.error('[customerInvoices:noteDocument] ERROR', err.message);
+    res.status(err.http || 500).json({ success: false, error: err.message, code: err.code });
+  }
+});
 
 // GET /:id — full invoice (header + lines + consumption rows)
 router.get('/:id', async (req, res) => {
@@ -528,6 +559,8 @@ router.post('/:id/issue', requireAdmin, async (req: any, res) => {
       issueDate: getKenyaDate(),
       actorId: req.employee?.id,
     });
+    // The customer's copy is saved now, from the station profile as it is today.
+    await saveDocumentAfterPosting(db, 'customer_invoice', invoiceId, req.employee?.id);
     res.json({ success: true, data: issued });
   } catch (err: any) {
     const status = err.http || 500;
@@ -542,7 +575,9 @@ router.post('/:id/adjustments', requireAdmin, async (req: any, res) => {
     const invoice = await db('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first('account_id');
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
     const approver = await noteApproval(req, Number(invoice.account_id), invoiceId);
-    const result = await postInvoiceAdjustment(db, { ...noteInput(req, approver), invoiceId });
+    const result: any = await postInvoiceAdjustment(db, { ...noteInput(req, approver), invoiceId });
+    if (result.debit_note) await saveDocumentAfterPosting(db, 'customer_invoice', Number(result.debit_note.id), req.employee?.id);
+    if (result.note) await saveDocumentAfterPosting(db, 'credit_note', Number(result.note.id), req.employee?.id);
     res.status(201).json({ success: true, data: result });
   } catch (err: any) {
     console.error('[customerInvoices:note] ERROR', err.message);

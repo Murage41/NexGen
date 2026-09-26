@@ -318,3 +318,13 @@ export const verifyApproverPin = (body: Record<string, unknown>) => api.post('/a
 export const desktopApproval = { listApprovers: getApprovers, verifyPin: verifyApproverPin };
 
 export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/${id}/supplement`);
+
+// ============ Station profile and documents (M8) ============
+export const getStationProfile = () => api.get('/station-profile');
+export const updateStationProfile = (data: Record<string, string | null>) => api.put('/station-profile', data);
+export const uploadStationLogo = (dataBase64: string) => api.put('/station-profile/logo', { data_base64: dataBase64 });
+export const clearStationLogo = () => api.delete('/station-profile/logo');
+// Public picture: usable directly in an <img>.
+export const stationLogoUrl = (version: string | number = '') => `${baseURL}/station-profile/logo${version ? `?v=${version}` : ''}`;
+export const getInvoiceDocument = (id: number) => api.get(`/customer-invoices/${id}/document`, { responseType: 'blob' });
+export const getCreditNoteDocument = (noteId: number) => api.get(`/customer-invoices/adjustments/${noteId}/document`, { responseType: 'blob' });

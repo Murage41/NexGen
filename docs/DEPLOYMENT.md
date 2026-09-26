@@ -345,7 +345,10 @@ Do not declare the update complete after the health endpoint alone:
    for this station (default 30 hours), run **System Check**, and require its
    core checks to pass. Review every stale-shift or legacy-snapshot warning.
 10. Use **Create Backup** and record the displayed backup filename. Confirm the
-    file exists under the configured data directory's `backups` folder.
+    file exists under the configured data directory's `backups` folder. Since
+    M8 a folder of the same name ending `-files` sits beside it, holding the
+    uploaded supplier invoice PDFs; issued invoice, debit and credit note PDFs
+    are inside the database file itself.
 11. During a controlled test shift only, open the same shift on desktop and
     phone. Save a harmless collection or reading change on one device, then
     try to save the older values on the other. Confirm NexGen warns about the
@@ -365,9 +368,10 @@ acceptance test and operating rules.
 
 Stop NexGen first. Restore the repository version and the matching database
 backup as one release unit. Do not run an older commit against a database that
-has already received newer irreversible migrations. Preserve the failed data
-directory for investigation, then record the attempted commit, error, and
-restored backup path.
+has already received newer irreversible migrations. If the backup has a
+matching `-files` folder, restore its `invoice-documents` folder into the data
+directory too. Preserve the failed data directory for investigation, then
+record the attempted commit, error, and restored backup path.
 
 ## Build And Run
 

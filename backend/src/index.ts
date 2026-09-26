@@ -29,6 +29,7 @@ import supplierInvoicesRouter from './routes/supplierInvoices';
 import supplierPaymentsRouter from './routes/supplierPayments';
 import payrollRouter from './routes/payroll';
 import operationsRouter from './routes/operations';
+import stationProfileRouter, { serveStationLogo } from './routes/stationProfile';
 import { pruneCompletedIdempotencyRecords } from './services/idempotency';
 
 const app = express();
@@ -182,6 +183,9 @@ app.post('/api/health/phase1-backfill', requireAdmin, async (_req, res) => {
   }
 });
 
+// The station's logo is public (it is on the canopy): the phone's sign-in page shows it.
+app.get('/api/station-profile/logo', serveStationLogo);
+
 app.use('/api', requireAuth);
 app.use('/api/employees', employeesRouter);
 app.use('/api/pumps', pumpsRouter);
@@ -202,6 +206,7 @@ app.use('/api/supplier-invoices', supplierInvoicesRouter);
 app.use('/api/supplier-payments', supplierPaymentsRouter);
 app.use('/api/payroll', payrollRouter);
 app.use('/api/operations', operationsRouter);
+app.use('/api/station-profile', stationProfileRouter);
 
 const mobileDist = path.join(__dirname, '../../mobile/dist');
 app.use('/mobile', express.static(mobileDist));

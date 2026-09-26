@@ -19,9 +19,12 @@ import {
   createInvoicePayment,
   reverseInvoicePayment,
   getInvoiceCustomerMonitor,
+  getCreditNoteDocument,
+  getInvoiceDocument,
 } from '../services/api';
 import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet, Users, Droplets, AlertTriangle, Clock, RefreshCw } from 'lucide-react';
 import InvoiceCustomerWorkspace from '../components/InvoiceCustomerWorkspace';
+import { DocumentButton } from '../../../../shared/ui/DocumentButton';
 
 type Account = { id: number; name: string; billing_mode?: string; outstanding_balance?: number };
 type Invoice = {
@@ -1216,6 +1219,8 @@ export default function CustomerInvoices() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                {/* The saved customer copy (M8); drafts have none yet. */}
+                {detail.status !== 'draft' && <DocumentButton load={() => getInvoiceDocument(detail.id)} />}
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[detail.status] || 'bg-gray-100'}`}>
                   {detail.status}
                 </span>
@@ -1395,6 +1400,7 @@ export default function CustomerInvoices() {
                           <td className="px-2 py-1.5">
                             <span className="font-mono">{note.note_number}</span>
                             <span className="block capitalize text-gray-500">{String(note.note_type).replace('_', ' ')}</span>
+                            {note.note_type === 'credit_note' && <DocumentButton load={() => getCreditNoteDocument(note.id)} />}
                           </td>
                           <td className="px-2 py-1.5">
                             {note.fuel_type && (

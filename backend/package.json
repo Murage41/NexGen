@@ -53,7 +53,8 @@
     "test:login-throttle": "tsx scripts/test_login_throttle.ts",
     "test:shift-receipt-reversal": "tsx scripts/test_shift_receipt_reversal.ts",
     "test:attendant-access": "tsx scripts/test_attendant_access.ts",
-    "test:tank-low-stock": "tsx scripts/test_tank_low_stock.ts"
+    "test:tank-low-stock": "tsx scripts/test_tank_low_stock.ts",
+    "test:station-documents": "tsx scripts/test_station_documents.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -61,6 +62,7 @@
     "dotenv": "^16.6.1",
     "express": "^4.21.1",
     "knex": "^3.1.0",
+    "pdfmake": "^0.2.23",
     "shared": "*",
     "sqlite3": "^6.0.1",
     "zod": "^4.3.6"
@@ -68,6 +70,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/pdfmake": "^0.2.13",
     "tsx": "^4.23.1",
     "typescript": "^5.7.2"
   }

@@ -19,8 +19,8 @@ outcome into `docs/PROJECT-STATUS.md`, and update any user doc it changes.
 | Order | Item | Size |
 |---|---|---|
 | 1 | ~~M6: what attendants can see (view-only access, blind open shift)~~ **done, on the station 2026-09-26 (update #11, `157a9ec`)** | M |
-| 2 | ~~M7: tank low-stock alert~~ **done 2026-09-26, station update #12** | S |
-| 3 | M8: station profile, logo, PDF documents | M |
+| 2 | ~~M7: tank low-stock alert~~ **done, on the station 2026-09-26 (update #12, `3131f77`)** | S |
+| 3 | ~~M8: station profile, logo, PDF documents~~ **done 2026-09-26, station update #13** | M |
 | 4 | M9: deliveries as Order → GRN → supplier invoice | L |
 | 5 | Invoice actions on the phone | M |
 | 6 | UI and design review (owner, 2026-09-21) | M |
@@ -126,8 +126,8 @@ a blind shift removes the easy running balance, not all arithmetic.
 
 ## 2. M7: tank low-stock alert
 
-**Done 2026-09-26 (station update #12), as recommended below; the owner
-agreed the same day.** Owner guide: `docs/TANK-LOW-STOCK.md`; tests:
+**Done: on the station since 2026-09-26 (update #12, `3131f77`), as
+recommended below; the owner agreed the same day.** Owner guide: `docs/TANK-LOW-STOCK.md`; tests:
 `npm run test:tank-low-stock` (10 planted bugs caught). Two details settled
 while building: the order level can change during an open shift (a tank's
 name, fuel and size still cannot), and the daily-sales guide counts a shift's
@@ -196,22 +196,74 @@ renderer (pdfmake or `@react-pdf/renderer`, no headless Chromium, not
 Electron's printToPDF), **stored against the record at issue time and
 re-served**, never re-rendered, so a document reprints unchanged years later.
 
-**Today:** no image assets or PDF library; station name/address live in the
-desktop's `localStorage` (lost if site data is cleared, invisible to mobile).
-Supplier invoice PDF upload/storage already exists (`routes/fuelDeliveries.ts`,
-magic-byte check, size cap, relative path on the row); reuse that pattern.
+**Logo: done 2026-09-26.** Rebuilt from the canopy photos (three equally
+spaced teal rings, inner and outer C open right, middle open left, navy dot;
+the damaged outer ring restored). The owner chose the version with the name
+in Century Gothic Bold ("Nex" navy #263C96, "Gen" teal #00838F) and "FILLING
+STATION" beneath. Files and the generator are on the development PC only:
+`D:\NexGen\.claude\plans\branding\` (`nexgen-logo-final.svg`, `.png`,
+`-transparent.png`).
 
-**Build:**
-1. Logo: SVG + PNG exports from the owner's photo, bundled (no CDN).
-2. Migration + API for a station profile: legal and trading name, address,
-   phone, email, KRA PIN, VAT number, till/paybill, logo. Migrate the
-   `localStorage` values; repoint desktop Settings at the API.
-3. PDF renderer + a `documents` storage path; shared document shell (header,
-   footer, page numbers).
-4. Customer invoice document using `customer_invoices.invoice_number`, the
-   customer's name, address and KRA PIN, payment details in the footer.
-5. **Mark every document "not a fiscal/tax invoice".** POSitive remains the
-   eTIMS system of record (`docs/PRODUCTION-SECURITY-AND-COMPLIANCE.md`).
+**Today (verified 2026-09-26):**
+- Station name and address live only in the desktop's `localStorage`
+  (`desktop/src/renderer/pages/Settings.tsx` ≈ lines 47 and 141); nothing else
+  reads them, the phone cannot see them, and clearing site data loses them.
+- No PDF library and no invoice document. The only printout is the fuel
+  consumption history (`InvoiceCustomerWorkspace.tsx` ≈ line 279, an HTML
+  window sent to the printer).
+- Customers have name, phone, KRA PIN and payment terms, but no address or
+  email (`credit_accounts`). Invoices have number, period, issue and due
+  dates, fuel lines (litres × agreed price), total and balance.
+- Supplier invoice PDF upload/storage exists (`routes/fuelDeliveries.ts`,
+  magic-byte check, size cap, relative path on the row); reuse that pattern.
+
+**Practice:** ERPs keep one company record (logo, legal name, address, tax
+IDs, contact and payment details) that every document's header and footer
+reads (Odoo: Settings → Companies and Document Layout,
+odoo.com/documentation/19.0/applications/general/companies.html). In Kenya,
+since 1 January 2024 a business expense must be supported by an eTIMS
+electronic tax invoice to be deductible (KRA,
+kra.go.ke/news-center/public-notices/1944-enforcement-of-the-electronic-tax-invoice;
+Tax Procedures Act s.23A), so the tax invoice stays with POSitive and NexGen
+documents must say they are not tax invoices.
+
+**Done 2026-09-26 (station update #13) as below; the owner agreed the same day.**
+Tests: `npm run test:station-documents` (10 planted bugs caught; an 11th,
+re-rendering a saved document, is harmless because the saved copy still wins).
+Owner guide: `docs/STATION-PROFILE-AND-DOCUMENTS.md`. The PDFs are stored in
+the database (`stored_documents`), not in files, so every backup has them;
+the backup now also copies the uploaded supplier PDFs beside the database copy.
+
+**Recommendation (agreed by the owner 2026-09-26):**
+1. **Station profile** in the database, one record, edited in desktop
+   Settings (admins; the phone reads it): trading name, registered name,
+   location and postal address, phone, email, KRA PIN, VAT number (if
+   registered), M-Pesa till/paybill, bank details, a footer note. The
+   `localStorage` name and address are moved into it on first open.
+2. **Logo:** the final logo ships inside NexGen as the default (it is already
+   public on the canopy, and NexGen is also the software's name); a station
+   can replace it in Settings (upload stored in the data folder, as supplier
+   invoices are). Shown on the desktop and phone headers too.
+3. **Documents:** pdfmake on the station server; one shared layout (logo and
+   station details at the top, page numbers, payment details and "This is not
+   a tax invoice. Tax invoices are issued through KRA eTIMS." at the foot).
+   Document text uses pdfmake's bundled open font (Roboto); the logo is an
+   image, so it keeps its Century Gothic lettering.
+4. **First documents:** customer invoices, DN- debit note bills and credit
+   notes: customer name, phone and KRA PIN; number, period, issue and due
+   dates; fuel, litres, price and amount per line; total, paid, balance.
+   Saved as a PDF when issued and re-served unchanged; an invoice issued
+   before M8 gets its PDF the first time it is opened, saved then. Download
+   and print on the desktop; open on the phone (admins).
+5. Later documents (customer statements, receipts, payslips, delivery notes)
+   reuse the same layout.
+
+**Ripple:** a migration (station update backs up first), a new dependency
+(`npm install` in the station update), a `documents` folder that the backup
+must include, and desktop Settings changes.
+
+**Won't solve:** eTIMS submission (stays with POSitive); emailing or
+WhatsApping documents (later); customer addresses (none on file today).
 
 ---
 

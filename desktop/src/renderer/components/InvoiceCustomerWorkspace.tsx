@@ -25,9 +25,11 @@ import {
   getInvoicePayments,
   reverseInvoicePayment,
   updateCreditAccount,
+  getInvoiceDocument,
 } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 import { InvoiceNoteForm } from '../../../../shared/ui/InvoiceNote';
+import { DocumentButton } from '../../../../shared/ui/DocumentButton';
 
 export type InvoiceCustomerWorkspaceCustomer = {
   id: number;
@@ -605,7 +607,12 @@ export default function InvoiceCustomerWorkspace({
                     <td className="px-4 py-2 text-right">{fmt(invoice.total_amount)}</td>
                     <td className="px-4 py-2 text-right font-semibold">{fmt(invoice.balance)}</td>
                     <td className="px-4 py-2"><span className={`inline-block border px-2 py-0.5 text-xs rounded ${statusStyle[invoice.status] || statusStyle.draft}`}>{invoice.status}</span></td>
-                    <td className="px-4 py-2 text-right"><button onClick={() => onOpenInvoice(invoice)} className="text-blue-600 hover:underline">Open</button></td>
+                    <td className="px-4 py-2 text-right">
+                      <span className="inline-flex items-start gap-3">
+                        {invoice.status !== 'draft' && <DocumentButton load={() => getInvoiceDocument(invoice.id)} />}
+                        <button onClick={() => onOpenInvoice(invoice)} className="text-blue-600 hover:underline">Open</button>
+                      </span>
+                    </td>
                   </tr>
                 ))}
                 {invoices.length === 0 && <tr><td colSpan={7} className="p-10 text-center text-gray-400">No invoices for this customer.</td></tr>}
