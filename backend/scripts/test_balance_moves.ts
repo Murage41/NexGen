@@ -47,9 +47,9 @@ async function main() {
     const [pump] = await db('pumps').insert({ label: 'Pump 1', nozzle_label: 'P1', fuel_type: 'petrol', tank_id: tank, active: true });
     const customer = async (name: string, billing_mode = 'money') =>
       (await db('credit_accounts').insert({ name, type: 'customer', billing_mode, balance: 0 }))[0] as number;
-    const kau = await customer('Kau');
-    const diwafa = await customer('Diwafa');
-    const blossom = await customer('Blossom', 'invoice');
+    const alpha = await customer('Alpha');
+    const delta = await customer('Delta');
+    const gamma = await customer('Gamma', 'invoice');
     const closedShift = async (employeeId: number, date: string, variance: number) => {
       const [id] = await db('shifts').insert({ employee_id: employeeId, shift_date: date, start_time: `${date}T06:00:00Z`, status: 'closed', end_time: `${date}T18:00:00Z`, wage_paid: 0 });
       await db.transaction((trx) => postShiftVariance(trx, { id, employee_id: employeeId, shift_date: date }, variance, null));
@@ -62,14 +62,14 @@ async function main() {
       return id as number;
     };
 
-    // S0 (yesterday): Kau took 700 on credit; balanced. S1 (today): sales
-    // 10,000, cash 7,000, 2,000 credit to Kau (really Diwafa's), short 1,000.
+    // S0 (yesterday): Alpha took 700 on credit; balanced. S1 (today): sales
+    // 10,000, cash 7,000, 2,000 credit to Alpha (really Delta's), short 1,000.
     const s0 = await closedShift(attendant, yesterday, 0);
-    const oldKauCredit = await credit(s0, kau, 700, `${yesterday} 08:00:00`);
+    const oldAlphaCredit = await credit(s0, alpha, 700, `${yesterday} 08:00:00`);
     const s1 = await closedShift(attendant, today, -1000);
     await db('pump_readings').insert({ shift_id: s1, pump_id: pump, closing_litres: 50, closing_amount: 10000, litres_sold: 50, amount_sold: 10000 });
     await db('shift_collections').insert({ shift_id: s1, cash_amount: 7000, mpesa_amount: 0, credits_amount: 2000, total_collected: 7000 });
-    const s1KauCredit = await credit(s1, kau, 2000, new Date().toISOString().replace('T', ' ').slice(0, 19));
+    const s1AlphaCredit = await credit(s1, alpha, 2000, new Date().toISOString().replace('T', ' ').slice(0, 19));
     // Relief attendant: S2 short 500, covered by S3's 500 surplus, same month.
     const s2 = await closedShift(relief, today, -500);
     await closedShift(relief, today, 500);
@@ -147,38 +147,38 @@ async function main() {
     }
     console.log('PASS correction routes refuse (410)');
 
-    // 2. Credit on the wrong customer: Kau -> Diwafa, naming S1. S1's credit is
-    // settled, not Kau's older one; Diwafa's credit ages from S1.
-    await ok(['customer', kau], ['customer', diwafa], 2000, s1, 'Credit recorded on Kau, was Diwafa');
-    assert.equal(await creditBalance(s1KauCredit), 0, "the named shift's credit is settled");
-    assert.equal(await creditBalance(oldKauCredit), 700, 'the older credit is still owed');
-    assert.equal(await owes(kau), 700);
-    assert.equal(await owes(diwafa), 2000);
-    assert.equal(await cached(kau), 700, 'cache follows');
-    assert.equal(await cached(diwafa), 2000, 'cache follows');
-    const diwafaAccount = await db('credit_accounts').where({ id: diwafa }).first();
+    // 2. Credit on the wrong customer: Alpha -> Delta, naming S1. S1's credit is
+    // settled, not Alpha's older one; Delta's credit ages from S1.
+    await ok(['customer', alpha], ['customer', delta], 2000, s1, 'Credit recorded on Alpha, was Delta');
+    assert.equal(await creditBalance(s1AlphaCredit), 0, "the named shift's credit is settled");
+    assert.equal(await creditBalance(oldAlphaCredit), 700, 'the older credit is still owed');
+    assert.equal(await owes(alpha), 700);
+    assert.equal(await owes(delta), 2000);
+    assert.equal(await cached(alpha), 700, 'cache follows');
+    assert.equal(await cached(delta), 2000, 'cache follows');
+    const diwafaAccount = await db('credit_accounts').where({ id: delta }).first();
     // A limit of -1 days puts the cutoff at tomorrow: everything dated today counts.
     const overdue = await overdueBeyond(diwafaAccount, -1, today, db);
     assert.equal(overdue?.overdue_amount, 2000, 'a moved credit counts for credit age limits');
     assert.equal(overdue?.oldest_due_date, today, 'it ages from its shift');
     console.log('PASS credit on the wrong customer (named shift first, aged from shift)');
 
-    // 3. Payment on the wrong customer: Kau really paid 1,000, recorded on
-    // Diwafa. Kau owes 700, so 300 is credit on Kau's account.
-    await ok(['customer', kau], ['customer', diwafa], 1000, null, 'Payment recorded on Diwafa, was Kau');
-    assert.equal(await owes(kau), 0);
-    assert.equal(await customerCreditBalance(kau, db), 300, "money that exists stays the customer's");
-    assert.equal(await owes(diwafa), 3000);
+    // 3. Payment on the wrong customer: Alpha really paid 1,000, recorded on
+    // Delta. Alpha owes 700, so 300 is credit on Alpha's account.
+    await ok(['customer', alpha], ['customer', delta], 1000, null, 'Payment recorded on Delta, was Alpha');
+    assert.equal(await owes(alpha), 0);
+    assert.equal(await customerCreditBalance(alpha, db), 300, "money that exists stays the customer's");
+    assert.equal(await owes(delta), 3000);
     console.log('PASS payment on the wrong customer -> credit on account');
 
     // 4. Customer <-> employee needs the employee's own shift.
-    await refused('customer to employee without a shift', move(['customer', diwafa], ['employee', attendant], 100, null), 400);
-    await refused("customer to employee on someone else's shift", move(['customer', diwafa], ['employee', attendant], 100, s2), 400);
+    await refused('customer to employee without a shift', move(['customer', delta], ['employee', attendant], 100, null), 400);
+    await refused("customer to employee on someone else's shift", move(['customer', delta], ['employee', attendant], 100, s2), 400);
     console.log("PASS customer <-> employee must name the employee's shift");
 
-    // 5. Made-up credit that hid a shortage: Diwafa -> attendant on S1. It
+    // 5. Made-up credit that hid a shortage: Delta -> attendant on S1. It
     // corrects S1's variance on the attendant's ledger; the shift is unchanged.
-    await ok(['customer', diwafa], ['employee', attendant], 800, s1, 'Made-up credit hid a shortage');
+    await ok(['customer', delta], ['employee', attendant], 800, s1, 'Made-up credit hid a shortage');
     let a = await statement(attendant);
     const s1Row = () => a.rows.find((r: any) => r.shift_id === s1)!;
     assert.equal(a.totals.owes, 1800);
@@ -187,25 +187,25 @@ async function main() {
     console.log('PASS customer -> attendant corrects their shift');
 
     // 6. The attendant pays 1,800. Then a payment recorded on S1 never came
-    // in: attendant -> Diwafa 300. S1's shortage is 1,500, so 300 of what they
+    // in: attendant -> Delta 300. S1's shortage is 1,500, so 300 of what they
     // paid is their credit: it pays their next shortage.
     await db.transaction((trx) => recordVarianceRepayment(trx, attendant, { amount: 1800, payment_method: 'cash', date: today }, admin));
-    await ok(['employee', attendant], ['customer', diwafa], 300, s1, 'Payment recorded that never came in');
+    await ok(['employee', attendant], ['customer', delta], 300, s1, 'Payment recorded that never came in');
     a = await statement(attendant);
     assert.deepEqual([a.totals.owes, a.totals.credit], [0, 300], 'money paid for nothing is credit');
     assert.equal(s1Row().shortage, 1500);
-    assert.equal(await owes(diwafa), 2500);
+    assert.equal(await owes(delta), 2500);
     console.log('PASS attendant -> customer after payment: credit');
 
     // 7. A surplus never pays a shortage: the relief attendant owes S2's 500
     // although S3 was 500 over. Then a credit given but not recorded on S2:
-    // relief -> Kau 500. The shortage is gone; nothing becomes credit.
+    // relief -> Alpha 500. The shortage is gone; nothing becomes credit.
     assert.equal((await statement(relief)).totals.owes, 500, 'a surplus never pays a shortage');
-    await ok(['employee', relief], ['customer', kau], 500, s2, 'Credit given but not recorded');
+    await ok(['employee', relief], ['customer', alpha], 500, s2, 'Credit given but not recorded');
     const r = await statement(relief);
     assert.deepEqual([r.totals.owes, r.totals.credit, r.rows[0].shortage], [0, 0, 0]);
-    assert.equal(await owes(kau), 200, "Kau's 300 credit on account pays part of the new credit");
-    assert.equal(await customerCreditBalance(kau, db), 0);
+    assert.equal(await owes(alpha), 200, "Alpha's 300 credit on account pays part of the new credit");
+    assert.equal(await customerCreditBalance(alpha, db), 0);
     console.log('PASS surplus ignored; relief on their shift clears the shortage');
 
     // 8. Repayment on the wrong employee: the night attendant paid 100, recorded
@@ -219,10 +219,10 @@ async function main() {
 
     // 9. The station writes off a customer's debt, never beyond what is owed.
     // Employees are never written off or raised by the station.
-    await refused('write-off beyond what the customer owes', move(['customer', diwafa], ['station', null], 5000, null), 409);
-    await ok(['customer', diwafa], ['station', null], 2500, null, 'Customer will not pay');
-    assert.equal(await owes(diwafa), 0);
-    assert.equal(await customerCreditBalance(diwafa, db), 0, 'a write-off never creates credit');
+    await refused('write-off beyond what the customer owes', move(['customer', delta], ['station', null], 5000, null), 409);
+    await ok(['customer', delta], ['station', null], 2500, null, 'Customer will not pay');
+    assert.equal(await owes(delta), 0);
+    assert.equal(await customerCreditBalance(delta, db), 0, 'a write-off never creates credit');
     await refused('employee to the station', move(['employee', other], ['station', null], 100, s4), 400);
     await refused('station to an employee', move(['station', null], ['employee', other], 50, null), 400);
     assert.equal((await statement(other)).totals.owes, 100);
@@ -252,12 +252,12 @@ async function main() {
     console.log('PASS shift unchanged, no cash, reports and integrity agree');
 
     // 11. Refusals, and one approval covers exactly one move.
-    await refused('invoice customer', move(['customer', blossom], ['customer', kau], 10, null), 400);
+    await refused('invoice customer', move(['customer', gamma], ['customer', alpha], 10, null), 400);
     await refused('station to station', move(['station', null], ['station', null], 10, null), 400);
-    await refused('same account', move(['customer', kau], ['customer', kau], 10, null), 400);
-    await refused('no reason', move(['customer', kau], ['customer', diwafa], 10, null, ''), 400);
-    await refused('open shift reference', move(['customer', kau], ['customer', diwafa], 10, openShift), 409);
-    const fields = { from_kind: 'customer', from_id: kau, to_kind: 'customer', to_id: diwafa, shift_id: s1, amount: 10 };
+    await refused('same account', move(['customer', alpha], ['customer', alpha], 10, null), 400);
+    await refused('no reason', move(['customer', alpha], ['customer', delta], 10, null, ''), 400);
+    await refused('open shift reference', move(['customer', alpha], ['customer', delta], 10, openShift), 409);
+    const fields = { from_kind: 'customer', from_id: alpha, to_kind: 'customer', to_id: delta, shift_id: s1, amount: 10 };
     const token = await approval(fields);
     await refused('approval for another amount', call('POST', '/balance-moves', { ...fields, amount: 999, reason: 'tampered', approval_token: token }), 403);
     await refused('approval for another shift', call('POST', '/balance-moves', { ...fields, shift_id: null, reason: 'tampered', approval_token: token }), 403);

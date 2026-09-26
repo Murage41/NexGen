@@ -196,7 +196,7 @@ async function createSchema(db: Knex) {
 
 async function seedDraft(db: Knex) {
   const [accountId] = await db('credit_accounts').insert({
-    name: 'Diwafa',
+    name: 'Delta Co',
     type: 'customer',
     billing_mode: 'invoice',
     payment_terms_days: 30,

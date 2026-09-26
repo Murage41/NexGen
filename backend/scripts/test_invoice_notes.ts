@@ -39,8 +39,8 @@ async function main() {
     const [pump] = await db('pumps').insert({ label: 'P1', nozzle_label: 'D1', fuel_type: 'diesel', tank_id: tank, active: true });
     const customer = async (name: string) =>
       (await db('credit_accounts').insert({ name, type: 'customer', billing_mode: 'invoice', balance: 0, payment_terms_days: 30 }))[0] as number;
-    const blossom = await customer('Blossom');
-    const mugendi = await customer('Mugendi');
+    const gamma = await customer('Gamma');
+    const delta = await customer('Delta');
     const closedShift = async (date: string) =>
       (await db('shifts').insert({ employee_id: attendant, shift_date: date, start_time: `${date}T06:00:00Z`, status: 'closed', wage_paid: 0 }))[0] as number;
     const fuel = (shiftId: number, account: number, litres: number) => db('invoice_consumption').insert({
@@ -87,14 +87,14 @@ async function main() {
 
     // An issued invoice: 50 L diesel at 190 = 9,500.
     const s1 = await closedShift(daysAgo(10));
-    await fuel(s1, blossom, 50);
-    const inv1 = await invoiceFor(blossom);
+    await fuel(s1, gamma, 50);
+    const inv1 = await invoiceFor(gamma);
     assert.equal(Number(inv1.total_amount), 9500);
 
     // 1. A note is fuel, litres and price; an administrator approves it.
     let r = await call('POST', `/inv/${inv1.id}/adjustments`, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 5, reason: 'no approval given' });
     assert.equal(r.status, 400, 'the desktop needs an approver');
-    r = await call('POST', '/auth/verify-pin', { employee_id: admin, pin: '4821', purpose: 'invoice_note', account_id: blossom, invoice_id: inv1.id, note_type: 'credit_note', correction: 'litres', fuel_type: '', litres: 5 });
+    r = await call('POST', '/auth/verify-pin', { employee_id: admin, pin: '4821', purpose: 'invoice_note', account_id: gamma, invoice_id: inv1.id, note_type: 'credit_note', correction: 'litres', fuel_type: '', litres: 5 });
     assert.equal(r.status, 400, 'no approval for a note without fuel');
     r = await call('POST', `/inv/${inv1.id}/adjustments`, { note_type: 'credit_note', amount: 500, reason: 'an amount without fuel', approval_token: 'x' });
     assert.notEqual(r.status, 201, 'a bare amount is refused');
@@ -102,72 +102,72 @@ async function main() {
 
     // 2. Litres corrections are priced at the invoice's agreed price and can
     // never credit more litres than it billed.
-    r = await note(inv1.id, blossom, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, reason: 'Fuel recorded on Blossom, was Mugendi', note_date: daysAgo(5) });
+    r = await note(inv1.id, gamma, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, reason: 'Fuel recorded on Gamma, was Delta', note_date: daysAgo(5) });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     const cn1 = r.body.data.note;
     assert.deepEqual([Number(cn1.unit_price), Number(cn1.amount), cn1.note_date, cn1.correction, cn1.approved_by_name],
       [190, 3800, today, 'litres', 'Owner Admin'], "priced at the invoice's price, dated today");
     assert.equal(await balance(inv1.id), 5700);
-    r = await note(inv1.id, blossom, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 31, reason: 'too many litres here' });
+    r = await note(inv1.id, gamma, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 31, reason: 'too many litres here' });
     assert.equal(r.status, 400, 'no more litres than billed (20 already credited)');
     console.log('PASS litres corrections at the invoice price, capped at the litres billed');
 
     // 3. Price corrections: the same litres at the difference, never above the price.
-    r = await note(inv1.id, blossom, { note_type: 'credit_note', correction: 'price', fuel_type: 'diesel', litres: 30, unit_price: 5, reason: 'Agreed 185, invoiced 190' });
+    r = await note(inv1.id, gamma, { note_type: 'credit_note', correction: 'price', fuel_type: 'diesel', litres: 30, unit_price: 5, reason: 'Agreed 185, invoiced 190' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.equal(await balance(inv1.id), 5550);
-    r = await note(inv1.id, blossom, { note_type: 'credit_note', correction: 'price', fuel_type: 'diesel', litres: 10, unit_price: 191, reason: 'price above the invoice' });
+    r = await note(inv1.id, gamma, { note_type: 'credit_note', correction: 'price', fuel_type: 'diesel', litres: 10, unit_price: 191, reason: 'price above the invoice' });
     assert.equal(r.status, 400);
     console.log('PASS price corrections at the difference per litre');
 
     // 4. A credit note on a paid invoice: the customer's credit.
-    r = await call('POST', '/inv/payments', { account_id: blossom, amount: 5550, payment_method: 'cash' });
+    r = await call('POST', '/inv/payments', { account_id: gamma, amount: 5550, payment_method: 'cash' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    r = await note(inv1.id, blossom, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 10, reason: 'Found after payment: 10 L not taken' });
+    r = await note(inv1.id, gamma, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 10, reason: 'Found after payment: 10 L not taken' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     const cn3 = r.body.data.note;
     assert.deepEqual([Number(cn3.applied_amount), Number(cn3.unapplied_amount)], [0, 1900]);
-    assert.equal(await invoiceCustomerCredit(blossom, db), 1900);
-    assert.equal(await readAccountBalance(blossom, db), 0);
+    assert.equal(await invoiceCustomerCredit(gamma, db), 1900);
+    assert.equal(await readAccountBalance(gamma, db), 0);
     console.log('PASS a credit note on a paid invoice becomes the customer\'s credit');
 
     // 5. The credit pays their next invoice when it is issued.
     const s2 = await closedShift(daysAgo(2));
-    await fuel(s2, blossom, 20);
-    const inv2 = await invoiceFor(blossom);
+    await fuel(s2, gamma, 20);
+    const inv2 = await invoiceFor(gamma);
     assert.equal(Number(inv2.total_amount), 3800);
     assert.equal(await balance(inv2.id), 1900, 'the credit paid 1,900 of it');
-    assert.equal(await invoiceCustomerCredit(blossom, db), 0);
+    assert.equal(await invoiceCustomerCredit(gamma, db), 0);
     const detail = await call('GET', `/inv/${inv2.id}`);
     assert.equal(detail.body.data.credit_applied[0].note_number, cn3.note_number);
     console.log('PASS the credit pays the next invoice when issued');
 
     // 6. A debit note on an invoice is a bill of its own.
-    r = await note(inv1.id, blossom, { note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 5, reason: 'Missed 5 L on this invoice' });
+    r = await note(inv1.id, gamma, { note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 5, reason: 'Missed 5 L on this invoice' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     const dn1 = r.body.data.debit_note;
     assert.match(dn1.invoice_number, /^DN-/);
     assert.deepEqual([dn1.document_kind, Number(dn1.total_amount), Number(dn1.balance), dn1.corrects_invoice_id, dn1.status],
       ['debit_note', 950, 950, inv1.id, 'issued']);
     assert.ok(dn1.due_date > today, 'due like an invoice');
-    assert.equal(await readAccountBalance(blossom, db), 1900 + 950);
+    assert.equal(await readAccountBalance(gamma, db), 1900 + 950);
     console.log('PASS a debit note on an invoice is its own bill');
 
     // 7. A debit note for a customer with no invoice: fuel from a shift.
     r = await call('POST', '/inv/debit-notes', {
-      account_id: mugendi, fuel_type: 'diesel', litres: 20, unit_price: 185, reason: 'Fuel recorded on Blossom, was Mugendi',
-      approval_token: await approve({ purpose: 'invoice_note', account_id: mugendi, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185 }),
+      account_id: delta, fuel_type: 'diesel', litres: 20, unit_price: 185, reason: 'Fuel recorded on Gamma, was Delta',
+      approval_token: await approve({ purpose: 'invoice_note', account_id: delta, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185 }),
     });
     assert.equal(r.status, 400, 'the shift is required');
-    const token = await approve({ purpose: 'invoice_note', account_id: mugendi, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1 });
+    const token = await approve({ purpose: 'invoice_note', account_id: delta, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1 });
     r = await call('POST', '/inv/debit-notes', {
-      account_id: mugendi, fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1, reason: 'Fuel recorded on Blossom, was Mugendi', approval_token: token,
+      account_id: delta, fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1, reason: 'Fuel recorded on Gamma, was Delta', approval_token: token,
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     const dn2 = r.body.data;
     assert.deepEqual([Number(dn2.total_amount), dn2.shift_id, String(dn2.from_date).slice(0, 10)], [3700, s1, daysAgo(10)]);
-    assert.equal(await readAccountBalance(mugendi, db), 3700);
-    r = await call('POST', '/inv/debit-notes', { account_id: mugendi, fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1, reason: 'Fuel recorded on Blossom, was Mugendi', approval_token: token.replace(/.$/, 'x') });
+    assert.equal(await readAccountBalance(delta, db), 3700);
+    r = await call('POST', '/inv/debit-notes', { account_id: delta, fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1, reason: 'Fuel recorded on Gamma, was Delta', approval_token: token.replace(/.$/, 'x') });
     assert.notEqual(r.status, 201, 'a tampered approval is refused');
     console.log('PASS a debit note for a shift works without any invoice');
 
@@ -179,14 +179,14 @@ async function main() {
     console.log('PASS reversing a credit note takes its credit back');
 
     // 9. A paid debit note can't be voided: a credit note corrects it.
-    r = await call('POST', '/inv/payments', { account_id: mugendi, amount: 3700, payment_method: 'mpesa', reference: 'QX1' });
+    r = await call('POST', '/inv/payments', { account_id: delta, amount: 3700, payment_method: 'mpesa', reference: 'QX1' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     r = await call('POST', `/inv/${dn2.id}/void`, { reason: 'trying to void a paid bill' });
     assert.equal(r.status, 400);
     assert.match(r.body.error, /credit note/);
-    r = await note(dn2.id, mugendi, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 2, reason: 'Only 18 L were Mugendi\'s' });
+    r = await note(dn2.id, delta, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 2, reason: 'Only 18 L were Delta\'s' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    assert.equal(await invoiceCustomerCredit(mugendi, db), 370, 'paid, so the credit is theirs for next time');
+    assert.equal(await invoiceCustomerCredit(delta, db), 370, 'paid, so the credit is theirs for next time');
     r = await call('POST', `/inv/${dn1.id}/void`, { reason: 'unpaid debit note entered twice' });
     assert.equal(r.status, 200, 'an unpaid debit note can be voided');
     console.log('PASS paid debit notes are corrected by credit notes; unpaid ones voided');
@@ -194,20 +194,20 @@ async function main() {
     // 10. Reports: a customer in credit is owed money, not a negative debt.
     const position = await getReceivablePositionAsOf(db, today);
     assert.equal(position.invoice_customer_credits, 370);
-    assert.equal(position.invoice_receivables, await readAccountBalance(blossom, db));
+    assert.equal(position.invoice_receivables, await readAccountBalance(gamma, db));
     const audit: any = await auditReceivableIntegrity(db);
     assert.equal(audit.issues.length, 0, JSON.stringify(audit.issues));
     console.log('PASS reports and the integrity audit agree');
 
     // 11. An old debit note on an invoice that has been paid can't be reversed.
     const [legacy] = await db('invoice_adjustment_notes').insert({
-      account_id: blossom, invoice_id: inv1.id, note_number: 'DN-LEGACY-001', note_type: 'debit_note', note_date: daysAgo(3),
+      account_id: gamma, invoice_id: inv1.id, note_number: 'DN-LEGACY-001', note_type: 'debit_note', note_date: daysAgo(3),
       amount: 100, signed_amount: 100, fuel_type: 'diesel', litres: 0.5, unit_price: 200, reason: 'legacy debit note', status: 'posted',
     });
-    await db('invoice_accounting_events').insert({ source_key: `adjustment-note:${legacy}:posted`, account_id: blossom, invoice_id: inv1.id, adjustment_note_id: legacy, event_type: 'debit_note', posting_date: daysAgo(3), receivable_delta: 100, document_amount: 100 });
+    await db('invoice_accounting_events').insert({ source_key: `adjustment-note:${legacy}:posted`, account_id: gamma, invoice_id: inv1.id, adjustment_note_id: legacy, event_type: 'debit_note', posting_date: daysAgo(3), receivable_delta: 100, document_amount: 100 });
     const { recomputeInvoiceTotals } = await import('../src/services/receivablePayments');
     await db.transaction((trx) => recomputeInvoiceTotals(inv1.id, trx));
-    r = await call('POST', '/inv/payments', { account_id: blossom, amount: 100, payment_method: 'cash' });
+    r = await call('POST', '/inv/payments', { account_id: gamma, amount: 100, payment_method: 'cash' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     r = await call('POST', `/inv/adjustments/${legacy}/reverse`, { reason: 'reverse a paid debit note', approval_token: await approve({ purpose: 'invoice_note_reversal', note_id: legacy }) });
     assert.equal(r.status, 409);
@@ -246,7 +246,7 @@ async function main() {
       ['Attendant', 190, 1900, 30, 0],
     );
     r = await call('GET', `/inv/note-attendant?account_id=${kamau}&note_type=credit_note&fuel_type=diesel&litres=10&shift_id=${s1}`);
-    assert.equal(r.body.code, 'ATTENDANT_NOT_ON_SHIFT', "Blossom's litres on shift s1 are not Kamau's");
+    assert.equal(r.body.code, 'ATTENDANT_NOT_ON_SHIFT', "Gamma's litres on shift s1 are not Kamau's");
     // An approval for the station is not one for the attendant.
     const stationToken = await approve({ purpose: 'invoice_note', account_id: kamau, invoice_id: inv4.id, note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 10, unit_price: 0, shift_id: s3 });
     r = await call('POST', `/inv/${inv4.id}/adjustments`, { ...onAttendant, litres: 10, approval_token: stationToken });

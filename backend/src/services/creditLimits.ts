@@ -16,7 +16,7 @@ import { customerCreditBalance, invoiceCustomerCredit } from './receivablePaymen
 //   invoice = issued/partial invoice balances + draft invoice totals
 //             + unbilled active consumption at retail
 // Unbilled consumption must count: the station can go months between invoices
-// (Diwafa: 5.3M unbilled against a 186K invoice balance), so a balance-only
+// (one invoice customer had many times more unbilled than invoiced), so a balance-only
 // limit would miss nearly everything an invoice customer owes.
 //
 // Repayment limit: no more credit once anything has been unpaid for more than

@@ -92,9 +92,14 @@ Last updated: 2026-09-26.
   `HISTORICAL-DEBT-CLEARANCE.md`, `PAYROLL-REGRESSION-VERIFICATION.md`) name
   staff or customers; removing those names is open, awaiting the owner's
   go-ahead (earlier versions stay in git history).
-- **Real customer names in a committed test:** `backend/scripts/test_credit_limits.ts`
-  (since M5) uses names that match real station customers. Renaming them is
-  open, awaiting the owner's go-ahead (as with the older docs above).
+- **Real names in committed code:** removed 2026-09-26 from the test suites,
+  two code comments and a desktop placeholder (checked against every customer,
+  employee and supplier name in the station copy). Still left, each needing
+  its own decision: comments in two pushed migrations (`018`, `023`; pushed
+  migrations are never edited), the one-off station scripts named after people
+  (`backend/scripts/repair_*`, `clear_emma_debt.ts` with its test, which
+  checks the employee's real name as a safety guard, `fix_*`,
+  `verify_phase3b.js`), and `docs/phases/`.
 - Accepted-for-now gaps (desktop has no login, unsigned installer, eTIMS stays
   with POSitive, dev-mode station processes): `docs/PRODUCTION-SECURITY-AND-COMPLIANCE.md`.
 

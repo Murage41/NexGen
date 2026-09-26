@@ -115,7 +115,7 @@ async function createSchema(db: Knex) {
 async function seedBase(db: Knex) {
   await db('credit_accounts').insert({
     id: 1,
-    name: 'Diwafa',
+    name: 'Delta Co',
     type: 'customer',
     billing_mode: 'invoice',
   });

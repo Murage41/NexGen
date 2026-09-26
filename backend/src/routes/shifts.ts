@@ -1053,7 +1053,7 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
         );
       }
 
-      // Phase 3B: invoice-mode accounts (e.g. Diwafa, Mugendi Stores) must not
+      // Phase 3B: invoice-mode accounts (e.g. a company billed monthly) must not
       // be debited in KES; they bill by litres at an agreed price later. The
       // mobile shift-close UI should branch on billing_mode and call
       // POST /shifts/:id/invoice-consumption instead.

@@ -32,9 +32,9 @@ async function main() {
     };
     const earlier = await shift('2026-09-01', 'closed');
     const open = await shift(today, 'open');
-    const [customer] = await db('credit_accounts').insert({ name: 'Kau', type: 'customer', billing_mode: 'money', balance: 0 });
-    const [olderCredit] = await db('credits').insert({ customer_name: 'Kau', amount: 1000, balance: 1000, shift_id: earlier, status: 'outstanding', account_id: customer });
-    const [newerCredit] = await db('credits').insert({ customer_name: 'Kau', amount: 500, balance: 500, shift_id: earlier, status: 'outstanding', account_id: customer });
+    const [customer] = await db('credit_accounts').insert({ name: 'Alpha Stores', type: 'customer', billing_mode: 'money', balance: 0 });
+    const [olderCredit] = await db('credits').insert({ customer_name: 'Alpha Stores', amount: 1000, balance: 1000, shift_id: earlier, status: 'outstanding', account_id: customer });
+    const [newerCredit] = await db('credits').insert({ customer_name: 'Alpha Stores', amount: 500, balance: 500, shift_id: earlier, status: 'outstanding', account_id: customer });
 
     const app = express();
     app.use(express.json());

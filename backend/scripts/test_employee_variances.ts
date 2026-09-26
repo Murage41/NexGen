@@ -178,9 +178,9 @@ async function carryOver() {
       const [id] = await db('employees').insert({ name, daily_wage: 800, pin: 'test-only', role, active: true });
       return id as number;
     };
-    const mutati = await person('Mutati');
-    const ema = await person('Ema');
-    const francis = await person('Francis');
+    const attendantA = await person('Attendant A');
+    const attendantB = await person('Attendant B');
+    const attendantC = await person('Attendant C');
     const admin = await person('Owner', 'admin');
     let seq = 0;
     const closed = async (employee: number, date: string, variance: number | null) => {
@@ -204,56 +204,56 @@ async function carryOver() {
       });
       return id as number;
     };
-    const [mutatiAccount] = await db('credit_accounts').insert({ name: 'Mutati', type: 'employee', employee_id: mutati, balance: 0 });
+    const [attendantAAccount] = await db('credit_accounts').insert({ name: 'Attendant A', type: 'employee', employee_id: attendantA, balance: 0 });
 
     // Before close snapshots: an old cleared debt and a fully wage-deducted
     // shortage are history only.
-    const old = await closed(mutati, '2026-07-28', null);
-    await debt(mutati, old, 282.87, 0);
+    const old = await closed(attendantA, '2026-07-28', null);
+    await debt(attendantA, old, 282.87, 0);
     // From 17 Aug: wage-deducted at close, no debt row.
-    const s72 = await closed(mutati, '2026-08-17', -83.63);
-    await db('wage_deductions').insert({ shift_id: s72, employee_id: mutati, original_wage: 800, deduction_amount: 83.63, final_wage: 716.37, reason: 'Shift deficit of KES 83.63' });
+    const s72 = await closed(attendantA, '2026-08-17', -83.63);
+    await db('wage_deductions').insert({ shift_id: s72, employee_id: attendantA, original_wage: 800, deduction_amount: 83.63, final_wage: 716.37, reason: 'Shift deficit of KES 83.63' });
     // A surplus the station kept.
-    const s82 = await closed(mutati, '2026-08-18', 203.35);
+    const s82 = await closed(attendantA, '2026-08-18', 203.35);
     // Part deducted at close, repaid later: 1362.32 - 193.23 - 139.77 - 870 = 159.32.
-    const s93 = await closed(mutati, '2026-08-28', -1362.32);
-    const d93 = await debt(mutati, s93, 1362.32, 159.32, { deducted_from_wage: 193.23, carried_forward: 1169.09 });
-    const s95 = await closed(mutati, '2026-08-30', -16.84);
-    const [wd95] = await db('wage_deductions').insert({ shift_id: s95, employee_id: mutati, original_wage: 800, deduction_amount: 156.61, final_wage: 643.39, reason: 'Shift deficit of KES 16.84' });
+    const s93 = await closed(attendantA, '2026-08-28', -1362.32);
+    const d93 = await debt(attendantA, s93, 1362.32, 159.32, { deducted_from_wage: 193.23, carried_forward: 1169.09 });
+    const s95 = await closed(attendantA, '2026-08-30', -16.84);
+    const [wd95] = await db('wage_deductions').insert({ shift_id: s95, employee_id: attendantA, original_wage: 800, deduction_amount: 156.61, final_wage: 643.39, reason: 'Shift deficit of KES 16.84' });
     await db('shift_staff_debt_allocations').insert([
       { shift_id: s95, wage_deduction_id: wd95, staff_debt_id: d93, amount: 89.77 },
       { shift_id: s95, wage_deduction_id: wd95, staff_debt_id: d93, amount: 50 },
       { shift_id: s95, wage_deduction_id: wd95, staff_debt_id: d93, amount: 120, reversed_at: '2026-09-10T00:00:00Z' },
     ]);
     for (const [amount, date] of [[120, '2026-09-09'], [350, '2026-09-09'], [400, '2026-09-11']] as const) {
-      const [paymentId] = await db('credit_payments').insert({ account_id: mutatiAccount, amount, payment_method: 'cash', payment_type: 'staff_debt', date, status: 'posted' });
+      const [paymentId] = await db('credit_payments').insert({ account_id: attendantAAccount, amount, payment_method: 'cash', payment_type: 'staff_debt', date, status: 'posted' });
       await db('staff_debt_receipt_allocations').insert({ payment_id: paymentId, staff_debt_id: d93, amount });
     }
-    const s97 = await closed(mutati, '2026-09-01', -1951.99);
-    await debt(mutati, s97, 1951.99, 1951.99);
+    const s97 = await closed(attendantA, '2026-09-01', -1951.99);
+    await debt(attendantA, s97, 1951.99, 1951.99);
     // A phantom debt that was voided on a surplus shift.
-    const s105 = await closed(mutati, '2026-09-09', 11.04);
-    await debt(mutati, s105, 338.96, 0, { status: 'voided' });
-    const s107 = await closed(mutati, '2026-09-11', -101.46);
-    await debt(mutati, s107, 101.46, 101.46);
-    // Ema: cleared by the owner, and a large surplus.
-    const s92 = await closed(ema, '2026-08-27', -4196.92);
-    const d92 = await debt(ema, s92, 4196.92, 0);
+    const s105 = await closed(attendantA, '2026-09-09', 11.04);
+    await debt(attendantA, s105, 338.96, 0, { status: 'voided' });
+    const s107 = await closed(attendantA, '2026-09-11', -101.46);
+    await debt(attendantA, s107, 101.46, 101.46);
+    // Attendant B: cleared by the owner, and a large surplus.
+    const s92 = await closed(attendantB, '2026-08-27', -4196.92);
+    const d92 = await debt(attendantB, s92, 4196.92, 0);
     await db('staff_debt_reviews').insert({ staff_debt_id: d92, status: 'confirmed', reason: 'Administrative clearance of KES 4196.92 to zero.' });
-    await closed(ema, '2026-08-18', 7091.58);
-    // Francis: owed back 0.05 after an old correction.
-    const s28 = await closed(francis, '2026-06-29', null);
+    await closed(attendantB, '2026-08-18', 7091.58);
+    // Attendant C: owed back 0.05 after an old correction.
+    const s28 = await closed(attendantC, '2026-06-29', null);
     const [header] = await db('shift_accountability_adjustments').insert({ shift_id: s28, adjustment_type: 'historical_invoice_consumption_repair', amount_delta: 0.05, variance_before: -500.05, variance_after: -500, reason: 'repair' });
-    await db('staff_debt_adjustments').insert({ shift_id: s28, employee_id: francis, accountability_adjustment_id: header, adjustment_type: 'employee_credit_review', amount: 0.05, status: 'review_required', reason: 'owed back' });
+    await db('staff_debt_adjustments').insert({ shift_id: s28, employee_id: attendantC, accountability_adjustment_id: header, adjustment_type: 'employee_credit_review', amount: 0.05, status: 'review_required', reason: 'owed back' });
     // A payroll run not yet approved that still drafts a debt recovery.
     const [period] = await db('payroll_periods').insert({ name: 'September', pay_schedule: 'monthly', period_start: '2026-09-01', period_end: '2026-09-30', status: 'calculated' });
     const [run] = await db('payroll_runs').insert({ period_id: period, status: 'calculated', gross_total: 20000, deduction_total: 500, net_total: 19500, paid_total: 0 });
-    const [line] = await db('payroll_lines').insert({ run_id: run, employee_id: ema, gross_earnings: 20000, total_deductions: 500, net_pay: 19500, paid_amount: 0, balance_due: 19500, status: 'unpaid', recovery_review: '{"amount":500}' });
-    await db('payroll_deductions').insert({ payroll_line_id: line, employee_id: ema, deduction_type: 'staff_debt', amount: 500, status: 'draft' });
+    const [line] = await db('payroll_lines').insert({ run_id: run, employee_id: attendantB, gross_earnings: 20000, total_deductions: 500, net_pay: 19500, paid_amount: 0, balance_due: 19500, status: 'unpaid', recovery_review: '{"amount":500}' });
+    await db('payroll_deductions').insert({ payroll_line_id: line, employee_id: attendantB, deduction_type: 'staff_debt', amount: 500, status: 'draft' });
 
     await db.migrate.latest();
 
-    const m = await getVarianceStatement(db, mutati);
+    const m = await getVarianceStatement(db, attendantA);
     assert.equal(m.totals.owes, 2212.77);
     assert.equal(m.totals.net, 2212.77);
     const row = (id: number) => m.rows.find((r) => r.shift_id === id)!;
@@ -268,10 +268,10 @@ async function carryOver() {
     assert.equal(m.rows.some((r) => r.shift_id === old), false, 'shifts before close figures stay in the old history');
     for (const r of m.rows) assert.equal(r.before_ledger, true);
 
-    const e = await getVarianceStatement(db, ema);
+    const e = await getVarianceStatement(db, attendantB);
     assert.equal(e.totals.net, 0);
     assert.equal(e.rows.find((r) => r.shift_id === s92)!.paid_by.cleared_before, 4196.92);
-    const f = await getVarianceStatement(db, francis);
+    const f = await getVarianceStatement(db, attendantC);
     assert.equal(f.totals.credit, 0.05);
     assert.equal(f.totals.net, -0.05);
     const owedBack = await db('staff_debt_adjustments').where({ shift_id: s28 }).first();

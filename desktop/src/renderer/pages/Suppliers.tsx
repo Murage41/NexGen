@@ -162,7 +162,7 @@ export default function Suppliers() {
             <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
               <input type="text" required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. Mache Petroleum" />
+                className="w-full border border-gray-300 rounded-lg p-2" placeholder="e.g. ABC Petroleum Ltd" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
