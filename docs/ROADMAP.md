@@ -20,7 +20,10 @@ outcome into `docs/PROJECT-STATUS.md`, and update any user doc it changes.
 |---|---|---|
 | 1 | ~~M6: what attendants can see (view-only access, blind open shift)~~ **done, on the station 2026-09-26 (update #11, `157a9ec`)** | M |
 | 2 | ~~M7: tank low-stock alert~~ **done, on the station 2026-09-26 (update #12, `3131f77`)** | S |
-| 3 | ~~M8: station profile, logo, PDF documents~~ **done 2026-09-26, station update #13** | M |
+| 3 | ~~M8: station profile, logo, PDF documents~~ **done, on the station 2026-09-26 (update #13, `9bd40d5`)** | M |
+| 3b | ~~M10: correct an invoice customer's fuel entry before invoicing~~ **superseded 2026-09-30 by 3c (its code is reused)** | — |
+| 3c | **Corrections phase 1**: one Correction record; closed shifts read their snapshot; fuel on account first (adopted 2026-09-30; **done 2026-09-30, station update #14**) | L |
+| 3d | Corrections phases 2–4 (other records, meters/deliveries/stock, ledger and period lock); placement relative to M9 for the owner to confirm | L |
 | 4 | M9: deliveries as Order → GRN → supplier invoice | L |
 | 5 | Invoice actions on the phone | M |
 | 6 | UI and design review (owner, 2026-09-21) | M |
@@ -227,7 +230,8 @@ kra.go.ke/news-center/public-notices/1944-enforcement-of-the-electronic-tax-invo
 Tax Procedures Act s.23A), so the tax invoice stays with POSitive and NexGen
 documents must say they are not tax invoices.
 
-**Done 2026-09-26 (station update #13) as below; the owner agreed the same day.**
+**Done: on the station since 2026-09-26 (update #13, `9bd40d5`), as below; the
+owner agreed the same day.**
 Tests: `npm run test:station-documents` (10 planted bugs caught; an 11th,
 re-rendering a saved document, is harmless because the saved copy still wins).
 Owner guide: `docs/STATION-PROFILE-AND-DOCUMENTS.md`. The PDFs are stored in
@@ -264,6 +268,251 @@ must include, and desktop Settings changes.
 
 **Won't solve:** eTIMS submission (stays with POSitive); emailing or
 WhatsApping documents (later); customer addresses (none on file today).
+
+---
+
+## 3b. M10: correct an invoice customer's fuel entry before invoicing (owner, 2026-09-30)
+
+**Superseded 2026-09-30 by §3c.** The owner judged it a fix for one case; it
+was never committed. Its code becomes phase 1's fuel-on-account handler.
+
+**Asked:** two wrong entries on an invoice customer, not yet invoiced: in one
+shift diesel was recorded instead of petrol; in another, an entry the customer
+never took. Can NexGen fix them before the invoice?
+
+**Today (verified 2026-09-30):**
+- While the shift is open, an administrator can change an entry's litres or
+  delete it (`routes/shifts.ts` ≈ lines 1340 and 1440, `requireOpenShift`);
+  the fuel type cannot be changed (delete and re-enter).
+- Once the shift is closed nothing can change the entry, and a draft invoice
+  can change only a line's agreed price (`routes/customerInvoices.ts`,
+  `PUT /:id/lines/:lineId`), not leave an entry out. The wrong litres go onto
+  the invoice.
+- After issuing, credit and debit notes fix it (`docs/INVOICE-CUSTOMER-WORKFLOW.md`):
+  wrong fuel = credit note for the diesel + DN- bill for the petrol; extra
+  entry = credit note. A litres note can name the shift's attendant, whose
+  shortage then changes at the shift's price (`services/invoiceAdjustments.ts`,
+  `noteAttendant`). The customer first receives a wrong invoice plus notes.
+- The "Reversed" consumption status is documented but no current route sets
+  it (it came from the closed-shift corrections retired in update #8).
+- A closed shift's screen recomputes its totals from its consumption rows
+  (`routes/shifts.ts` ≈ line 323), so a correction must not alter them.
+
+**Practice:** a delivery record is corrected or cancelled *before* it is
+invoiced; once invoiced, only a credit note corrects it (Microsoft Dynamics
+365: correct a packing slip before posting the invoice; posted-and-invoiced
+packing slips cannot be cancelled,
+learn.microsoft.com/en-us/troubleshoot/dynamics-365/supply-chain/warehousing/cancel-posted-packing-slip).
+A return before invoicing reduces the delivered quantity, so the invoice bills
+only what the customer kept (Odoo,
+odoo.com/documentation/17.0/applications/sales/sales/products_prices/returns.html).
+
+**Built 2026-09-30 as below, then superseded before commit** (its tests,
+`test:entry-corrections`, caught 11 planted bugs; they became part of
+`test:corrections`). Settled while
+building: reasons need 10 characters (as notes); the right fuel on an entry
+never exceeds what that fuel's pumps sold on the shift; a correction can be
+**undone** (reason, approval) until its result is invoiced; a draft that
+holds the entry is refreshed, a new fuel line added at the pump price and an
+emptied line removed. The stale "Correct on shift #N" hints (left from the
+corrections retired in update #8) were replaced by the Correct button.
+
+**Recommendation (agreed by the owner 2026-09-30):** one action, **Correct entry**, on an
+invoice customer's unbilled fuel entry from a closed shift (administrators,
+desktop and phone, with the approving admin's PIN on the desktop as for
+notes, and a reason):
+1. **Remove it** (the extra entry): it stays on record marked Reversed, with
+   date, reason and approver, and is never invoiced.
+2. **Change it** (the wrong fuel, wrong litres or wrong customer): the entry is
+   reversed and the right one recorded on the same shift, linked to it, at that
+   shift's pump price for the right fuel.
+3. **The attendant (optional, as with notes):** tick "the attendant of shift #N
+   answers for it" and their shortage on that shift changes by the difference
+   in value at the shift's prices: removing 20 L of diesel at 190 adds 3,800 to
+   what they owe; diesel at 190 corrected to petrol at 180 for 50 L adds 500.
+   Unticked, the difference is the station's.
+4. The closed shift keeps showing what was recorded at close; the correction
+   shows beside it. Stock is unchanged (pump meters measure the fuel). A draft
+   invoice holding the entry is updated. After issuing, notes as today.
+
+**Ripple:** shift views must count entries as they were at close; the
+consumption history, credit-limit exposure and invoice drafts use the
+corrected entries; the attendant's variances show the correction with its
+reason; `docs/INVOICE-CUSTOMER-WORKFLOW.md` changes.
+
+**Won't solve:** entries already on an issued invoice (notes, as today);
+finding the mistakes (compare with the customer's issue book before invoicing).
+
+---
+
+## 3c. Corrections: one mechanism for every mistake (adopted 2026-09-30)
+
+**Why:** the owner judged M10 (§3b) a fix for one case, not a long-term
+design. NexGen had grown five separate correction routes (open-shift edits,
+Move balance, invoice notes, payment reversal / invoice void, and M10), each
+re-implementing the same effects, with gaps between them. The owner had three
+independent designs written from a neutral brief; all three reached the same
+core, and the owner adopted it: **one Correction record, built in phases**.
+The three designs and the comparison are on the development PC only:
+`D:\NexGen\.claude\plans\corrections-designs-2026-09-30.md`.
+
+**Adopted design** ("Design 1" of the three, with "Design 2"'s cut-over
+migration):
+- Open records are edited (with a log). Closed records are never changed; they
+  are **corrected**: a numbered Correction (C-2026-0001) whose lines reverse
+  the wrong record, add the right one, or both, with a reason, an approving
+  admin, a posting date (today) and an effective date (when it happened).
+- **The stage decides the output, not the admin:** not yet invoiced →
+  reverse/add; in a draft invoice → the same, and the draft is refreshed; on an
+  issued invoice (paid or not) → the correction generates the credit and/or
+  debit note itself; a locked month (phase 4) → posts in the current month.
+- **Each record type has one rule** for what it does to every balance; the same
+  rule runs for the original record and for its correction, so the two cannot
+  disagree.
+- **The attendant rule:** for each shift a correction touches, the shift's
+  corrected result is the as-closed result plus the change, and NexGen's
+  existing variance ledger already nets it within the shift (a surplus absorbs
+  a later worsening first; `services/employeeVariances.ts` ≈ lines 176–250). An
+  improvement always goes to the attendant's shift. A worsening asks one
+  question: "the attendant (normal rules)" or "the station (not their doing)".
+- **Closed shifts show their close snapshot**, never a recalculation; a banner
+  shows the corrected result when corrections exist.
+- **Undo** is a new correction that exactly cancels the old one.
+- **Approval** binds the admin's PIN to exactly what the preview showed.
+- **Register** of every correction; the database refuses changes to the
+  recorded facts of closed shifts.
+- **Migration by cut-over:** the new mechanism applies from its release; old
+  notes, balance moves and past corrections stay as recorded, and nothing
+  historical is recomputed.
+
+**Corrected after checking the designs against the code** (so later sessions
+don't re-litigate): NexGen already saves fuel cost per shift at close
+(`batch_consumption`); already nets attendant corrections within a shift; keeps
+cash and M-Pesa as per-shift totals (a unique M-Pesa code applies to payments,
+not shift collections); treats fuel on account as a way a metered sale was
+paid, never as stock or revenue (the meters are the sale; one of the designs
+got this wrong and would have double counted fuel).
+
+**Phases** (owner, 2026-09-30):
+1. Foundation, plus the first record type (fuel on account). Spec below.
+2. Other shift and customer records: credit sales (wrong customer, amount or
+   shift), debt receipts and customer payments (replaces payment reversal),
+   drawer expenses and wages, cash↔M-Pesa mix-ups; Move balance becomes "Move
+   or write off a balance" inside the Correction (open to invoice customers);
+   invoice void becomes Cancel (a full credit note); manual litres notes fold
+   in (price notes stay for commercial changes).
+3. Meter readings (a wrong reading moves two shifts), deliveries and supplier
+   documents (fuel cost), stock.
+4. The ledger (Tier 4 #17's journal design), "books closed up to [date]", and
+   reports as reported / as corrected.
+
+Sources (via the designs, checked): Microsoft Dynamics 365 Business Central,
+"Correct or cancel unpaid sales invoices" and "Reverse journal postings"
+(learn.microsoft.com); Dynamics 365 packing slips cannot be cancelled once
+invoiced (learn.microsoft.com/en-us/troubleshoot/dynamics-365/supply-chain/warehousing/cancel-posted-packing-slip);
+SAP document reversal with reason codes; Odoo credit notes, returns before
+invoicing and lock dates (odoo.com/documentation/17.0/applications/sales/sales/products_prices/returns.html);
+NetSuite period locking; KRA: transmitted invoices are corrected by credit/debit
+notes referencing them (kra.go.ke, eTIMS).
+
+### Phase 1 spec (go-ahead 2026-09-30; done, station update #14)
+
+**As built** (so later phases start from it):
+- `services/corrections.ts` (preview, post, undo, register, a shift's
+  corrections) and one rule per record type in `services/correctionRules/`
+  (`fuelOnAccount.ts`); routes `/api/corrections` (admins); approval purposes
+  `correction` (bound to the plan hash, which includes the reason) and
+  `correction_undo`.
+- Each correction line carries its change to its shift's result; a shift's
+  corrected result is the snapshot's plus those changes. The attendant part is
+  one `correction` entry per shift in the variance ledger.
+- A note made by a correction books only the price difference as revenue
+  (`shiftValue` in `invoiceAdjustments.ts`); the station's own share of a
+  worsening shows in the shift's corrected result, not in profit (the same as
+  a shortage at close). Showing station-carried losses as a figure belongs
+  with phase 4's ledger.
+- Undo is refused once a correction made a note (correct again instead, which
+  makes the opposite note), or its fuel is on an issued invoice, or a later
+  correction changed its entry.
+- Not built: a separate "Correct" on an invoice's fuel line (an invoice line
+  sums many entries; the customer's fuel history shows each entry with its
+  invoice and has Correct); a shift picker for "another shift" (the shift
+  number is typed).
+
+**Today (verified 2026-09-30):**
+- A close snapshot exists (`shift_close_reconciliations`: expected sales,
+  collections, credits, fuel on account, expenses, wages, total accounted,
+  variance), but only for shifts closed since 2026-08-17: 46 of 116 closed
+  shifts on the station copy. Shift screens recalculate a closed shift from its
+  rows (`routes/shifts.ts` ≈ line 323 and the accountability block), so any
+  row change moves a closed shift's figures.
+- Nothing in the database stops a closed shift's rows being changed.
+- M10 (uncommitted, development PC only) has the reverse/replace/attendant/
+  draft/undo logic for fuel on account (`services/consumptionCorrections.ts`,
+  `shared/ui/EntryCorrection.tsx`, migration 053 not pushed); it is reused
+  here and its separate button, routes and tables are not shipped.
+
+**Build:**
+1. **Closed shifts read their snapshot.** Migration: create the missing
+   snapshots for closed shifts without one, from their rows as they stand,
+   marked `backfilled`. Shift screens (desktop, phone) and shift reports show
+   a closed shift's figures from its snapshot; the lines list shows them as
+   recorded at close; a banner shows "N corrections since close: corrected
+   result …" when there are any.
+2. **Database guards.** Triggers refuse changes to the recorded facts (fuel,
+   litres, amounts, customer, shift) of a closed shift's lines, and any change
+   to a snapshot. Status and link columns that legitimately change later (a
+   fuel entry's invoice link and reversal status, a credit's unpaid balance)
+   stay writable. The shift close writes its rows before it marks the shift
+   closed.
+3. **The Correction record.** Tables: `corrections` (number, what was wrong,
+   reason code and note, posting and effective dates, status, approver,
+   plan hash, undoes), `correction_lines` (reverse / add, record type, target,
+   shift, party, fuel, litres, price, amount, who carries it, the record it
+   created), `correction_reasons` (codes the station can extend). Fuel entries,
+   attendant variance entries and notes gain a link to the correction that
+   reversed, created or generated them. Numbering C-YYYY-NNNN.
+4. **One preview-and-post service.** Preview builds the lines and every effect
+   in plain words (customer, invoice, shift result, attendant, station) and a
+   hash of them; the admin's PIN approves that hash (desktop: name + PIN;
+   phone: the signed-in admin); posting rebuilds the plan and refuses if
+   anything changed (e.g. the invoice was issued in between), in one
+   transaction.
+5. **First record type: fuel on account**, every error kind: wrong litres,
+   wrong fuel, wrong customer, wrong shift (reverse on the recorded shift, add
+   on the right one), recorded twice (reverse), missing (add). Every stage:
+   unbilled; in a draft (refreshed); on an issued invoice, paid or not
+   (automatic credit and/or debit note at the invoice's agreed price; excess
+   credit held on account; fuel moved to another customer goes to that
+   customer's unbilled fuel). Shift side always at the shift's pump price.
+   The fuel on account for a fuel never exceeds what its pumps sold on the
+   shift.
+6. **Undo** as a cancelling correction, while nothing built on it has since
+   been invoiced, issued or refunded; otherwise the screen says why.
+7. **Screens (desktop and phone, admins):** one guided flow: what's wrong
+   (six plain choices) → fix it (original greyed, only the wrong field
+   editable, price locked to the shift's) → who carries it (only when a shift
+   gets worse) → check (effects in plain words, reason code, note) → approve.
+   Entry points: "Correct…" on a fuel entry in the customer's fuel history,
+   on a closed shift's fuel-on-account list and on an invoice line;
+   "Add missing fuel on account" on a closed shift. A **Corrections register**
+   (desktop; list, filters, detail with undo). Attendants see corrections on
+   their own shifts and variances.
+8. **Tests:** as-closed never changes under any correction; each error kind at
+   each stage; attendant rule on shortage and surplus shifts, both routings;
+   notes generated correctly for paid and unpaid invoices; approval refused on
+   any change; undo; database guards; mutation check. End-to-end on a scratch
+   copy.
+9. **Docs:** a new owner guide `docs/CORRECTIONS.md` ("before a shift closes,
+   fix it; after, correct it"); `CLOSED-SHIFT-CORRECTIONS.md` and
+   `INVOICE-CUSTOMER-WORKFLOW.md` point to it.
+
+**Unchanged in phase 1:** Move balance, manual invoice notes and payment
+reversal keep working as today (they fold in during phase 2). Past records are
+not recomputed.
+
+**Won't solve:** deciding which record is wrong (the issue book and
+statements); eTIMS documents (the POS); other record types until phases 2–3.
 
 ---
 
@@ -310,7 +559,8 @@ mobile approval mode: the signed-in admin approves, no PIN prompt).
 
 The owner deferred screen-layout problems "for when we do a UI and design
 debugging" (2026-09-21), e.g. actions that are hard to find (the invoice
-customer's consumption correction). Collect such issues here as they come up;
+customer's consumption correction, since answered by M10's Correct button).
+Collect such issues here as they come up;
 review both apps screen by screen when this item is reached.
 
 ---

@@ -1,8 +1,9 @@
 import { ShiftCorrectionList, describeShiftBalance } from '../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../shared/ui/BalanceMove';
+import { CorrectionForm, ShiftCorrectionsBanner } from '../../../shared/ui/Corrections';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey } from '../services/api';
+import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey, correctionApi } from '../services/api';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -20,6 +21,8 @@ export default function ShiftDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAdmin } = useAuth();
+  // A closed shift's fuel entry being corrected, or fuel missing from it (docs/CORRECTIONS.md).
+  const [correcting, setCorrecting] = useState<{ entry?: any; missing?: boolean } | null>(null);
   const [shift, setShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -192,6 +195,7 @@ export default function ShiftDetail() {
 
   const fmt = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const isOpen = shift.status === 'open';
+  const canCorrect = isAdmin && shift.status === 'closed';
   // A blind close: the attendant does not see the running over/short (the
   // server does not send it either).
   const blind = isOpen && !isAdmin;
@@ -351,6 +355,11 @@ export default function ShiftDetail() {
           )}
           {shift.close_reconciliation.variance_reason && (
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">{shift.close_reconciliation.variance_reason}</p>
+          )}
+          {shift.record_corrections?.lines?.length > 0 && (
+            <div className="mt-3">
+              <ShiftCorrectionsBanner corrections={shift.record_corrections} asClosed={Number(shift.close_reconciliation.variance)} />
+            </div>
           )}
         </div>
       )}
@@ -646,9 +655,14 @@ export default function ShiftDetail() {
       )}
 
       {/* Phase 3B: Invoice consumption (litre ledger for invoice-mode customers) */}
-      {shift.invoice_consumption?.length > 0 && (
+      {(shift.invoice_consumption?.length > 0 || canCorrect) && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-purple-400">
-          <p className="font-semibold text-gray-700 mb-2">Invoice Consumption (litres)</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-semibold text-gray-700">Invoice Consumption (litres)</p>
+            {canCorrect && (
+              <button onClick={() => setCorrecting({ missing: true })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">Add missing</button>
+            )}
+          </div>
           {shift.invoice_consumption.map((c: any) => (
             <div key={c.id} className="flex justify-between items-center py-1 text-sm">
               <div>
@@ -657,8 +671,11 @@ export default function ShiftDetail() {
                   ({Number(c.litres).toLocaleString()} L {c.fuel_type} @ {fmt(Number(c.retail_price_at_time))})
                 </span>
               </div>
-              <span className="flex items-center">
+              <span className="flex items-center gap-2">
                 {fmt(Number(c.retail_amount))}
+                {canCorrect && (c.deleted_at
+                  ? <span className="text-xs text-amber-700">{c.correction_reason ? c.correction_reason.split(':')[0] : 'Corrected'}</span>
+                  : <button onClick={() => setCorrecting({ entry: c })} className="text-xs rounded border border-gray-300 px-2 py-0.5 text-gray-700">Correct</button>)}
               </span>
             </div>
           ))}
@@ -744,6 +761,24 @@ export default function ShiftDetail() {
           <p className="font-semibold text-gray-700">Corrections after close</p>
           <p className="text-xs text-gray-500 mb-1">Posted before closed shifts became unchangeable. Mistakes are now fixed on the customer's balance or the attendant's variances.</p>
           <ShiftCorrectionList corrections={corrections} />
+        </div>
+      )}
+
+      {correcting && (
+        <div className="fixed inset-0 bg-black/45 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="font-bold">{correcting.entry ? `Correct fuel entry #${correcting.entry.id}` : `Add missing fuel to shift #${shift.id}`}</p>
+              <button onClick={() => setCorrecting(null)} className="p-1 text-gray-400"><X size={18} /></button>
+            </div>
+            <CorrectionForm
+              api={correctionApi}
+              entry={correcting.entry ? { ...correcting.entry, shift_date: shift.shift_date } : null}
+              shift={{ id: Number(shift.id), shift_date: shift.shift_date }}
+              onDone={async () => { setCorrecting(null); await loadShift(); }}
+              onCancel={() => setCorrecting(null)}
+            />
+          </div>
         </div>
       )}
 

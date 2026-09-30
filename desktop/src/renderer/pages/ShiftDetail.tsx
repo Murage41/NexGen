@@ -1,7 +1,8 @@
 import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/CreditLimitPrompt';
 import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
-import { desktopApproval } from '../services/api';
+import { correctionApi, desktopApproval } from '../services/api';
+import { CorrectionForm, ShiftCorrectionsBanner } from '../../../../shared/ui/Corrections';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -81,6 +82,8 @@ export default function ShiftDetail() {
     pump_id: string;
   }>({ fuel_type: 'petrol', litres: '', pump_id: '' });
   const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
+  // A closed shift's fuel entry being corrected, or fuel missing from it (docs/CORRECTIONS.md).
+  const [correcting, setCorrecting] = useState<{ entry?: any; missing?: boolean } | null>(null);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(true);
   const [readingSync, setReadingSync] = useState<SyncState>('idle');
@@ -735,6 +738,7 @@ export default function ShiftDetail() {
   if (!shift) return <div className="text-red-500">Shift not found</div>;
 
   const isOpen = shift.status === 'open';
+  const isClosed = shift.status === 'closed';
   // Corrections posted before closed shifts became unchangeable (history only).
   const corrections: any[] = shift.corrections || [];
   const isCancelled = shift.status === 'cancelled';
@@ -897,6 +901,11 @@ export default function ShiftDetail() {
           )}
           {shift.close_reconciliation.variance_reason && (
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">{shift.close_reconciliation.variance_reason}</p>
+          )}
+          {shift.record_corrections?.lines?.length > 0 && (
+            <div className="mt-3">
+              <ShiftCorrectionsBanner corrections={shift.record_corrections} asClosed={Number(shift.close_reconciliation.variance)} />
+            </div>
           )}
         </div>
       )}
@@ -1517,9 +1526,19 @@ export default function ShiftDetail() {
       </div>
 
       {/* Invoice Consumption (Phase 3B) — invoice-mode customers' litres */}
-      {(invoiceConsumption.length > 0 || isOpen) && (
+      {(invoiceConsumption.length > 0 || isOpen || isClosed) && (
         <div className="bg-white rounded-lg shadow p-4 mb-4 border-l-4 border-purple-400">
-          <h2 className="text-lg font-semibold text-gray-700 mb-3">Invoice Consumption (litres)</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-gray-700">Invoice Consumption (litres)</h2>
+            {isClosed && (
+              <button onClick={() => setCorrecting({ missing: true })} className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50">
+                Add missing fuel on account
+              </button>
+            )}
+          </div>
+          {isClosed && invoiceConsumption.length > 0 && (
+            <p className="text-xs text-gray-500 mb-2">As the shift closed. A mistake is corrected, never edited: the shift keeps these figures.</p>
+          )}
           {invoiceConsumption.length > 0 ? (
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
@@ -1529,7 +1548,7 @@ export default function ShiftDetail() {
                   <th className="text-right p-2 font-medium text-gray-600">Litres</th>
                   <th className="text-right p-2 font-medium text-gray-600">Retail</th>
                   <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                  {isOpen && <th className="p-2"></th>}
+                  {(isOpen || isClosed) && <th className="p-2"></th>}
                 </tr>
               </thead>
               <tbody>
@@ -1549,6 +1568,15 @@ export default function ShiftDetail() {
                         <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
                       </td>
                     )}
+                    {isClosed && (
+                      <td className="p-2 text-right text-xs">
+                        {c.deleted_at ? (
+                          <span className="text-amber-700">{c.correction_reason ? c.correction_reason.split(':')[0] : 'Corrected'}</span>
+                        ) : (
+                          <button onClick={() => setCorrecting({ entry: c })} className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50">Correct</button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -1556,7 +1584,7 @@ export default function ShiftDetail() {
                 <tr>
                   <td colSpan={4} className="p-2 text-right">Total Invoice Retail:</td>
                   <td className="p-2 text-right">{formatKES(totalInvoiceConsumption)}</td>
-                  {isOpen && <td></td>}
+                  {(isOpen || isClosed) && <td></td>}
                 </tr>
               </tfoot>
             </table>
@@ -1700,6 +1728,22 @@ export default function ShiftDetail() {
           <h2 className="text-lg font-semibold text-gray-700 mb-1">Mistakes fixed later</h2>
           <p className="text-xs text-gray-500 mb-2">This shift is unchanged. These balance moves refer to it.</p>
           <BalanceMoveList moves={shift.balance_moves} />
+        </div>
+      )}
+
+      {correcting && (
+        <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
+            <h2 className="text-lg font-bold">{correcting.entry ? `Correct fuel entry #${correcting.entry.id}` : `Add missing fuel on account to shift #${shift.id}`}</h2>
+            <CorrectionForm
+              api={correctionApi}
+              approval={desktopApproval}
+              entry={correcting.entry ? { ...correcting.entry, shift_date: shift.shift_date } : null}
+              shift={{ id: Number(shift.id), shift_date: shift.shift_date }}
+              onDone={async () => { setCorrecting(null); await loadShift(); }}
+              onCancel={() => setCorrecting(null)}
+            />
+          </div>
         </div>
       )}
 

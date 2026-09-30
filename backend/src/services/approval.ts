@@ -33,6 +33,11 @@ export const approvalBindings = {
   // to whom, which shift (0 = none), how much (services/balanceMoves.ts).
   balance_move: (fields: any) =>
     `balance_move:${String(fields?.from_kind ?? '')}:${Number(fields?.from_id) || 0}:${String(fields?.to_kind ?? '')}:${Number(fields?.to_id) || 0}:${Number(fields?.shift_id) || 0}:${Number(fields?.amount).toFixed(2)}`,
+  // A correction: the hash of exactly what its preview showed
+  // (services/corrections.ts); posting rebuilds the plan and compares.
+  correction: (fields: any) => `correction:${String(fields?.plan_hash ?? '')}`,
+  // Undoing a correction.
+  correction_undo: (fields: any) => `correction_undo:${Number(fields?.correction_id) || 0}`,
 };
 
 export type ApprovalPurpose = keyof typeof approvalBindings;
@@ -73,6 +78,12 @@ export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): str
     }
     if (!positive(fields?.amount)) return 'The amount being approved is missing.';
     return null;
+  }
+  if (purpose === 'correction') {
+    return /^[0-9a-f]{64}$/.test(String(fields?.plan_hash ?? '')) ? null : 'The correction being approved is missing.';
+  }
+  if (purpose === 'correction_undo') {
+    return positive(fields?.correction_id) ? null : 'The correction being undone is missing.';
   }
   if (purpose === 'consumption_override') {
     if (!positive(fields?.account_id) || !positive(fields?.shift_id)) return 'The customer or shift being approved is missing.';

@@ -3,7 +3,7 @@ import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom'
 import {
   LayoutDashboard, Gauge, Users, Fuel, DollarSign,
   CreditCard, Receipt, BarChart3, Settings, Droplets, Truck, FileSpreadsheet,
-  WalletCards,
+  WalletCards, ClipboardCheck,
 } from 'lucide-react';
 import { getStaleShifts, getTanks, stationLogoUrl } from './services/api';
 import { isLowStock } from '../../../shared/ui/TankLowStock';
@@ -23,6 +23,7 @@ import SettingsPage from './pages/Settings';
 import Payroll from './pages/Payroll';
 import EmployeePay from './pages/EmployeePay';
 import EmployeeVariances from './pages/EmployeeVariances';
+import Corrections from './pages/Corrections';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -36,6 +37,7 @@ const navItems = [
   { to: '/customer-invoices', icon: FileSpreadsheet, label: 'Customer Invoices' },
   { to: '/suppliers', icon: Truck, label: 'Suppliers' },
   { to: '/tank-stock', icon: Droplets, label: 'Tank & Stock' },
+  { to: '/corrections', icon: ClipboardCheck, label: 'Corrections' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
@@ -141,6 +143,7 @@ export default function App() {
             <Route path="/customer-invoices" element={<CustomerInvoices />} />
             <Route path="/suppliers" element={<Suppliers />} />
             <Route path="/tank-stock" element={<TankStock />} />
+            <Route path="/corrections" element={<Corrections />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>

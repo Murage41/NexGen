@@ -51,6 +51,10 @@ export type NoteInput = {
   // The shift's attendant owes it (credit note) or is owed it (debit note),
   // instead of the station.
   attendant?: boolean;
+  // A correction's note (services/corrections.ts): what the shift counted for
+  // these litres at its pump price. The shift's corrected result carries that
+  // part, so only the price difference is revenue.
+  shiftValue?: number | null;
   noteDate: string;
   approver: Approver;
   actorId?: number | null;
@@ -254,7 +258,7 @@ export async function reverseAttendantEntries(trx: Knex.Transaction, link: Link,
 const litresText = (litres: number, fuelType: string) => `${litres.toFixed(2)} L of ${fuelType}`;
 
 // A credit note against an issued invoice (or debit-note bill).
-async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteInput) {
+export async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteInput) {
   const { fuelType, litres, reason } = parseNote(input);
   const line = await trx('invoice_lines').where({ invoice_id: invoice.id, fuel_type: fuelType }).first();
   if (!line) throw httpError(`The invoice has no ${fuelType} line.`, 400, 'FUEL_NOT_ON_INVOICE');
@@ -352,7 +356,9 @@ async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteIn
     receivableDelta: -amount,
     // The station loses the fuel, unless the attendant owes it: then only the
     // customer's price difference on those litres.
-    revenueAdjustment: attendant ? roundMoney(attendant.amount - amount) : -amount,
+    revenueAdjustment: attendant
+      ? roundMoney(attendant.amount - amount)
+      : input.shiftValue != null ? roundMoney(input.shiftValue - amount) : -amount,
     documentAmount: -amount,
     reason,
     actorId: input.actorId,
@@ -364,7 +370,7 @@ async function postCreditNote(trx: Knex.Transaction, invoice: any, input: NoteIn
 
 // A debit note: a bill of its own, correcting an invoice or charging fuel from
 // a shift that was recorded on someone else.
-async function createDebitNoteBill(
+export async function createDebitNoteBill(
   trx: Knex.Transaction,
   accountId: number,
   correctedInvoice: any | null,
@@ -407,7 +413,9 @@ async function createDebitNoteBill(
     : null;
   // Extra revenue, unless the attendant's drawer was short by these litres:
   // then only the customer's price difference on them.
-  const revenue = attendant ? roundMoney(amount - attendant.amount) : amount;
+  const revenue = attendant
+    ? roundMoney(amount - attendant.amount)
+    : input.shiftValue != null ? roundMoney(amount - input.shiftValue) : amount;
   const termsDays = Math.max(0, Math.trunc(Number(account.payment_terms_days || 0)));
   const number = await nextInvoiceDocumentNumber(trx, 'debit_note', input.noteDate);
   const [billId] = await trx('customer_invoices').insert({

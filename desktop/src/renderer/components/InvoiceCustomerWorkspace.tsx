@@ -26,7 +26,9 @@ import {
   reverseInvoicePayment,
   updateCreditAccount,
   getInvoiceDocument,
+  correctionApi,
 } from '../services/api';
+import { CorrectionForm } from '../../../../shared/ui/Corrections';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 import { InvoiceNoteForm } from '../../../../shared/ui/InvoiceNote';
 import { DocumentButton } from '../../../../shared/ui/DocumentButton';
@@ -130,6 +132,8 @@ export default function InvoiceCustomerWorkspace({
   const [debitNote, setDebitNote] = useState(false);
   const [savingTerms, setSavingTerms] = useState(false);
   const [reversalPayment, setReversalPayment] = useState<any | null>(null);
+  // A closed shift's fuel entry being corrected (docs/CORRECTIONS.md).
+  const [correcting, setCorrecting] = useState<any | null>(null);
   const [reversalForm, setReversalForm] = useState({ reason: '', reversal_date: kenyaToday() });
   const [reversalBusy, setReversalBusy] = useState(false);
 
@@ -339,6 +343,23 @@ export default function InvoiceCustomerWorkspace({
 
   return (
     <div className="fixed inset-0 z-40 bg-gray-100 flex flex-col">
+      {correcting && (
+        <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Correct fuel entry #{correcting.id}</h2>
+              <button onClick={() => setCorrecting(null)} className="p-1 text-gray-400 hover:text-gray-700"><X size={19} /></button>
+            </div>
+            <CorrectionForm
+              api={correctionApi}
+              approval={desktopApproval}
+              entry={{ ...correcting, account_name: customer.name }}
+              onDone={async () => { setCorrecting(null); await loadWorkspace(); await onChanged(); }}
+              onCancel={() => setCorrecting(null)}
+            />
+          </div>
+        </div>
+      )}
       {debitNote && (
         <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
@@ -570,9 +591,12 @@ export default function InvoiceCustomerWorkspace({
                             {row.replacement_id && <p className="text-gray-400">Replaced by entry #{row.replacement_id}</p>}
                             {row.correction_of_id && <p className="text-gray-400">Corrects entry #{row.correction_of_id}</p>}
                           </td>
-                          <td className="px-3 py-2 text-right text-xs text-gray-400">
-                            {/* Closed-shift litres are corrected from the shift itself. */}
-                            {row.billing_status === 'unbilled' && row.shift_status === 'closed' && `Correct on shift #${row.shift_id}`}
+                          <td className="px-3 py-2 text-right text-xs">
+                            {/* An open shift's entry is fixed on the shift; a closed shift's is corrected. */}
+                            {row.shift_status === 'closed' && !['reversed', 'deleted'].includes(row.billing_status) && (
+                              <button onClick={() => setCorrecting(row)} className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50">Correct</button>
+                            )}
+                            {row.shift_status === 'open' && <span className="text-gray-400">Fix on shift #{row.shift_id}</span>}
                           </td>
                         </tr>
                       ))}

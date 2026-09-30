@@ -104,6 +104,26 @@ cache instead of recomputing; computing at event time and never updating.
   `setError(err.response?.data?.error || err.message || 'Operation failed')`.
 - **Shared UI.** Components used by both desktop and mobile live in
   `shared/ui/` and take their API calls as props.
+- **Closed records are corrected, never changed** (Corrections,
+  `docs/CORRECTIONS.md`). A closed shift's figures come from its close snapshot
+  (`shift_close_reconciliations`, `services/shiftSnapshot.ts`), never from
+  recalculating rows; database triggers refuse changes to a closed shift's
+  recorded facts and to any snapshot (migration 053). A mistake is a
+  Correction (`services/corrections.ts`): one preview-and-post service, one
+  rule per record type (`services/correctionRules/`), approval bound to the
+  plan hash, undo as a cancelling correction. A new record type adds a rule;
+  it never adds its own button, route or table.
+- **A closed shift's fuel on account** is listed and totalled as it was at
+  close: an entry a correction reversed still counts, the one it added does
+  not (`asRecordedConsumption` in `services/shiftSnapshot.ts`,
+  `asClosedConsumption` in `routes/reports.ts`, the dashboard filter). Anything
+  new that totals a shift's invoice consumption uses that rule; anything about
+  what a customer owes uses live entries (`deleted_at` null, `entry_status`
+  active).
+- **A closed-shift test fixture** inserts its rows while the shift is closed
+  (inserts are allowed) and then its snapshot, from
+  `accountabilityFromRows`; updating or deleting those rows afterwards fails
+  on the guards, as it should (`scripts/test_corrections.ts`).
 - **Documents** (M8): a new document type builds its body with
   `services/documentLayout.ts` (shared header, footer and "not a tax invoice"
   notice) and is saved once through `services/documents.ts`

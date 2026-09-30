@@ -304,6 +304,18 @@ export const balanceMoveApi = {
   post: (data: Record<string, unknown>, key: string) => financialPost('/balance-moves', data, key),
 };
 export const getBalanceMoves = (params?: Record<string, unknown>) => api.get('/balance-moves', { params });
+// Corrections: the one way to fix a mistake in a closed record (docs/CORRECTIONS.md).
+export const getCorrections = (params?: Record<string, unknown>) => api.get('/corrections', { params });
+export const getCorrection = (id: number) => api.get(`/corrections/${id}`);
+export const correctionApi = {
+  preview: (body: Record<string, unknown>) => api.post('/corrections/preview', body),
+  post: (body: Record<string, unknown>) => financialPost('/corrections', body),
+  undo: (id: number, body: Record<string, unknown>) => financialPost(`/corrections/${id}/undo`, body),
+  reasons: () => api.get('/corrections/reasons'),
+  customers: async () => ((await api.get('/credit-accounts', { params: { type: 'customer' } })).data.data || [])
+    .filter((a: any) => a.billing_mode === 'invoice')
+    .map((a: any) => ({ id: Number(a.id), name: String(a.name) })),
+};
 export const varianceActions = { repay: recordDebtReceipt, reverseRepayment: reverseDebtReceipt, move: balanceMoveApi };
 // Money owed back to an employee after a closed-shift correction.
 // Paying a customer back credit they hold on account after a correction.

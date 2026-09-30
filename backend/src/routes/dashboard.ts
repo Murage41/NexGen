@@ -92,7 +92,9 @@ router.get('/', async (req: any, res) => {
     if (shiftIds.length > 0) {
       const invoiceResult = await db('invoice_consumption')
         .whereIn('shift_id', shiftIds)
-        .whereNull('deleted_at')
+        // As the shifts closed: a later correction does not move them.
+        .whereNull('created_by_record_correction_id')
+        .where((q) => q.whereNull('deleted_at').orWhereNotNull('reversed_by_record_correction_id'))
         .sum('retail_amount as total')
         .first();
       todayInvoiceRetail = Number((invoiceResult as any)?.total) || 0;

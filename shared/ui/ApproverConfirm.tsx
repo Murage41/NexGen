@@ -23,7 +23,9 @@ export type ApprovalPurpose =
   | 'customer_refund'
   | 'balance_move'
   | 'invoice_note'
-  | 'invoice_note_reversal';
+  | 'invoice_note_reversal'
+  | 'correction'
+  | 'correction_undo';
 
 export function useApprover(approval?: ApprovalApi) {
   const [approvers, setApprovers] = useState<{ id: number; name: string }[]>([]);

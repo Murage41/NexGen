@@ -21,8 +21,10 @@ import {
   getInvoicePayments,
   updateCreditAccount,
   getInvoiceDocument,
+  correctionApi,
 } from '../services/api';
 import { DocumentButton } from '../../../shared/ui/DocumentButton';
+import { CorrectionForm } from '../../../shared/ui/Corrections';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../shared/ui/CustomerAccountForm';
 
 type CustomerSummary = {
@@ -82,6 +84,8 @@ export default function InvoiceCustomerDetail() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [tab, setTab] = useState<'consumption' | 'invoices' | 'payments'>('consumption');
+  // A closed shift's fuel entry being corrected (docs/CORRECTIONS.md).
+  const [correcting, setCorrecting] = useState<any | null>(null);
   const [filters, setFilters] = useState<HistoryFilters>({
     from: '',
     to: '',
@@ -184,6 +188,22 @@ export default function InvoiceCustomerDetail() {
 
   return (
     <div className="pb-6">
+      {correcting && (
+        <div className="fixed inset-0 bg-black/45 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="font-bold">Correct fuel entry #{correcting.id}</p>
+              <button onClick={() => setCorrecting(null)} className="p-1 text-gray-400"><X size={18} /></button>
+            </div>
+            <CorrectionForm
+              api={correctionApi}
+              entry={{ ...correcting, account_name: customer?.name }}
+              onDone={async () => { setCorrecting(null); await loadPage(); }}
+              onCancel={() => setCorrecting(null)}
+            />
+          </div>
+        </div>
+      )}
       <PageHeader
         title={customer?.name || 'Invoice Customer'}
         back
@@ -409,10 +429,10 @@ export default function InvoiceCustomerDetail() {
                   <p className="text-xs text-gray-400">{fmt(row.retail_amount)}</p>
                 </div>
               </div>
-              {row.billing_status === 'unbilled' && row.shift_status === 'closed' && (
-                <p className="mt-3 border-t border-gray-100 pt-2 text-center text-xs text-gray-400">
-                  To correct it, open shift #{row.shift_id}.
-                </p>
+              {row.shift_status === 'closed' && !['reversed', 'deleted'].includes(row.billing_status) && (
+                <button onClick={() => setCorrecting(row)} className="mt-3 w-full border-t border-gray-100 pt-2 text-center text-xs font-medium text-blue-700">
+                  Correct this entry
+                </button>
               )}
             </div>
           ))}

@@ -35,13 +35,18 @@ function sumMoney(rows: any[], selector: (row: any) => any): number {
 
 // A day's shifts are reported as they were closed: an entry a later correction
 // reversed still counts here and its replacement does not. The correction is
-// listed on the day it was made (services/shiftCorrections.ts). Open shifts
-// have no corrections, so these filters change nothing for them.
+// listed on the day it was made (services/shiftCorrections.ts before 23 Sep
+// 2026, services/corrections.ts since). Open shifts have no corrections, so
+// these filters change nothing for them.
 function asClosedConsumption(query: any, table = '') {
   const column = (name: string) => (table ? `${table}.${name}` : name);
   return query
     .whereNull(column('created_by_correction_id'))
-    .where((q: any) => q.whereNull(column('deleted_at')).orWhereNotNull(column('reversed_by_correction_id')));
+    .whereNull(column('created_by_record_correction_id'))
+    .where((q: any) => q
+      .whereNull(column('deleted_at'))
+      .orWhereNotNull(column('reversed_by_correction_id'))
+      .orWhereNotNull(column('reversed_by_record_correction_id')));
 }
 
 function asClosedReceipts(query: any) {

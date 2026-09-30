@@ -3,6 +3,10 @@
 How to fix a credit, payment or repayment that turns out to be wrong after its
 shift has closed. Use it for staff training and as the owner's reference.
 
+> **Fuel on account** (an invoice customer's fuel entry) is fixed with a
+> **Correction** instead: see `CORRECTIONS.md`. Corrections will take over the
+> other records here in later phases; until then, use Move balance below.
+
 ## The Rule
 
 **A closed shift never changes.** Its readings, collections, credits, payments

@@ -102,12 +102,32 @@ Do not record an invoice payment as a normal credit payment. Do not add an
 admin-recorded invoice payment to a shift's cash or M-Pesa expectation unless a
 future approved workflow explicitly links that payment to the shift.
 
-## Correct Consumption: Credit and Debit Notes
+## Correct Consumption
 
-While a shift is open, an unreserved and uninvoiced consumption row can be
-edited or soft-deleted through the normal shift workflow. A closed shift never
-changes, and an issued invoice is final: it is corrected only by a note that
-refers to it (KRA eTIMS works the same way).
+Which way depends on where the fuel is:
+
+1. **The shift is still open:** change the litres or delete the entry on the
+   shift (to change the fuel, delete it and enter it again).
+2. **The shift is closed:** **Correct** the entry, wherever it is (not yet
+   invoiced, in a draft, or on an issued invoice paid or not). See
+   `CORRECTIONS.md`. On an issued invoice the correction makes the credit or
+   debit note itself, at the invoice's agreed price.
+3. **The price was wrong on an issued invoice** (a commercial change, not a
+   recording mistake): a price note (below). An issued invoice is final: only a
+   note that refers to it corrects it (KRA eTIMS works the same way).
+
+In the customer's fuel history (desktop: Customer Invoices → the customer;
+phone: Invoice Customers → the customer → Consumption), every entry from a
+closed shift that has not been reversed has **Correct**. A corrected entry is
+kept, marked **Reversed**, with the correction's number (C-2026-0001) in its
+note; the right entry shows "Corrects entry #…".
+
+### Credit and debit notes (after invoicing)
+
+A fuel entry recorded wrongly is corrected with **Correct** (above), which
+makes the note for you. Make a note by hand only when the entry itself was
+right: an agreed price changed, or a litres difference that no single entry
+explains.
 
 Invoice customers take fuel on account, so every note is **fuel, litres and a
 price per litre**, never a bare amount. On the invoice, choose **Credit note**

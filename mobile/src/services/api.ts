@@ -287,6 +287,17 @@ function financialConfig(path: string, data: any, suppliedKey?: string) {
   return { headers: { 'Idempotency-Key': suppliedKey || financialKeys.get(fingerprint)! } };
 }
 function financialPost(path: string, data: any, key?: string) { return api.post(path, data, financialConfig(path, data, key)); }
+// Corrections: the one way to fix a mistake in a closed record (docs/CORRECTIONS.md).
+// On the phone the signed-in admin approves; no PIN prompt.
+export const correctionApi = {
+  preview: (body: Record<string, unknown>) => api.post('/corrections/preview', body),
+  post: (body: Record<string, unknown>) => financialPost('/corrections', body),
+  undo: (id: number, body: Record<string, unknown>) => financialPost(`/corrections/${id}/undo`, body),
+  reasons: () => api.get('/corrections/reasons'),
+  customers: async () => ((await api.get('/credit-accounts', { params: { type: 'customer' } })).data.data || [])
+    .filter((a: any) => a.billing_mode === 'invoice')
+    .map((a: any) => ({ id: Number(a.id), name: String(a.name) })),
+};
 export const getMyPay = () => api.get('/payroll/me');
 export const getEmployeePay = (id: number) => api.get(`/payroll/employees/${id}`);
 export const recordDebtReceipt = (id: number, data: any, key: string) => financialPost(`/payroll/employees/${id}/receipts`, data, key);

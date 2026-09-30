@@ -5,18 +5,28 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-09-26.
+Last updated: 2026-09-30.
 
 ## Station PC
 
-- **Running `3131f77`** (confirmed by the owner 2026-09-26: update #12 applied
-  in the stop-first order with a backup before the migration; all checks
-  passed, order levels set on the tanks). Latest migration there: `051`.
-- **Pending station update: #13, M8 station profile, logo and PDF documents**
-  (pushed 2026-09-26, commit "Station profile, logo and PDF documents").
-  Migration `052` (backup first, NexGen stopped), a new dependency
-  (`npm install`), and the phone app rebuilt. Then the owner fills in the
-  station profile in Settings. The next one after it will be **#14**.
+- **Running `9bd40d5`** (confirmed by the owner 2026-09-26: update #13 applied
+  in the stop-first order, backup before the migration, `npm install` added
+  the PDF component; all checks passed and the station profile is filled in).
+  Latest migration there: `052`.
+- **Pending station update: #14**, the commit "Corrections: one way to fix a
+  mistake on a closed record (phase 1)" (migration `053`, so a backup before
+  it; no new dependencies). Commands given to the owner 2026-09-30; record the
+  station on it once the owner confirms. (M10 was never committed: superseded
+  by Corrections phase 1, `docs/ROADMAP.md` §3c.)
+- **The development PC's copy of station data** (`backend/data/nexgen.db`) was
+  replaced by the owner with the station's live files on 2026-09-30 (last
+  written there 09:45; 124 closed shifts, migration 052). It goes out of date
+  again as the station runs: before an update that changes how existing
+  records are read or migrated, ask the owner for a fresh copy (the station's
+  `backend\data\nexgen.db` with its `-wal` and `-shm` files, or the newest
+  file in `backend\data\backups\`) and check on a scratch copy of it.
+- `npm install` on the station reports 12 known vulnerabilities (1 low, 6
+  moderate, 5 high) in dependencies; review them with the Tier 5 audit.
 - The station has its own database. It is changed only by fast-forwarding to
   pushed commits, one command block per update, as in
   `docs/ENGINEERING-STANDARDS.md` §7.
@@ -43,12 +53,18 @@ Last updated: 2026-09-26.
 | 10 | `7e9fd54` | Invoice notes can name the shift's attendant | 050 |
 | 11 | `157a9ec` | Attendants see only what they need; blind open shift (M6) | none |
 | 12 | `3131f77` | Low fuel warning per tank; open-shift tank card fixed (M7) | 051 |
+| 13 | `9bd40d5` | Station profile, logo, PDF invoices and notes; backups copy uploads (M8) | 052 |
+| 14 | pending | Corrections phase 1: closed shifts read their snapshot, database guards, correcting fuel on account | 053 |
 
 ## How the system works now (recent decisions that code must respect)
 
-- **Closed shifts never change.** Mistakes are fixed by **Move balance**
-  (money customer / employee / station) or, for invoice customers, **credit and
-  debit notes**. See `docs/CLOSED-SHIFT-CORRECTIONS.md`.
+- **Closed shifts never change** (phase 1, uncommitted: the database refuses
+  it, and a closed shift shows its close snapshot, never a recalculation). A
+  mistake on fuel on account is fixed by a numbered **Correction**
+  (C-2026-0001) that reverses and/or adds entries and makes any credit or debit
+  note itself; see `docs/CORRECTIONS.md`. Other records still use **Move
+  balance** and manual notes (`docs/CLOSED-SHIFT-CORRECTIONS.md`) until later
+  phases.
 - **Attendant shortages:** an employee owes the shortages of their short shifts
   and pays them in money (cash, M-Pesa, bank). No write-offs, no paybacks, and
   surpluses never offset shortages (they are the station's). Pay is never
@@ -97,14 +113,45 @@ Last updated: 2026-09-26.
   fixes the open shift's Tank Stock card, which counted that day's deliveries
   twice. Checked on a scratch copy on desktop and phone, as admin and
   attendant.
-- **M8, station profile, logo and PDF documents: done, pushed 2026-09-26 as
-  station update #13** (`docs/ROADMAP.md` §3,
+- **M8, station profile, logo and PDF documents: done, on the station since
+  2026-09-26 (update #13)** (`docs/ROADMAP.md` §3,
   `docs/STATION-PROFILE-AND-DOCUMENTS.md`). The logo was rebuilt from canopy
   photos and chosen by the owner. Building it also found that backups held
   only the database (uploaded supplier invoice PDFs were in none) and that
   those uploads were written to `backend/data` even in test runs; both fixed.
-- **Next: M9** (deliveries as Order → GRN → supplier invoice), then phone
-  invoice actions, a UI and design review, Tier 4, Tier 5.
+- **M10, correct a fuel entry before invoicing (owner, 2026-09-30): built and
+  tested but superseded the same day, never committed** (`docs/ROADMAP.md` §3b).
+  Raised by two wrong entries (diesel recorded instead of petrol; an entry
+  never taken) on an invoice customer that could not be fixed before
+  invoicing. 34 backend suites pass; `test:entry-corrections` caught 11 of 11
+  planted bugs; checked on a scratch copy (desktop correct and undo with PIN,
+  phone form; shift 116 unchanged).
+- **2026-09-30: Corrections adopted as one mechanism.** The owner found M10
+  too specific, had three outside designs written from a neutral brief, and
+  adopted one Correction record for every mistake on a closed record, built
+  in four phases (`docs/ROADMAP.md` §3c). M10's uncommitted code on the
+  development PC is reused as phase 1's fuel-on-account handler; its own
+  button, routes and migration 053 will not ship as they are.
+- **Corrections phase 1: done 2026-09-30, committed and pushed; station update
+  #14 pending** (`docs/ROADMAP.md` §3c, `docs/CORRECTIONS.md`). Closed shifts read their
+  snapshot (migration 053 backfills the 70 closed shifts without one, marked
+  backfilled); database guards; the Correction record (C-YYYY-NNNN, reason
+  codes, approval bound to the plan hash, register); fuel on account for all
+  six error kinds at every stage (notes made automatically on issued
+  invoices); undo; desktop register and entry points on desktop and phone.
+  35 backend suites pass; `test:corrections` caught 19 of 19 planted bugs. On
+  a scratch copy of the station's latest data (copied to the development PC
+  2026-09-30, migration 052, 124 closed shifts): all 124 show exactly the
+  figures they showed before, 70 got a backfilled snapshot, a correction and
+  its undo on shift #123 worked, and the open shift closed normally with the
+  guards in place. Earlier, on the older copy: desktop correct, register and
+  undo with PIN; phone correct with the station carrying it; an issued-invoice preview made
+  the credit note at the invoice price. Credit notes made by a correction book
+  only the price difference as revenue (the shift's corrected result carries
+  the rest).
+- **Next:** the owner confirms update #14 on the station, then phases 2–4 and
+  M9 (order to confirm), phone invoice actions, a UI and design review, Tier 4,
+  Tier 5.
 - 2026-09-24: the project's rules and status moved into committed files
   (`CLAUDE.md`, this file, `docs/ROADMAP.md`, `docs/ENGINEERING-STANDARDS.md`,
   `scripts/e2e/`), and the roadmap was re-checked against the code.

@@ -54,6 +54,8 @@ import { getShiftReview, updateShiftReview } from '../services/shiftReview';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
 import { computeShiftAccountability } from '../services/shiftAccountability';
+import { asRecordedConsumption, snapshotFigures } from '../services/shiftSnapshot';
+import { shiftCorrections } from '../services/corrections';
 import { listBalanceMoves } from '../services/balanceMoves';
 import { getRetailPriceAsOf } from '../services/invoiceAccounting';
 import {
@@ -325,7 +327,15 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       .leftJoin('pumps as invoice_pumps', 'invoice_consumption.pump_id', 'invoice_pumps.id')
       .leftJoin('tanks as invoice_tanks', 'invoice_consumption.tank_id', 'invoice_tanks.id')
       .where('invoice_consumption.shift_id', shift.id)
-      .whereNull('invoice_consumption.deleted_at')
+      .modify((query: any) => {
+        // A closed shift lists its fuel on account as it closed; corrections
+        // since are listed separately (record_corrections).
+        if (shift.status === 'closed' && closeReconciliation) {
+          asRecordedConsumption(query, 'invoice_consumption', Boolean(closeReconciliation.backfilled));
+        } else {
+          query.whereNull('invoice_consumption.deleted_at');
+        }
+      })
       .select(
         'invoice_consumption.*',
         'credit_accounts.name as account_name',
@@ -375,7 +385,31 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       employee_wage,
       payrollPayments,
     });
+    // A closed shift shows the figures it closed with (its snapshot), never a
+    // recalculation; corrections made since show the result they lead to.
+    const figures = shift.status === 'closed' && closeReconciliation
+      ? { ...accountability, ...snapshotFigures(closeReconciliation) }
+      : accountability;
     const viewer = (req as any).employee;
+    const recordCorrections = shift.status === 'closed'
+      ? await shiftCorrections(db, Number(shift.id), closeReconciliation ? Number(closeReconciliation.variance) : null)
+      : null;
+    if (recordCorrections && viewer?.role !== 'admin') {
+      recordCorrections.lines = recordCorrections.lines.map((line: any) => ({
+        number: line.number,
+        kind: line.kind,
+        status: line.status,
+        posting_date: line.posting_date,
+        error_kind: line.error_kind,
+        action: line.action,
+        fuel_type: line.fuel_type,
+        litres: line.litres,
+        amount: line.amount,
+        shift_effect: line.shift_effect,
+        charge_to: line.charge_to,
+        reason_note: line.reason_note,
+      }));
+    }
     const visiblePayments = viewer?.role === 'admin' ? payrollPayments : payrollPayments.filter(p => Number(p.employee_id) === Number(viewer?.id));
     const visibleReceipts = viewer?.role === 'admin' ? creditReceipts : creditReceipts.filter(p => p.account_type !== 'employee' || Number(p.account_employee_id) === Number(viewer?.id));
     // The attendant sees what was corrected on their shift and what it did to
@@ -415,6 +449,9 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         collections: collections || null,
         close_reconciliation: closeReconciliation || null,
         corrections,
+        // Corrections (services/corrections.ts) made to this shift since close.
+        record_corrections: recordCorrections,
+        snapshot_backfilled: Boolean(closeReconciliation?.backfilled),
         // Mistakes on this shift fixed later by moving balances; the shift itself
         // is unchanged. Administrators only (they name customers and amounts).
         balance_moves: viewer?.role === 'admin' && shift.status === 'closed'
@@ -442,7 +479,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         attendant_variances: variances.totals,
         ...(viewer?.role !== 'admin' && shift.status === 'open'
           ? Object.fromEntries(Object.entries(accountability).filter(([key]) => !(BLIND_CLOSE_FIELDS as readonly string[]).includes(key)))
-          : accountability),
+          : figures),
       },
     });
   } catch (err: any) {
