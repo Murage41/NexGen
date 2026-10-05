@@ -4,6 +4,7 @@ import { getRetailPriceAsOf } from '../invoiceAccounting';
 import { createDebitNoteBill, postCreditNote } from '../invoiceAdjustments';
 import { resolveConsumptionSource } from '../invoiceConsumption';
 import { roundMoney } from '../receivablePayments';
+import { cents, closedShift, httpError, kes } from './common';
 
 // Corrections of fuel on account (an invoice customer's fuel entry on a closed
 // shift). Fuel on account is how a metered sale was paid, like cash or M-Pesa:
@@ -27,10 +28,6 @@ type Conn = Knex | Knex.Transaction;
 const ERROR_KINDS = ['wrong_litres', 'wrong_fuel', 'wrong_customer', 'wrong_shift', 'duplicate', 'missing'];
 const ISSUED = ['issued', 'partial', 'paid'];
 
-const httpError = (message: string, http: number, code: string) => Object.assign(new Error(message), { http, code });
-const cents = (value: unknown) => Math.round((Number(value || 0) + Number.EPSILON) * 100);
-const kes = (value: unknown) =>
-  `KES ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const litresText = (litres: unknown, fuel: string) => `${Number(litres).toFixed(2)} L of ${fuel}`;
 const invoiceName = (invoice: any) => invoice.invoice_number || `draft invoice #${invoice.id}`;
 const active = (q: any) => q.whereNull('deleted_at').where((w: any) => w.whereNull('entry_status').orWhere('entry_status', 'active'));
@@ -42,16 +39,6 @@ async function liveEntry(conn: Conn, entryId: number) {
     throw httpError('This entry was already removed or corrected.', 409, 'ENTRY_NOT_ACTIVE');
   }
   return entry;
-}
-
-async function closedShift(conn: Conn, shiftId: unknown, what: string) {
-  if (!Number(shiftId)) throw httpError('Choose the shift.', 400, 'SHIFT_REQUIRED');
-  const shift = await conn('shifts').where({ id: Number(shiftId) }).first('id', 'status', 'shift_date');
-  if (!shift) throw httpError(`Shift #${shiftId} not found.`, 404, 'SHIFT_NOT_FOUND');
-  if (shift.status !== 'closed') {
-    throw httpError(`Shift #${shift.id} is still open: ${what} on the shift itself.`, 409, 'SHIFT_OPEN');
-  }
-  return { id: Number(shift.id), date: String(shift.shift_date).slice(0, 10) };
 }
 
 async function invoiceCustomer(conn: Conn, accountId: unknown) {
@@ -477,6 +464,7 @@ async function undo(trx: Knex.Transaction, correction: any, lines: any[], ctx: A
 export const fuelOnAccountRule: CorrectionRule = {
   recordType: 'fuel_on_account',
   errorKinds: ERROR_KINDS,
+  unchanged: 'Tank stock and fuel cost: no change (the pump meters measured the fuel).',
   plan,
   apply,
   undoBlocker,

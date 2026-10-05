@@ -353,7 +353,8 @@ export default function InvoiceCustomerWorkspace({
             <CorrectionForm
               api={correctionApi}
               approval={desktopApproval}
-              entry={{ ...correcting, account_name: customer.name }}
+              recordType="fuel_on_account"
+              target={{ ...correcting, account_name: customer.name }}
               onDone={async () => { setCorrecting(null); await loadWorkspace(); await onChanged(); }}
               onCancel={() => setCorrecting(null)}
             />

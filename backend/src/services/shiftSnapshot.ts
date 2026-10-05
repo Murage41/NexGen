@@ -70,6 +70,28 @@ export function snapshotFigures(snapshot: any) {
 // close also undoes the closed-shift corrections of before 23 Sep 2026
 // (services/shiftCorrections.ts); a backfilled one was taken from the rows as
 // they stood after those, so it keeps them.
+// Its credit sales and drawer expenses: a row a correction reversed is
+// soft-deleted and marked, and still counts; one it added does not.
+export function asRecordedRows(query: any, table: string) {
+  const column = (name: string) => `${table}.${name}`;
+  return query
+    .whereNull(column('created_by_record_correction_id'))
+    .where((q: any) => q.whereNull(column('deleted_at')).orWhereNotNull(column('reversed_by_record_correction_id')));
+}
+
+// Its debt receipts: a reversed payment is marked, never deleted. As with fuel
+// on account, a snapshot taken at close also undoes the closed-shift
+// corrections of before 23 Sep 2026.
+export function asRecordedReceipts(query: any, table: string, backfilled: boolean) {
+  const column = (name: string) => `${table}.${name}`;
+  query.whereNull(column('deleted_at')).whereNull(column('created_by_record_correction_id'));
+  if (!backfilled) query.whereNull(column('created_by_correction_id'));
+  return query.where((q: any) => {
+    q.where(column('status'), 'posted').orWhereNotNull(column('reversed_by_record_correction_id'));
+    if (!backfilled) q.orWhereNotNull(column('reversed_by_correction_id'));
+  });
+}
+
 export function asRecordedConsumption(query: any, table: string, backfilled: boolean) {
   const column = (name: string) => (table ? `${table}.${name}` : name);
   query.whereNull(column('created_by_record_correction_id'));

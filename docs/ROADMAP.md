@@ -23,6 +23,7 @@ outcome into `docs/PROJECT-STATUS.md`, and update any user doc it changes.
 | 3 | ~~M8: station profile, logo, PDF documents~~ **done, on the station 2026-09-26 (update #13, `9bd40d5`)** | M |
 | 3b | ~~M10: correct an invoice customer's fuel entry before invoicing~~ **superseded 2026-09-30 by 3c (its code is reused)** | — |
 | 3c | **Corrections phase 1**: one Correction record; closed shifts read their snapshot; fuel on account first (adopted 2026-09-30; **done 2026-09-30, station update #14**) | L |
+| 3c-2 | **Corrections phase 2** (§3c): **2a built 2026-10-02, awaiting commit** (credit sales, debt receipts, drawer expenses, cash ↔ M-Pesa); 2b next: office payments, Move or write off a balance, Cancel invoice, notes, drawer wages | L + L |
 | 3d | Corrections phases 2–4 (other records, meters/deliveries/stock, ledger and period lock); placement relative to M9 for the owner to confirm | L |
 | 4 | M9: deliveries as Order → GRN → supplier invoice | L |
 | 5 | Invoice actions on the phone | M |
@@ -513,6 +514,122 @@ not recomputed.
 
 **Won't solve:** deciding which record is wrong (the issue book and
 statements); eTIMS documents (the POS); other record types until phases 2–3.
+
+### Phase 2 (proposed 2026-09-30; 2a agreed and built 2026-10-02, awaiting commit)
+
+**Asked:** propose phase 2 (the other shift and customer records).
+
+**Today (verified 2026-09-30 in the code and on a copy of the station's data):**
+- **Credit sales** (money customers; 278 on the station, 26 money customers):
+  a `credits` row (the customer's debt) plus a `shift_credits` row (the shift's
+  tender) (`routes/shifts.ts` ≈ 1117–1137). Removable only while the shift is
+  open (≈ 1191). After close the only fix is **Move balance**, which moves the
+  money but leaves the sale on the wrong customer, shift or amount
+  (`services/balanceMoves.ts` header). The station has used it once (a sale on
+  the wrong customer).
+- **Debt receipts in a shift** (money customers and attendants repaying; 58):
+  reversible only while the shift is open (`routes/shifts.ts` ≈ 1613–1633; a
+  closed shift says "use Move balance").
+- **Office payments:** invoice payments reversible on the desktop
+  (`routes/customerInvoices.ts` 171); money-customer office payments (42) have
+  **no reversal at all** (`routes/creditAccounts.ts` 337 records only);
+  attendants' office repayments reversible in Payroll.
+- **Drawer expenses** (78): deleted only while the shift is open
+  (`routes/shifts.ts` 1047–1050). After close nothing fixes them: Move balance
+  never writes an employee's debt off, so a receipt found later leaves the
+  attendant owing.
+- **Cash / M-Pesa split** (`shift_collections`, one total each per shift, the
+  M-Pesa fee worked out on save, `routes/shifts.ts` ≈ 989): editable only while
+  open; now guarded after close. Nothing fixes a mix-up.
+- **Drawer wages** (the wage paid at close, `shifts.wage_paid`; payroll
+  payments on a shift, 4): a closed shift's payment "use Move balance"
+  (`routes/payroll.ts` 300–304).
+- **Move balance** refuses invoice customers (`services/balanceMoves.ts`
+  47–51); on desktop Credit Accounts and Employees, phone Credits.
+- **Invoice void** (desktop only, `routes/customerInvoices.ts` 590) edits an
+  issued invoice and is refused once anything paid it
+  (`services/invoiceLifecycle.ts` 134–139).
+- **Manual notes** (`/:id/adjustments` 571, `/debit-notes` 297) still offer
+  litres notes and "name the attendant", which phase 1 now does automatically
+  from the fuel entry; none have been used on the station.
+
+**Practice:** a wrong payment is unapplied and reversed, then posted again
+correctly, never edited (Business Central, "Reverse journal postings and
+unapply payments", learn.microsoft.com/en-us/dynamics365/business-central/finance-how-reverse-journal-posting);
+an issued invoice is cancelled by a full corrective credit memo, including
+after payment, which then becomes credit (Business Central, "Correct or cancel
+unpaid sales invoices", learn.microsoft.com/en-us/dynamics365/business-central/sales-how-correct-cancel-sales-invoice;
+Odoo credit notes, odoo.com/documentation/17.0/applications/finance/accounting/customer_invoices/credit_notes.html);
+KRA eTIMS: a credit note refers to the invoice it corrects. A write-off in
+NexGen is a management record: VAT bad-debt relief follows the VAT Act 2013
+s.31 conditions through the accountant.
+
+**Recommendation: two steps, each shipped and checked on the station before
+the next.**
+
+**2a. The shift's money records** (most of the station's records and
+mistakes). Each gets its rule in `services/correctionRules/`, the same wizard,
+register, undo, attendant rule and "Correct" on the closed shift's lists:
+1. Credit sales: wrong customer, wrong amount, wrong shift, never happened,
+   missing. The customer's debt moves with the sale (dated to its shift for
+   ageing); payments that had paid a reversed sale go back to paying the
+   customer's oldest debts, the rest held as their credit. The credit limit is
+   checked on the new customer, with the admin override inside the same
+   approval. Shift result: the sale counts like fuel on account.
+2. Debt receipts in a shift (customers and attendants): wrong payer, amount,
+   cash/M-Pesa, shift, never received, missing. A receipt adds to what the
+   drawer should hold, so removing one makes the shift better, adding one
+   worse; cash ↔ M-Pesa alone changes neither.
+3. Drawer expenses: wrong amount, wrong category (no shift effect; moves the
+   expense between categories), never happened, missing (the receipt found
+   later: the shift gets better, the attendant owes less).
+4. Cash ↔ M-Pesa mix-up on the collections: moves an amount between the two;
+   no shift effect; the M-Pesa fee is worked out again at that shift's rate.
+   Reports list it on the day it was posted, like other corrections.
+- Closed shifts list credits, receipts and expenses as they closed; guards
+  extend to their recorded facts. Migration 054 adds the link columns.
+- Move balance stays until 2b, for moving a balance only (a wrong record is
+  now corrected instead).
+
+**2b. The office records:**
+5. Office payments (invoice customers, money customers, attendants): wrong
+   payer, amount, method, date, never received or entered twice. Replaces
+   payment reversal and fills the money-customer gap.
+6. "Move or write off a balance" as a correction (transfer and write-off
+   lines, register, undo), open to invoice customers; replaces Move balance.
+   Employees are still never written off (owner, 2026-09-24).
+7. Cancel an issued invoice: a full credit note (paid or not; payment becomes
+   credit), its fuel back to unbilled. Replaces void; voided invoices keep
+   their status.
+8. Notes: litres notes and "name the attendant" leave the note form (the fuel
+   entry's correction does it); price notes stay for commercial changes.
+9. Drawer wages: wrong amount or employee; a finished payroll is not reopened,
+   the difference goes on the next one. Rare (4 on the station), so last; it
+   can move to phase 3 if 2b grows.
+
+**2a as built** (2026-10-02): rules `creditSale.ts`, `debtReceipt.ts`,
+`drawerExpense.ts`, `collection.ts` (shared helpers in `common.ts`);
+migration 054 (links, line method/category/fee change, guards on closed-shift
+credit sales and payments). Shift debt receipts are all money customers'
+(attendants repay in the office), so 2a's receipt rule covers customers only;
+attendants' repayments move with office payments to 2b. An over-limit credit
+is approved inside the correction (`limit_override`, recorded in
+`credit_limit_overrides`). Cash ↔ M-Pesa writes no rows: its two lines are the
+record (shift banner, register, daily report). Shift screens list credits,
+receipts and expenses as closed; the daily report lists the day's
+corrections; monthly expense totals use live rows (corrections count on the
+expense's date). Not built in 2a: Correct from a money customer's statement
+(the shift lists are the entry points).
+
+**Ripple effects:** customer statements show corrected sales and payments
+with the correction number; daily report and dashboard use the as-closed
+filters for the new records; attendants see corrections on their shifts;
+Cancel's credit note gets its PDF (M8); eTIMS credit notes stay with the POS.
+Old buttons (Move balance, payment reversal, void) are removed when 2b ships.
+
+**Won't solve:** meter readings, deliveries and stock (phase 3); locked months
+and reports as corrected (phase 4); duplicate M-Pesa payments at entry (shift
+collections are totals, so no transaction codes to check).
 
 ---
 

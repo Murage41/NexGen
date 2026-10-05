@@ -6,6 +6,10 @@ import { syncVarianceAccount } from './employeeVariances';
 import { refreshInvoiceDraftReservation } from './invoiceDraftReservations';
 import { recomputeInvoiceTotals } from './receivablePayments';
 import { fuelOnAccountRule } from './correctionRules/fuelOnAccount';
+import { creditSaleRule } from './correctionRules/creditSale';
+import { debtReceiptRule } from './correctionRules/debtReceipt';
+import { drawerExpenseRule } from './correctionRules/drawerExpense';
+import { collectionRule } from './correctionRules/collection';
 
 // Corrections (docs/ROADMAP.md §3c, docs/CORRECTIONS.md). A closed record is
 // never changed. A mistake found later is fixed by a numbered Correction whose
@@ -33,6 +37,12 @@ export type CorrectionRequest = {
   account_id?: number | null;
   fuel_type?: string | null;
   litres?: number | null;
+  amount?: number | null;
+  payment_method?: 'cash' | 'mpesa' | null;
+  category?: string | null;
+  description?: string | null;
+  // Credit past the customer's limits, approved with the correction.
+  limit_override?: boolean;
   charge_to?: 'attendant' | 'station' | null;
   reason_code: string;
   reason_note: string;
@@ -52,10 +62,16 @@ export type PlanLine = {
   litres: number | null;
   unit_price: number | null;
   amount: number;
-  stage: 'unbilled' | 'draft' | 'invoiced' | null;
+  // Fuel on account: unbilled, draft or invoiced; a credit sale: outstanding,
+  // partial or paid.
+  stage: string | null;
   invoice_id: number | null;
   invoice_number: string | null;
   shift_effect: number;
+  // Money records: cash or M-Pesa; an expense's category; an M-Pesa fee change.
+  method?: string | null;
+  category?: string | null;
+  fee_delta?: number | null;
 };
 
 export type PlanDocument = {
@@ -81,6 +97,9 @@ export type RulePlan = {
   documents: PlanDocument[];
   drafts: number[];
   effects: string[];
+  // A customer would go past their credit limits: the admin approves it with
+  // the correction (request.limit_override).
+  needs_override?: boolean;
 };
 
 export type ShiftImpact = {
@@ -114,10 +133,13 @@ export type ApplyContext = {
   actorId: number | null;
 };
 
-// What each record type contributes. Phase 1: fuel on account.
+// What each record type contributes. Phase 1: fuel on account; phase 2a: a
+// shift's credit sales, debt receipts, drawer expenses and cash/M-Pesa split.
 export type CorrectionRule = {
   recordType: string;
   errorKinds: string[];
+  // The last line of every preview: what never changes.
+  unchanged: string;
   plan(conn: Conn, request: CorrectionRequest): Promise<RulePlan>;
   // Writes the records and documents; returns the created record and
   // document ids per line seq.
@@ -126,7 +148,13 @@ export type CorrectionRule = {
   undo(trx: Knex.Transaction, correction: any, lines: any[], ctx: ApplyContext): Promise<number[]>;
 };
 
-const RULES: Record<string, CorrectionRule> = { fuel_on_account: fuelOnAccountRule };
+const RULES: Record<string, CorrectionRule> = {
+  fuel_on_account: fuelOnAccountRule,
+  credit_sale: creditSaleRule,
+  debt_receipt: debtReceiptRule,
+  drawer_expense: drawerExpenseRule,
+  collection: collectionRule,
+};
 
 export const httpError = (message: string, http: number, code: string) => Object.assign(new Error(message), { http, code });
 export const kes = (value: unknown) =>
@@ -153,6 +181,11 @@ function normalize(request: any): CorrectionRequest {
     account_id: num(request?.account_id),
     fuel_type: request?.fuel_type ? String(request.fuel_type).trim().toLowerCase() : null,
     litres: num(request?.litres),
+    amount: num(request?.amount),
+    payment_method: request?.payment_method === 'cash' || request?.payment_method === 'mpesa' ? request.payment_method : null,
+    category: request?.category ? String(request.category).trim() : null,
+    description: request?.description ? String(request.description).trim() : null,
+    limit_override: request?.limit_override === true,
     charge_to: request?.charge_to === 'attendant' || request?.charge_to === 'station' ? request.charge_to : null,
     reason_code: String(request?.reason_code || ''),
     reason_note: String(request?.reason_note || '').trim(),
@@ -234,7 +267,7 @@ export async function previewCorrection(conn: Conn, raw: any, postingDate: strin
   const effects = [
     ...rulePlan.effects,
     ...shiftEffects(shifts, request.charge_to ?? null),
-    'Tank stock and fuel cost: no change (the pump meters measured the fuel).',
+    handler.unchanged,
   ];
   const hashed = {
     request: { ...request },
@@ -324,6 +357,9 @@ export async function postCorrection(
       throw httpError('Something changed since the preview. Check the correction again.', 409, 'PLAN_CHANGED');
     }
     if (plan.needs_choice && !request.charge_to) throw httpError('Choose who carries the change.', 400, 'CHOICE_REQUIRED');
+    if (plan.needs_override && !request.limit_override) {
+      throw httpError("Approve going past the customer's credit limit, or choose another customer.", 400, 'OVERRIDE_REQUIRED');
+    }
     const number = await nextNumber(trx, input.date);
     const [correctionId] = await trx('corrections').insert({
       number,
@@ -377,6 +413,9 @@ export async function postCorrection(
         litres: line.litres,
         unit_price: line.unit_price,
         amount: line.amount,
+        method: line.method ?? null,
+        category: line.category ?? null,
+        fee_delta: line.fee_delta ?? null,
         stage: line.stage,
         invoice_id: extra.invoice_id ?? line.invoice_id,
         document_type: extra.document_type ?? null,
@@ -453,6 +492,9 @@ export async function undoCorrection(
         litres: line.litres,
         unit_price: line.unit_price,
         amount: line.amount,
+        method: line.method,
+        category: line.category,
+        fee_delta: line.fee_delta === null || line.fee_delta === undefined ? null : roundMoney(-Number(line.fee_delta)),
         stage: line.stage,
         invoice_id: line.invoice_id,
         shift_effect: roundMoney(-Number(line.shift_effect)),
@@ -491,7 +533,7 @@ export async function correctionDetail(conn: Conn, id: number) {
   if (!correction) throw httpError('Correction not found.', 404, 'CORRECTION_NOT_FOUND');
   const lines = await conn('correction_lines as l')
     .leftJoin('credit_accounts as a', function () {
-      this.on('l.party_id', '=', 'a.id').andOn(conn.raw("l.party_type = 'invoice_customer'"));
+      this.on('l.party_id', '=', 'a.id').andOn(conn.raw("l.party_type in ('invoice_customer', 'customer')"));
     })
     .leftJoin('customer_invoices as i', 'l.invoice_id', 'i.id')
     .where('l.correction_id', id)

@@ -107,7 +107,9 @@ router.get('/', async (req: any, res) => {
       if (hasShiftId) {
         const receipts = await db('credit_payments')
           .whereIn('shift_id', shiftIds)
-          .where({ status: 'posted' })
+          // As the shifts closed: a later correction does not move them.
+          .whereNull('created_by_record_correction_id')
+          .where((q) => q.where({ status: 'posted' }).orWhereNotNull('reversed_by_record_correction_id'))
           .whereNull('deleted_at')
           .select('payment_method', 'amount');
         for (const receipt of receipts) {
@@ -159,7 +161,8 @@ router.get('/', async (req: any, res) => {
     if (shiftIds.length > 0) {
       const seResult = await db('shift_expenses')
         .whereIn('shift_id', shiftIds)
-        .whereNull('deleted_at')
+        .whereNull('created_by_record_correction_id')
+        .where((q) => q.whereNull('deleted_at').orWhereNotNull('reversed_by_record_correction_id'))
         .sum('amount as total')
         .first();
       todayShiftExpenses = Number((seResult as any)?.total) || 0;

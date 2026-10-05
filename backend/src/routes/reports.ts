@@ -21,6 +21,8 @@ import {
   previousBusinessDate,
 } from '../services/receivableReporting';
 import { listShiftCorrections } from '../services/shiftCorrections';
+import { listCorrections } from '../services/corrections';
+import { asRecordedRows } from '../services/shiftSnapshot';
 import { owedOnShifts, varianceActivity, varianceRefundsPaid } from '../services/employeeVariances';
 
 const router = Router();
@@ -53,7 +55,11 @@ function asClosedReceipts(query: any) {
   return query
     .whereNull('deleted_at')
     .whereNull('created_by_correction_id')
-    .where((q: any) => q.where('status', 'posted').orWhereNotNull('reversed_by_correction_id'));
+    .whereNull('created_by_record_correction_id')
+    .where((q: any) => q
+      .where('status', 'posted')
+      .orWhereNotNull('reversed_by_correction_id')
+      .orWhereNotNull('reversed_by_record_correction_id'));
 }
 
 // ─── Daily Report ─────────────────────────────────────────────────────────────
@@ -104,7 +110,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
         .where('pump_readings.shift_id', shift.id);
 
       const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
-      const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
+      const expenses = await asRecordedRows(db('shift_expenses').where({ 'shift_expenses.shift_id': shift.id }), 'shift_expenses');
       // Phase 3B: invoice-mode consumption for this shift (retail-priced)
       const shiftInvoiceConsumption = await asClosedConsumption(
         db('invoice_consumption').where({ shift_id: shift.id }),
@@ -423,6 +429,8 @@ router.get('/daily', requireAdmin, async (req, res) => {
         unrecovered_losses: unrecoveredLosses,
         // Corrections made today, to this or any earlier closed shift.
         corrections: await listShiftCorrections(db, { postingDate: date }),
+        // Corrections posted this day (services/corrections.ts).
+        record_corrections: await listCorrections(db, { from: date, to: date }),
         // Tank stock
         tank_snapshot: tankSnapshot,
       },

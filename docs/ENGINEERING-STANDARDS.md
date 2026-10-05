@@ -113,17 +113,30 @@ cache instead of recomputing; computing at event time and never updating.
   rule per record type (`services/correctionRules/`), approval bound to the
   plan hash, undo as a cancelling correction. A new record type adds a rule;
   it never adds its own button, route or table.
-- **A closed shift's fuel on account** is listed and totalled as it was at
-  close: an entry a correction reversed still counts, the one it added does
-  not (`asRecordedConsumption` in `services/shiftSnapshot.ts`,
-  `asClosedConsumption` in `routes/reports.ts`, the dashboard filter). Anything
-  new that totals a shift's invoice consumption uses that rule; anything about
-  what a customer owes uses live entries (`deleted_at` null, `entry_status`
-  active).
-- **A closed-shift test fixture** inserts its rows while the shift is closed
-  (inserts are allowed) and then its snapshot, from
-  `accountabilityFromRows`; updating or deleting those rows afterwards fails
-  on the guards, as it should (`scripts/test_corrections.ts`).
+- **A closed shift's records are listed and totalled as they were at close**:
+  a row a correction reversed still counts, a row it added does not
+  (`services/shiftSnapshot.ts`: `asRecordedConsumption` for fuel on account,
+  `asRecordedRows` for credit sales and drawer expenses, `asRecordedReceipts`
+  for debt receipts; `asClosedConsumption` and `asClosedReceipts` in
+  `routes/reports.ts`; the dashboard's filters). Anything new that totals a
+  shift's records for its reconciliation uses that rule; anything about what a
+  customer owes, or a monthly total (expenses by category), uses live rows, so
+  corrections count there on the record's own date.
+- **A correction rule** (`services/correctionRules/`) never writes a closed
+  record's facts: it reverses (soft delete or status, plus a
+  `reversed_by_record_correction_id` link) and adds (a new row with a
+  `created_by_record_correction_id` link); each line carries its change to the
+  shift's result. Customer money goes through the existing ledger functions
+  (allocation, `applyCustomerCredit`, `recomputeAccountBalance`), never around
+  them. Inside a correction's transaction, never call a helper that uses the
+  global `db` (SQLite has one connection; it deadlocks), e.g.
+  `services/mpesaFees.ts`.
+- **A closed-shift test fixture** either inserts its rows while the shift is
+  closed (inserts are allowed) and then its snapshot, from
+  `accountabilityFromRows` (`scripts/test_corrections.ts`), or records the
+  shift through the real routes and closes it with `PUT /shifts/:id/close`
+  (`scripts/test_corrections_money.ts`); updating or deleting a closed shift's
+  rows afterwards fails on the guards, as it should.
 - **Documents** (M8): a new document type builds its body with
   `services/documentLayout.ts` (shared header, footer and "not a tax invoice"
   notice) and is saved once through `services/documents.ts`

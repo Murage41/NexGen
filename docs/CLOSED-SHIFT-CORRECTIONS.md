@@ -3,9 +3,11 @@
 How to fix a credit, payment or repayment that turns out to be wrong after its
 shift has closed. Use it for staff training and as the owner's reference.
 
-> **Fuel on account** (an invoice customer's fuel entry) is fixed with a
-> **Correction** instead: see `CORRECTIONS.md`. Corrections will take over the
-> other records here in later phases; until then, use Move balance below.
+> A wrong **record** on a closed shift (fuel on account, a credit sale, a debt
+> payment taken in the shift, a drawer expense, or cash and M-Pesa the wrong way
+> round) is fixed with a **Correction** instead: see `CORRECTIONS.md`. Move
+> balance below stays, for now, only for moving or writing off a balance; it
+> joins Corrections in the next step.
 
 ## The Rule
 

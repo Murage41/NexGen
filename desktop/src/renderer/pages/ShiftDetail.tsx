@@ -2,7 +2,7 @@ import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/Cr
 import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
 import { correctionApi, desktopApproval } from '../services/api';
-import { CorrectionForm, ShiftCorrectionsBanner } from '../../../../shared/ui/Corrections';
+import { CorrectionForm, RECORD_LABELS, ShiftCorrectionsBanner, type RecordType } from '../../../../shared/ui/Corrections';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -83,7 +83,7 @@ export default function ShiftDetail() {
   }>({ fuel_type: 'petrol', litres: '', pump_id: '' });
   const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
   // A closed shift's fuel entry being corrected, or fuel missing from it (docs/CORRECTIONS.md).
-  const [correcting, setCorrecting] = useState<{ entry?: any; missing?: boolean } | null>(null);
+  const [correcting, setCorrecting] = useState<{ recordType: RecordType; target?: any } | null>(null);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(true);
   const [readingSync, setReadingSync] = useState<SyncState>('idle');
@@ -739,6 +739,23 @@ export default function ShiftDetail() {
 
   const isOpen = shift.status === 'open';
   const isClosed = shift.status === 'closed';
+  // A closed shift's record: Correct, or the correction that reversed it.
+  const correctCell = (recordType: RecordType, row: any) => {
+    const reversed = row.deleted_at || (recordType === 'debt_receipt' && row.status !== 'posted');
+    const by = (shift.record_corrections?.lines || []).find((l: any) => l.record_type === recordType && l.action === 'reverse' && Number(l.target_id) === Number(row.id));
+    return (
+      <td className="p-2 text-right text-xs">
+        {reversed ? (
+          <span className="text-amber-700">{by?.number || 'Corrected'}</span>
+        ) : (
+          <button onClick={() => setCorrecting({ recordType, target: row })} className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50">Correct</button>
+        )}
+      </td>
+    );
+  };
+  const addMissing = (recordType: RecordType, text: string) => isClosed && (
+    <button onClick={() => setCorrecting({ recordType })} className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50">{text}</button>
+  );
   // Corrections posted before closed shifts became unchangeable (history only).
   const corrections: any[] = shift.corrections || [];
   const isCancelled = shift.status === 'cancelled';
@@ -1273,6 +1290,11 @@ export default function ShiftDetail() {
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Sales Collections</h2>
+          {isClosed && (
+            <button onClick={() => setCorrecting({ recordType: 'collection', target: collections })} className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50">
+              Cash and M-Pesa mixed up
+            </button>
+          )}
           {isOpen && (
             <div className="flex items-center gap-3">
               <span className={`text-xs ${collectionSync === 'error' || collectionSync === 'review' ? 'text-amber-700' : 'text-gray-500'}`}>
@@ -1345,7 +1367,10 @@ export default function ShiftDetail() {
 
       {/* Credits */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
-        <h2 className="text-lg font-semibold text-gray-700 mb-3">Credits Given</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-700">Credits Given</h2>
+          {addMissing('credit_sale', 'Add missing credit sale')}
+        </div>
         {shiftCredits.length > 0 && (
           <table className="w-full text-sm mb-3">
             <thead className="bg-gray-50">
@@ -1353,7 +1378,7 @@ export default function ShiftDetail() {
                 <th className="text-left p-2 font-medium text-gray-600">Customer</th>
                 <th className="text-left p-2 font-medium text-gray-600">Description</th>
                 <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                {isOpen && <th className="p-2"></th>}
+                {(isOpen || isClosed) && <th className="p-2"></th>}
               </tr>
             </thead>
             <tbody>
@@ -1367,6 +1392,7 @@ export default function ShiftDetail() {
                       <button onClick={() => handleDeleteCredit(c.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
                     </td>
                   )}
+                  {isClosed && correctCell('credit_sale', c)}
                 </tr>
               ))}
             </tbody>
@@ -1374,7 +1400,7 @@ export default function ShiftDetail() {
               <tr>
                 <td colSpan={2} className="p-2 text-right">Total Credits:</td>
                 <td className="p-2 text-right">{formatKES(totalCredits)}</td>
-                {isOpen && <td></td>}
+                {(isOpen || isClosed) && <td></td>}
               </tr>
             </tfoot>
           </table>
@@ -1531,7 +1557,7 @@ export default function ShiftDetail() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold text-gray-700">Invoice Consumption (litres)</h2>
             {isClosed && (
-              <button onClick={() => setCorrecting({ missing: true })} className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50">
+              <button onClick={() => setCorrecting({ recordType: 'fuel_on_account' })} className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50">
                 Add missing fuel on account
               </button>
             )}
@@ -1573,7 +1599,7 @@ export default function ShiftDetail() {
                         {c.deleted_at ? (
                           <span className="text-amber-700">{c.correction_reason ? c.correction_reason.split(':')[0] : 'Corrected'}</span>
                         ) : (
-                          <button onClick={() => setCorrecting({ entry: c })} className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50">Correct</button>
+                          <button onClick={() => setCorrecting({ recordType: 'fuel_on_account', target: c })} className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50">Correct</button>
                         )}
                       </td>
                     )}
@@ -1596,7 +1622,10 @@ export default function ShiftDetail() {
 
       {/* Expenses */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
-        <h2 className="text-lg font-semibold text-gray-700 mb-3">Shift Expenses</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-700">Shift Expenses</h2>
+          {addMissing('drawer_expense', 'Add missing expense')}
+        </div>
         {expenses.length > 0 && (
           <table className="w-full text-sm mb-3">
             <thead className="bg-gray-50">
@@ -1604,7 +1633,7 @@ export default function ShiftDetail() {
                 <th className="text-left p-2 font-medium text-gray-600">Category</th>
                 <th className="text-left p-2 font-medium text-gray-600">Description</th>
                 <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                {isOpen && <th className="p-2"></th>}
+                {(isOpen || isClosed) && <th className="p-2"></th>}
               </tr>
             </thead>
             <tbody>
@@ -1618,6 +1647,7 @@ export default function ShiftDetail() {
                       <button onClick={() => handleDeleteExpense(e.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
                     </td>
                   )}
+                  {isClosed && correctCell('drawer_expense', e)}
                 </tr>
               ))}
             </tbody>
@@ -1625,7 +1655,7 @@ export default function ShiftDetail() {
               <tr>
                 <td colSpan={2} className="p-2 text-right">Total Expenses:</td>
                 <td className="p-2 text-right">{formatKES(totalExpenses)}</td>
-                {isOpen && <td></td>}
+                {(isOpen || isClosed) && <td></td>}
               </tr>
             </tfoot>
           </table>
@@ -1663,6 +1693,7 @@ export default function ShiftDetail() {
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Debt Collections</h2>
+          {addMissing('debt_receipt', 'Add missing payment')}
           {isOpen && (
             <button onClick={() => { setReceiptError(''); setShowReceiptModal(true); }}
               className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700">
@@ -1677,7 +1708,7 @@ export default function ShiftDetail() {
                 <th className="text-left p-2 font-medium text-gray-600">Customer</th>
                 <th className="text-left p-2 font-medium text-gray-600">Method</th>
                 <th className="text-right p-2 font-medium text-gray-600">Amount</th>
-                {isOpen && <th className="p-2"></th>}
+                {(isOpen || isClosed) && <th className="p-2"></th>}
               </tr>
             </thead>
             <tbody>
@@ -1697,6 +1728,7 @@ export default function ShiftDetail() {
                       </button>
                     </td>
                   )}
+                  {isClosed && correctCell('debt_receipt', r)}
                 </tr>
               ))}
             </tbody>
@@ -1704,7 +1736,7 @@ export default function ShiftDetail() {
               <tr>
                 <td colSpan={2} className="p-2 text-right">Total Collected:</td>
                 <td className="p-2 text-right">{formatKES(totalCreditReceipts)}</td>
-                {isOpen && <td></td>}
+                {(isOpen || isClosed) && <td></td>}
               </tr>
             </tfoot>
           </table>
@@ -1734,11 +1766,12 @@ export default function ShiftDetail() {
       {correcting && (
         <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
-            <h2 className="text-lg font-bold">{correcting.entry ? `Correct fuel entry #${correcting.entry.id}` : `Add missing fuel on account to shift #${shift.id}`}</h2>
+            <h2 className="text-lg font-bold">{correcting.target ? 'Correct' : 'Add missing'}: {RECORD_LABELS[correcting.recordType]}</h2>
             <CorrectionForm
               api={correctionApi}
               approval={desktopApproval}
-              entry={correcting.entry ? { ...correcting.entry, shift_date: shift.shift_date } : null}
+              recordType={correcting.recordType}
+              target={correcting.target ? { ...correcting.target, shift_date: shift.shift_date } : null}
               shift={{ id: Number(shift.id), shift_date: shift.shift_date }}
               onDone={async () => { setCorrecting(null); await loadShift(); }}
               onCancel={() => setCorrecting(null)}

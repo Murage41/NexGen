@@ -9,15 +9,16 @@ Last updated: 2026-09-30.
 
 ## Station PC
 
-- **Running `9bd40d5`** (confirmed by the owner 2026-09-26: update #13 applied
-  in the stop-first order, backup before the migration, `npm install` added
-  the PDF component; all checks passed and the station profile is filled in).
-  Latest migration there: `052`.
-- **Pending station update: #14**, the commit "Corrections: one way to fix a
-  mistake on a closed record (phase 1)" (migration `053`, so a backup before
-  it; no new dependencies). Commands given to the owner 2026-09-30; record the
-  station on it once the owner confirms. (M10 was never committed: superseded
-  by Corrections phase 1, `docs/ROADMAP.md` §3c.)
+- **Running `bcfb424`** (confirmed by the owner 2026-09-30: update #14,
+  Corrections phase 1, applied in the stop-first order with a backup before
+  the migration; all checks passed: Corrections menu opens empty, the closed
+  shifts the owner noted show the same shortage or surplus as before, and
+  closed shifts show Correct on desktop and phone). Latest migration there:
+  `053`.
+- **Pending station updates: none yet.** Corrections phase 2a is built and
+  tested on the development PC, **not committed**; once the owner asks to
+  commit and push, it becomes update **#15** (migration `054`, so a backup
+  before it; no new dependencies).
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date
@@ -54,17 +55,19 @@ Last updated: 2026-09-30.
 | 11 | `157a9ec` | Attendants see only what they need; blind open shift (M6) | none |
 | 12 | `3131f77` | Low fuel warning per tank; open-shift tank card fixed (M7) | 051 |
 | 13 | `9bd40d5` | Station profile, logo, PDF invoices and notes; backups copy uploads (M8) | 052 |
-| 14 | pending | Corrections phase 1: closed shifts read their snapshot, database guards, correcting fuel on account | 053 |
+| 14 | `bcfb424` | Corrections phase 1: closed shifts read their snapshot, database guards, correcting fuel on account | 053 |
 
 ## How the system works now (recent decisions that code must respect)
 
-- **Closed shifts never change** (phase 1, uncommitted: the database refuses
-  it, and a closed shift shows its close snapshot, never a recalculation). A
-  mistake on fuel on account is fixed by a numbered **Correction**
-  (C-2026-0001) that reverses and/or adds entries and makes any credit or debit
-  note itself; see `docs/CORRECTIONS.md`. Other records still use **Move
-  balance** and manual notes (`docs/CLOSED-SHIFT-CORRECTIONS.md`) until later
-  phases.
+- **Closed shifts never change** (on the station since update #14: the
+  database refuses it, and a closed shift shows its close snapshot, never a
+  recalculation). A mistake on fuel on account is fixed by a numbered
+  **Correction** (C-2026-0001) that reverses and/or adds entries and makes any
+  credit or debit note itself; phase 2a (uncommitted) adds credit sales, debt
+  receipts, drawer expenses and the cash/M-Pesa split; see
+  `docs/CORRECTIONS.md`. Office payments, balance moves, invoice void and
+  price notes still work the old way (`docs/CLOSED-SHIFT-CORRECTIONS.md`)
+  until phase 2b.
 - **Attendant shortages:** an employee owes the shortages of their short shifts
   and pays them in money (cash, M-Pesa, bank). No write-offs, no paybacks, and
   surpluses never offset shortages (they are the station's). Pay is never
@@ -132,8 +135,8 @@ Last updated: 2026-09-30.
   in four phases (`docs/ROADMAP.md` §3c). M10's uncommitted code on the
   development PC is reused as phase 1's fuel-on-account handler; its own
   button, routes and migration 053 will not ship as they are.
-- **Corrections phase 1: done 2026-09-30, committed and pushed; station update
-  #14 pending** (`docs/ROADMAP.md` §3c, `docs/CORRECTIONS.md`). Closed shifts read their
+- **Corrections phase 1: done, on the station since 2026-09-30 (update #14)**
+  (`docs/ROADMAP.md` §3c, `docs/CORRECTIONS.md`). Closed shifts read their
   snapshot (migration 053 backfills the 70 closed shifts without one, marked
   backfilled); database guards; the Correction record (C-YYYY-NNNN, reason
   codes, approval bound to the plan hash, register); fuel on account for all
@@ -149,8 +152,21 @@ Last updated: 2026-09-30.
   the credit note at the invoice price. Credit notes made by a correction book
   only the price difference as revenue (the shift's corrected result carries
   the rest).
-- **Next:** the owner confirms update #14 on the station, then phases 2–4 and
-  M9 (order to confirm), phone invoice actions, a UI and design review, Tier 4,
+- **Corrections phase 2a: built and tested 2026-10-02, not yet committed**
+  (`docs/ROADMAP.md` §3c, `docs/CORRECTIONS.md`): a closed shift's credit
+  sales, debt receipts, drawer expenses and cash/M-Pesa split are corrected
+  with the same wizard, register and undo, on desktop and phone. 36 backend
+  suites pass; `test:corrections-money` (shifts recorded and closed through
+  the real routes) caught 21 of 21 planted bugs. On a scratch copy of the
+  station's data as copied 2026-09-30: all 124 closed shifts show the same
+  figures and the same credit, payment and expense lists after migration 054;
+  on the desktop a credit sale (wrong amount) and a cash/M-Pesa mix-up were
+  corrected and the mix-up undone from the register with a PIN; on the phone
+  a debt payment (cash/M-Pesa) was corrected and a missing expense added; the
+  daily report listed all five. The owner confirmed (2026-10-05) that the
+  station's data since that copy holds nothing different, so no fresh copy is
+  needed for this update.
+- **Next:** Corrections phase 2b, then phases 3–4 and M9 (order to confirm), phone invoice actions, a UI and design review, Tier 4,
   Tier 5.
 - 2026-09-24: the project's rules and status moved into committed files
   (`CLAUDE.md`, this file, `docs/ROADMAP.md`, `docs/ENGINEERING-STANDARDS.md`,

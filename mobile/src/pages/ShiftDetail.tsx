@@ -1,6 +1,6 @@
 import { ShiftCorrectionList, describeShiftBalance } from '../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../shared/ui/BalanceMove';
-import { CorrectionForm, ShiftCorrectionsBanner } from '../../../shared/ui/Corrections';
+import { CorrectionForm, RECORD_LABELS, ShiftCorrectionsBanner, type RecordType } from '../../../shared/ui/Corrections';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey, correctionApi } from '../services/api';
@@ -22,7 +22,7 @@ export default function ShiftDetail() {
   const location = useLocation();
   const { isAdmin } = useAuth();
   // A closed shift's fuel entry being corrected, or fuel missing from it (docs/CORRECTIONS.md).
-  const [correcting, setCorrecting] = useState<{ entry?: any; missing?: boolean } | null>(null);
+  const [correcting, setCorrecting] = useState<{ recordType: RecordType; target?: any } | null>(null);
   const [shift, setShift] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -196,6 +196,18 @@ export default function ShiftDetail() {
   const fmt = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const isOpen = shift.status === 'open';
   const canCorrect = isAdmin && shift.status === 'closed';
+  // A closed shift's record: Correct, or the correction that reversed it.
+  const correctButton = (recordType: RecordType, row: any) => {
+    if (!canCorrect) return null;
+    if (row.deleted_at || (recordType === 'debt_receipt' && row.status !== 'posted')) {
+      const by = (shift.record_corrections?.lines || []).find((l: any) => l.record_type === recordType && l.action === 'reverse' && Number(l.target_id) === Number(row.id));
+      return <span className="ml-2 text-xs text-amber-700">{by?.number || 'Corrected'}</span>;
+    }
+    return <button onClick={() => setCorrecting({ recordType, target: row })} className="ml-2 text-xs rounded border border-gray-300 px-2 py-0.5 text-gray-700">Correct</button>;
+  };
+  const addMissing = (recordType: RecordType) => canCorrect && (
+    <button onClick={() => setCorrecting({ recordType })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">Add missing</button>
+  );
   // A blind close: the attendant does not see the running over/short (the
   // server does not send it either).
   const blind = isOpen && !isAdmin;
@@ -601,7 +613,12 @@ export default function ShiftDetail() {
 
       {/* Collections */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-        <p className="font-semibold text-gray-700 mb-2">Sales Collections</p>
+        <div className="flex items-center justify-between mb-2">
+          <p className="font-semibold text-gray-700">Sales Collections</p>
+          {canCorrect && shift.collections && (
+            <button onClick={() => setCorrecting({ recordType: 'collection', target: shift.collections })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">Cash/M-Pesa mixed up</button>
+          )}
+        </div>
         {shift.collections ? (
           <div className="space-y-1 text-sm">
             <div className="flex justify-between"><span className="text-gray-500">Cash Received</span><span>{fmt(shift.collections.cash_amount)}</span></div>
@@ -633,9 +650,12 @@ export default function ShiftDetail() {
       </div>
 
       {/* Credits */}
-      {shift.shift_credits?.length > 0 && (
+      {(shift.shift_credits?.length > 0 || canCorrect) && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-          <p className="font-semibold text-gray-700 mb-2">Credits Given</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-semibold text-gray-700">Credits Given</p>
+            {addMissing('credit_sale')}
+          </div>
           {shift.shift_credits.map((c: any) => (
             <div key={c.id} className="flex justify-between items-center py-1 text-sm">
               <div>
@@ -644,6 +664,7 @@ export default function ShiftDetail() {
               </div>
               <span className="flex items-center">
                 {fmt(c.amount)}
+                {correctButton('credit_sale', c)}
               </span>
             </div>
           ))}
@@ -660,7 +681,7 @@ export default function ShiftDetail() {
           <div className="flex items-center justify-between mb-2">
             <p className="font-semibold text-gray-700">Invoice Consumption (litres)</p>
             {canCorrect && (
-              <button onClick={() => setCorrecting({ missing: true })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">Add missing</button>
+              <button onClick={() => setCorrecting({ recordType: 'fuel_on_account' })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">Add missing</button>
             )}
           </div>
           {shift.invoice_consumption.map((c: any) => (
@@ -675,7 +696,7 @@ export default function ShiftDetail() {
                 {fmt(Number(c.retail_amount))}
                 {canCorrect && (c.deleted_at
                   ? <span className="text-xs text-amber-700">{c.correction_reason ? c.correction_reason.split(':')[0] : 'Corrected'}</span>
-                  : <button onClick={() => setCorrecting({ entry: c })} className="text-xs rounded border border-gray-300 px-2 py-0.5 text-gray-700">Correct</button>)}
+                  : <button onClick={() => setCorrecting({ recordType: 'fuel_on_account', target: c })} className="text-xs rounded border border-gray-300 px-2 py-0.5 text-gray-700">Correct</button>)}
               </span>
             </div>
           ))}
@@ -687,16 +708,19 @@ export default function ShiftDetail() {
       )}
 
       {/* Expenses */}
-      {shift.expenses?.length > 0 && (
+      {(shift.expenses?.length > 0 || canCorrect) && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-          <p className="font-semibold text-gray-700 mb-2">Shift Expenses</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-semibold text-gray-700">Shift Expenses</p>
+            {addMissing('drawer_expense')}
+          </div>
           {shift.expenses.map((e: any) => (
             <div key={e.id} className="flex justify-between py-1 text-sm">
               <div>
                 <span className="text-gray-600">{e.category}</span>
                 {e.description && <span className="text-gray-400 ml-1 text-xs">({e.description})</span>}
               </div>
-              <span>{fmt(e.amount)}</span>
+              <span className="flex items-center">{fmt(e.amount)}{correctButton('drawer_expense', e)}</span>
             </div>
           ))}
           <div className="flex justify-between border-t pt-1 mt-1 text-sm font-bold">
@@ -723,6 +747,7 @@ export default function ShiftDetail() {
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
         <div className="flex items-center justify-between mb-2">
           <p className="font-semibold text-gray-700">Debt Collections</p>
+          {addMissing('debt_receipt')}
           {isOpen && (
             <button onClick={() => { setReceiptError(''); setShowReceiptModal(true); }}
               className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium">
@@ -742,6 +767,7 @@ export default function ShiftDetail() {
                 </div>
                 <p className="font-semibold text-sm flex items-center">
                   {fmt(Number(r.amount))}
+                  {correctButton('debt_receipt', r)}
                 </p>
               </div>
             ))}
@@ -768,12 +794,13 @@ export default function ShiftDetail() {
         <div className="fixed inset-0 bg-black/45 z-50 flex items-end sm:items-center justify-center">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <p className="font-bold">{correcting.entry ? `Correct fuel entry #${correcting.entry.id}` : `Add missing fuel to shift #${shift.id}`}</p>
+              <p className="font-bold">{correcting.target ? 'Correct' : 'Add missing'}: {RECORD_LABELS[correcting.recordType]}</p>
               <button onClick={() => setCorrecting(null)} className="p-1 text-gray-400"><X size={18} /></button>
             </div>
             <CorrectionForm
               api={correctionApi}
-              entry={correcting.entry ? { ...correcting.entry, shift_date: shift.shift_date } : null}
+              recordType={correcting.recordType}
+              target={correcting.target ? { ...correcting.target, shift_date: shift.shift_date } : null}
               shift={{ id: Number(shift.id), shift_date: shift.shift_date }}
               onDone={async () => { setCorrecting(null); await loadShift(); }}
               onCancel={() => setCorrecting(null)}

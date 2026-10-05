@@ -54,7 +54,7 @@ import { getShiftReview, updateShiftReview } from '../services/shiftReview';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
 import { computeShiftAccountability } from '../services/shiftAccountability';
-import { asRecordedConsumption, snapshotFigures } from '../services/shiftSnapshot';
+import { asRecordedConsumption, asRecordedReceipts, asRecordedRows, snapshotFigures } from '../services/shiftSnapshot';
 import { shiftCorrections } from '../services/corrections';
 import { listBalanceMoves } from '../services/balanceMoves';
 import { getRetailPriceAsOf } from '../services/invoiceAccounting';
@@ -306,12 +306,21 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         .orderBy('shift_review_events.created_at', 'asc')
         .orderBy('shift_review_events.id', 'asc')
       : [];
-    const expenses = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
+    // A closed shift lists its records as it closed; corrections since are
+    // listed separately (record_corrections).
+    const asClosed = shift.status === 'closed' && Boolean(closeReconciliation);
+    const expenses = await db('shift_expenses').where({ 'shift_expenses.shift_id': shift.id }).modify((query: any) => {
+      if (asClosed) asRecordedRows(query, 'shift_expenses');
+      else query.whereNull('shift_expenses.deleted_at');
+    });
     // account_id tells a correction which customer the credit is on now.
     const shiftCredits = await db('shift_credits')
       .leftJoin('credits', 'shift_credits.credit_id', 'credits.id')
       .where('shift_credits.shift_id', shift.id)
-      .whereNull('shift_credits.deleted_at')
+      .modify((query: any) => {
+        if (asClosed) asRecordedRows(query, 'shift_credits');
+        else query.whereNull('shift_credits.deleted_at');
+      })
       .select('shift_credits.*', 'credits.account_id as account_id');
     const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
     const payrollPayments = await db('payroll_payments')
@@ -350,8 +359,10 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
     const creditReceipts = await db('credit_payments')
       .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
       .where('credit_payments.shift_id', shift.id)
-      .where('credit_payments.status', 'posted')
-      .whereNull('credit_payments.deleted_at')
+      .modify((query: any) => {
+        if (asClosed) asRecordedReceipts(query, 'credit_payments', Boolean(closeReconciliation.backfilled));
+        else query.where('credit_payments.status', 'posted').whereNull('credit_payments.deleted_at');
+      })
       .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone', 'credit_accounts.type as account_type', 'credit_accounts.employee_id as account_employee_id')
       .orderBy('credit_payments.date', 'asc');
 
@@ -401,7 +412,10 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         status: line.status,
         posting_date: line.posting_date,
         error_kind: line.error_kind,
+        record_type: line.record_type,
         action: line.action,
+        method: line.method,
+        category: line.category,
         fuel_type: line.fuel_type,
         litres: line.litres,
         amount: line.amount,
@@ -411,7 +425,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       }));
     }
     const visiblePayments = viewer?.role === 'admin' ? payrollPayments : payrollPayments.filter(p => Number(p.employee_id) === Number(viewer?.id));
-    const visibleReceipts = viewer?.role === 'admin' ? creditReceipts : creditReceipts.filter(p => p.account_type !== 'employee' || Number(p.account_employee_id) === Number(viewer?.id));
+    const visibleReceipts = viewer?.role === 'admin' ? creditReceipts : creditReceipts.filter((p: any) => p.account_type !== 'employee' || Number(p.account_employee_id) === Number(viewer?.id));
     // The attendant sees what was corrected on their shift and what it did to
     // their shortage; customers' balances stay with administrators.
     const corrections = (shift.status === 'closed'

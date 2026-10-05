@@ -197,7 +197,8 @@ export default function InvoiceCustomerDetail() {
             </div>
             <CorrectionForm
               api={correctionApi}
-              entry={{ ...correcting, account_name: customer?.name }}
+              recordType="fuel_on_account"
+              target={{ ...correcting, account_name: customer?.name }}
               onDone={async () => { setCorrecting(null); await loadPage(); }}
               onCancel={() => setCorrecting(null)}
             />

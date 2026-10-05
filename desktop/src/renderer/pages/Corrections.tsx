@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ClipboardCheck, X } from 'lucide-react';
 import { correctionApi, desktopApproval, getCorrection, getCorrections } from '../services/api';
-import { CorrectionUndo, errorKindLabel } from '../../../../shared/ui/Corrections';
+import { CorrectionUndo, correctionTitle, lineText } from '../../../../shared/ui/Corrections';
 
 // The Corrections register (docs/CORRECTIONS.md): every correction made to a
 // closed record, newest first, with what it did and who approved it. A
@@ -14,9 +14,9 @@ const monthStart = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 };
-const actionText = (action: string) => (action === 'add' ? 'Added' : action === 'restore' ? 'Restored' : 'Reversed');
 const stageText = (stage: string | null) =>
-  stage === 'invoiced' ? 'on an issued invoice' : stage === 'draft' ? 'in a draft invoice' : stage === 'unbilled' ? 'not yet invoiced' : '';
+  stage === 'invoiced' ? 'on an issued invoice' : stage === 'draft' ? 'in a draft invoice' : stage === 'unbilled' ? 'not yet invoiced'
+    : stage === 'paid' ? 'paid' : stage === 'partial' ? 'partly paid' : stage === 'outstanding' ? 'unpaid' : '';
 
 export default function Corrections() {
   const [from, setFrom] = useState(monthStart());
@@ -89,7 +89,7 @@ export default function Corrections() {
               <tr key={row.id} onClick={() => void open(row.id)} className="border-t border-gray-100 hover:bg-blue-50 cursor-pointer">
                 <td className="px-3 py-2 font-medium text-blue-700">{row.number}</td>
                 <td className="px-3 py-2">{String(row.posting_date).slice(0, 10)}</td>
-                <td className="px-3 py-2">Fuel on account: {errorKindLabel(row.error_kind)}</td>
+                <td className="px-3 py-2">{correctionTitle(row.record_type, row.error_kind)}</td>
                 <td className="px-3 py-2 text-gray-600">{row.reason_label ? `${row.reason_label}: ` : ''}{row.reason_note}</td>
                 <td className="px-3 py-2">{row.approved_by_name}</td>
                 <td className="px-3 py-2">{row.kind === 'undo' ? 'Undo' : row.status === 'undone' ? 'Undone' : 'Posted'}</td>
@@ -104,7 +104,7 @@ export default function Corrections() {
           <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-4 space-y-3 text-sm">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold">
-                {detail.number}: {detail.kind === 'undo' ? 'Undo' : `fuel on account, ${errorKindLabel(detail.error_kind).toLowerCase()}`}
+                {detail.number}: {correctionTitle(detail.record_type, detail.kind === 'undo' ? 'undo' : detail.error_kind)}
               </h2>
               <button onClick={() => { setDetail(null); setUndoing(false); }} className="p-1 text-gray-400 hover:text-gray-700"><X size={19} /></button>
             </div>
@@ -129,22 +129,17 @@ export default function Corrections() {
             <table className="w-full text-xs">
               <thead className="text-left text-gray-500">
                 <tr>
-                  <th className="py-1">Line</th><th>Shift</th><th>Customer</th><th>Fuel</th><th className="text-right">Litres</th>
-                  <th className="text-right">Amount</th><th>Where it was</th><th>Document</th><th className="text-right">Shift result</th>
+                  <th className="py-1">Line</th><th>Shift</th><th>Where it was</th><th>Document</th><th className="text-right">Shift result</th>
                 </tr>
               </thead>
               <tbody>
                 {detail.lines.map((line: any) => (
                   <tr key={line.id} className="border-t border-gray-100">
-                    <td className="py-1">{actionText(line.action)} entry #{line.action === 'add' ? line.created_record_id : line.target_id}</td>
+                    <td className="py-1">{lineText(line)}{line.record_type === 'fuel_on_account' ? `, ${kes(line.amount)}` : ''}</td>
                     <td><Link to={`/shifts/${line.shift_id}`} className="text-blue-700 hover:underline">#{line.shift_id}</Link></td>
-                    <td>{line.party_name}</td>
-                    <td>{line.fuel_type}</td>
-                    <td className="text-right">{Number(line.litres).toFixed(2)}</td>
-                    <td className="text-right">{kes(line.amount)}</td>
                     <td>{stageText(line.stage)}{line.invoice_number ? ` ${line.invoice_number}` : ''}</td>
                     <td>{line.document_number || ''}</td>
-                    <td className="text-right">{Number(line.shift_effect) >= 0 ? '+' : '−'}{kes(Math.abs(Number(line.shift_effect)))}{line.charge_to ? ` (${line.charge_to})` : ''}</td>
+                    <td className="text-right">{Number(line.shift_effect) >= 0 ? '+' : '−'}{kes(Math.abs(Number(line.shift_effect)))}{line.charge_to && Number(line.shift_effect) !== 0 ? ` (${line.charge_to})` : ''}</td>
                   </tr>
                 ))}
               </tbody>

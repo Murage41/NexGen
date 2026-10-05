@@ -294,9 +294,10 @@ export const correctionApi = {
   post: (body: Record<string, unknown>) => financialPost('/corrections', body),
   undo: (id: number, body: Record<string, unknown>) => financialPost(`/corrections/${id}/undo`, body),
   reasons: () => api.get('/corrections/reasons'),
-  customers: async () => ((await api.get('/credit-accounts', { params: { type: 'customer' } })).data.data || [])
-    .filter((a: any) => a.billing_mode === 'invoice')
+  customers: async (billing: 'invoice' | 'money') => ((await api.get('/credit-accounts', { params: { type: 'customer' } })).data.data || [])
+    .filter((a: any) => (a.billing_mode || 'money') === billing)
     .map((a: any) => ({ id: Number(a.id), name: String(a.name) })),
+  categories: async () => ((await api.get('/expenses/categories')).data.data || []) as string[],
 };
 export const getMyPay = () => api.get('/payroll/me');
 export const getEmployeePay = (id: number) => api.get(`/payroll/employees/${id}`);
