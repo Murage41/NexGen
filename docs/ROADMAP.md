@@ -1,10 +1,17 @@
 # NexGen Roadmap: Pending Work
 
-The committed source of truth for **what is left to build**, in order.
-**Last checked against the code: 2026-09-24** (every item below was confirmed
-still missing; parts already built are marked). Current
-state and the station's version are in `docs/PROJECT-STATUS.md`; how to build
-is in `docs/ENGINEERING-STANDARDS.md`.
+The source of truth for **what is left to build**. Active sequence consolidated
+2026-10-15 at the owner's request, including the latest correction requirements,
+manual opening floats and the previously unimplemented plans. The owner said
+proceed, beginning with A1; deliver one checked release at a time.
+
+Read the complete bounded releases, dependencies and acceptance gates in
+[IMPLEMENTATION-STAGES.md](IMPLEMENTATION-STAGES.md). The opening-float design
+and worked amounts are in [SHIFT-FLOATS.md](SHIFT-FLOATS.md); the financial
+ripple trail is in
+[SIMPLIFIED-FINANCE-AND-SHIFT-CORRECTIONS.md](SIMPLIFIED-FINANCE-AND-SHIFT-CORRECTIONS.md).
+Current station state is in [PROJECT-STATUS.md](PROJECT-STATUS.md); build and
+release rules are in [ENGINEERING-STANDARDS.md](ENGINEERING-STANDARDS.md).
 
 Longer analyses (with real station data, so kept off the public repo) live on
 the development PC only, under `D:\NexGen\.claude\plans\`:
@@ -16,22 +23,52 @@ in a git worktree can read them by that absolute path.
 When an item ships: mark it done here (one line, commit hash), move its
 outcome into `docs/PROJECT-STATUS.md`, and update any user doc it changes.
 
-| Order | Item | Size |
-|---|---|---|
-| 1 | ~~M6: what attendants can see (view-only access, blind open shift)~~ **done, on the station 2026-09-26 (update #11, `157a9ec`)** | M |
-| 2 | ~~M7: tank low-stock alert~~ **done, on the station 2026-09-26 (update #12, `3131f77`)** | S |
-| 3 | ~~M8: station profile, logo, PDF documents~~ **done, on the station 2026-09-26 (update #13, `9bd40d5`)** | M |
-| 3b | ~~M10: correct an invoice customer's fuel entry before invoicing~~ **superseded 2026-09-30 by 3c (its code is reused)** | — |
-| 3c | **Corrections phase 1**: one Correction record; closed shifts read their snapshot; fuel on account first (adopted 2026-09-30; **done 2026-09-30, station update #14**) | L |
-| 3c-2 | **Corrections phase 2** (§3c): **2a built 2026-10-02, awaiting commit** (credit sales, debt receipts, drawer expenses, cash ↔ M-Pesa); 2b next: office payments, Move or write off a balance, Cancel invoice, notes, drawer wages | L + L |
-| 3d | Corrections phases 2–4 (other records, meters/deliveries/stock, ledger and period lock); placement relative to M9 for the owner to confirm | L |
-| 4 | M9: deliveries as Order → GRN → supplier invoice | L |
-| 5 | Invoice actions on the phone | M |
-| 6 | UI and design review (owner, 2026-09-21) | M |
-| 7 | Tier 4: named sessions, advances ledger, access hardening | L each |
-| 8 | Tier 5: deferred audit findings | long tail |
+## Active proposed sequence
 
-The owner sets the order; ask before reordering.
+**One release ID at a time.** Each semicolon below separates releases, not
+features to bundle together. The detailed plan gives each release its scope,
+exclusions and measurable result. Split any broad row further before code.
+
+| Order | Separate releases | Current state |
+|---|---|---|
+| A1 | Approved baseline and complete M-Pesa fee removal | Isolated candidate passes automated/scratch UI checks; publication authorised 2026-10-16 but network unavailable; station checkpoint pending |
+| A2 | Shared current-financial view with original close retained | Planned |
+| A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Planned; never linked to the previous shift |
+| A4 | Independently correct closing cash and M-Pesa totals | Planned complete release; selected local code reusable |
+| B1 → B3 | Customer credit/shift receipts; fixed issued consumption with monetary notes; unbilled fuel and draft/limit controls | Planned separate releases |
+| B4 → B7 | Expenses; employee debts/targeted repayments; office payments/refunds; drawer wage payments | Planned separate releases |
+| C1 → C2 | Actual supplier-payment cash flow; supplier-payables drift audit | Planned separate releases |
+| D1 → D5 | Fuel orders; GRNs/delivery document; supplier invoice matching; supplier price/document amendments; physical adjustments/returns | M9 and physical work split into releases; meter edits excluded |
+| E1 → E2 | Phone invoice issue; phone monetary notes/payments | Planned separate releases |
+| F1 → F2 | Shift usability; bounded business-page usability | Planned; split further by page where needed |
+| G1 → G5 | Authenticated identity/sessions; rights/isolation; handover; employee history/requests; admin audit | One access design, delivered in separate usable releases |
+| H1 → H3 | Advance debt linked to actual money out; targeted recovery/statement; optional explicit payroll/drawer integration | Reuse employee debts; a new general ledger is not required |
+| I1 → I2 | Period lock; originally reported/amended period evidence | Planned separate releases |
+| J1 → J10 | Remaining validation, dates/uniqueness, logging, backups, measured performance, parity, dependencies, owner-decided privacy, cost precision and API contracts/pagination | Recheck each audit finding; release one bounded slice at a time |
+
+Each release needs numeric examples, permissions/conflict checks, appropriate
+automated and desktop/phone checks, unchanged-record evidence, a user-guide
+update, and a real station checkpoint before dependent work. A3 must be a
+complete working float workflow before activation: no opening capture with
+old closing/report arithmetic. Original closes remain preserved throughout.
+
+Release IDs are **not station update numbers**. The station is recorded at
+`c5c4ee8`, migration `054`, update #15. Next installation is #16; its exact
+scope is assigned when ready. The former promise of float as update #17 is
+superseded by this measured sequence. Old 2b is not authorised as one shipment.
+
+Delivered foundation: M6 `157a9ec`, M7 `3131f77`, M8 `9bd40d5`, Corrections
+phase 1 `bcfb424`, phase 2a `c5c4ee8`. M10 is superseded and its code reused.
+
+## Earlier specifications and decision history
+
+The numbered sections below retain the technical evidence and earlier
+decisions. They are not additional parallel projects. Where an old sequence,
+fee behavior, issued-source edit, manual-only design or ledger proposal
+conflicts with the current stage plan and float specification, the latest
+requirements above govern. The detailed plan maps every old item to a stage.
+The owner sets implementation order; do not silently reorder this sequence
+or treat A1's implementation as permission to bundle later releases.
 
 ---
 
@@ -402,8 +439,12 @@ got this wrong and would have double counted fuel).
    or write off a balance" inside the Correction (open to invoice customers);
    invoice void becomes Cancel (a full credit note); manual litres notes fold
    in (price notes stay for commercial changes).
-3. Meter readings (a wrong reading moves two shifts), deliveries and supplier
-   documents (fuel cost), stock.
+3. Drawer wages (moved from 2b, owner 2026-10-05), deliveries and supplier
+   documents (fuel cost), stock. **Meter readings are never corrected**
+   (owner, 2026-10-05); Claude's recommendation on record: allow, in this
+   phase, an approved reading correction that fixes the shift and the next
+   one together, since a mistyped closing reading makes one shift look over
+   and the next short by the same amount.
 4. The ledger (Tier 4 #17's journal design), "books closed up to [date]", and
    reports as reported / as corrected.
 
@@ -515,7 +556,7 @@ not recomputed.
 **Won't solve:** deciding which record is wrong (the issue book and
 statements); eTIMS documents (the POS); other record types until phases 2–3.
 
-### Phase 2 (proposed 2026-09-30; 2a agreed and built 2026-10-02, awaiting commit)
+### Phase 2 (proposed 2026-09-30; 2a done, station update #15; 2b built 2026-10-05, awaiting commit)
 
 **Asked:** propose phase 2 (the other shift and customer records).
 
@@ -591,7 +632,13 @@ register, undo, attendant rule and "Correct" on the closed shift's lists:
 - Move balance stays until 2b, for moving a balance only (a wrong record is
   now corrected instead).
 
-**2b. The office records:**
+**2b. The office records** (go-ahead 2026-10-05):
+4. The shift's cash and M-Pesa (replaces 2a's "mixed up", owner
+   2026-10-05): the admin enters the right cash and M-Pesa totals. If the
+   total is the same it was a mix-up and the result does not change; if not,
+   the difference changes the shift's result under the attendant rule. The
+   reason says where the right figures come from (M-Pesa statement, deposit
+   slip). Cash physically missing is a real shortage, not a correction.
 5. Office payments (invoice customers, money customers, attendants): wrong
    payer, amount, method, date, never received or entered twice. Replaces
    payment reversal and fills the money-customer gap.
@@ -603,9 +650,10 @@ register, undo, attendant rule and "Correct" on the closed shift's lists:
    their status.
 8. Notes: litres notes and "name the attendant" leave the note form (the fuel
    entry's correction does it); price notes stay for commercial changes.
-9. Drawer wages: wrong amount or employee; a finished payroll is not reopened,
-   the difference goes on the next one. Rare (4 on the station), so last; it
-   can move to phase 3 if 2b grows.
+9. ~~Drawer wages~~: moved to phase 3 (owner, 2026-10-05). Correcting a wage
+   paid from the drawer touches four payroll calculations (`payroll.ts`,
+   `payrollAccounting.ts`, `payrollDetails.ts`, `employeePay.ts`); rare (4 on
+   the station).
 
 **2a as built** (2026-10-02): rules `creditSale.ts`, `debtReceipt.ts`,
 `drawerExpense.ts`, `collection.ts` (shared helpers in `common.ts`);
@@ -621,15 +669,497 @@ corrections; monthly expense totals use live rows (corrections count on the
 expense's date). Not built in 2a: Correct from a money customer's statement
 (the shift lists are the entry points).
 
+**2b as built** (2026-10-05): rules `collection.ts` (rewritten: the right
+cash and M-Pesa totals, kind `wrong_figures`; 2a's `wrong_split` stays
+readable), `debtReceipt.ts` (now a factory: shift receipts and
+`account_payment` for money customers' office payments), `invoicePayment.ts`,
+`attendantRepayment.ts`, `balance.ts` (move, write-off) and
+`invoiceCancel.ts`. Migration 055 rebuilds `correction_lines` so a line needs
+no shift (office records) and has a `record_date`, and adds links on
+`balance_moves`, `customer_invoices` and `invoice_payments`. The old routes
+(payment reversals, Move balance, void, standalone debit notes) answer 410
+`USE_CORRECTIONS`; notes by hand are price only. Decisions made while
+building:
+- Invoice customers are written off, never moved (their debt is on invoices).
+  A write-off is an invoice payment of method `write_off` settling the oldest
+  invoices, with its own accounting event (`invoice_write_off`, no cash).
+- An attendant repayment taken into a shift's drawer cannot change date (its
+  date is the shift's); its amount or payer changes that shift's result.
+- Cancel cannot be undone (it made credit notes): bill again with a new
+  invoice. Notes a correction made cannot be reversed by hand, and a
+  cancelled invoice takes no notes (both refused on the server).
+- Undoing a move reverses exactly what it did (the debts it paid owe again
+  with their own dates, the debt it added is cancelled, employee entries are
+  reversed), following Business Central's reverse-the-entry practice (cited
+  above); it is still listed as the opposite move so monthly totals show it
+  in the month it happened. Found in the browser test: the first version
+  made a fresh opposite move, which paid the oldest debt instead.
+- Previews of attendant repayments say what each employee owes before and
+  after, like customers'.
+
 **Ripple effects:** customer statements show corrected sales and payments
 with the correction number; daily report and dashboard use the as-closed
 filters for the new records; attendants see corrections on their shifts;
 Cancel's credit note gets its PDF (M8); eTIMS credit notes stay with the POS.
-Old buttons (Move balance, payment reversal, void) are removed when 2b ships.
+Old buttons (Move balance, payment reversal, void) are removed in 2b.
 
 **Won't solve:** meter readings, deliveries and stock (phase 3); locked months
 and reports as corrected (phase 4); duplicate M-Pesa payments at entry (shift
 collections are totals, so no transaction codes to check).
+
+---
+
+## 3e. Mistakes fixed by hand at station level (decided 2026-10-06, not built)
+
+**Direction reaffirmed 2026-10-09:** the owner wants closed shifts unchanged
+and admins to make separate manual entries following a clear guide. See §3g
+for the refined discussion and draft manual. Its non-cash classification is
+a recommendation still to agree; it differs from the no-marker choice below.
+
+**Asked (owner, 2026-10-06; replaces the Correct wizard, the closed-shift
+Edit idea and 2b):** a closed shift is closed: nothing is edited or corrected
+through it. A mistake is fixed by hand on the accounts involved, by an admin
+who knows what they are doing, with a written guide. Mostly two ordinary
+entries do it: a wrong debt is fixed by adding a payment, a wrong payment by
+adding a debt. Keep it as small as possible; don't automate what another
+feature already handles.
+
+**Decisions (owner, 2026-10-06, chosen from the listed scenarios):**
+- **Add a debt by hand** on a credit customer or an employee: amount, date,
+  **reason (compulsory)**. Only these debts can be reversed (a debt from a
+  shift is fixed with a payment). Credit limits are not checked.
+- **Reverse** exists on **payments** only (all of them: credit customers'
+  at the office or on a shift (new), invoice customers', attendants', wages)
+  and on debts added by hand. Reversing a payment taken on a shift says which
+  shift and attendant it was, so the admin can fix the attendant by hand; an
+  office payment says it was recorded at the office. Reversed entries stay in
+  the history, out of the balance.
+- **Payments by hand use the ordinary payment form**, no "no money" marker:
+  debts and payments are records of what is owed, not profit.
+- **Attendants:** a payment is tied to the one shortage or debt it pays
+  (including a debt added by hand), never oldest-first; more than that one
+  owes is refused. Repayments already recorded stay as they were applied.
+  Attendant shortages are records for accountability, never profit.
+- **Customers** keep paying oldest debts first. A genuine debt a customer
+  never pays stays owed (no write-off).
+- **Invoice customers:** a **litres credit** or **litres debit** on unbilled
+  fuel (fuel, litres, date, reason), billed on the next invoice at the agreed
+  price; tank stock unchanged; reversible until billed. Issued invoices: litres
+  and price notes as now; Void stays for unpaid invoices.
+- A wrong or made-up shift expense is left as recorded (the attendant gets a
+  debt); a receipt found later only gets a payment on the attendant.
+- **Desktop only**, admin name and PIN.
+- **Removed:** the closed shift's Correct / Add missing / cash and M-Pesa
+  buttons and the fuel-history Correct (desktop and phone; past corrections
+  stay visible, the register read-only); Move balance (past moves stay
+  listed); "the attendant owes it" on invoice notes; standalone debit notes.
+  2b is set aside on a local branch, never sent to the station.
+- **Float:** recorded by admins only (built after this).
+
+**Today (verified 2026-10-06):** profit is shift sales − fuel cost − wages −
+expenses (`routes/reports.ts` 379–380, 782–783): debts, payments and
+attendant shortages are not in it. The Cash Flow report counts office
+payments as money received, except Move balance's adjustments
+(`services/receivableReporting.ts` 312–315). The database guards protect
+only a closed shift's recorded facts (migrations 053, 054). Credit
+customers' payments and debts have no Reverse; no debt can be added by hand;
+attendants' repayments pay shortages oldest first.
+
+**Where the decisions differ from common practice (told to the owner
+2026-10-06):**
+- Without a marker, a payment added to fix a mistake shows in the **Cash
+  Flow** report as money received (profit is unaffected). Professional
+  systems post such a correction against an adjustment account, never cash.
+  To confirm with the owner; the guide states it.
+- A customer debt that will never be paid is normally written off as a loss
+  (with KRA's VAT bad-debt relief); here it stays owed.
+- A wrong shift expense stays in expense totals and profit.
+
+**The guide (replaces `CORRECTIONS.md` and `CLOSED-SHIFT-CORRECTIONS.md`):**
+
+| Mistake | What the admin does |
+|---|---|
+| Credit on the wrong customer | A payment on the wrong one; a debt on the right one |
+| Credit never given (covering a shortage) | A payment on the customer; a debt on that shift's attendant |
+| Credit given but not recorded | A debt on the customer; a payment on the attendant for that shift's shortage |
+| Credit amount wrong | The difference as a payment or debt on the customer, the opposite on the attendant |
+| Payment on a shift that never came in | Reverse it (NexGen names the attendant); a payment on the attendant for that shortage |
+| Payment on the wrong customer, wrong amount, twice | Reverse it; record the right one |
+| Debt added by hand wrongly | Reverse it |
+| Invoice fuel wrong, not yet billed | A litres credit or litres debit |
+| Invoice fuel wrong, already billed | A litres note |
+| Cash and M-Pesa mixed up (same total) | Nothing to fix; Flag the shift with a note |
+| Cash or M-Pesa total wrong | A debt or a payment on the attendant |
+| Expense wrong or made up | A debt on the attendant |
+| Expense receipt found later | A payment on the attendant |
+
+**Tasks (update #16), in order:** (1) set 2b aside; (2) remove the listed
+tools (UI and their routes; history stays readable); (3) add a debt by hand
+and its Reverse; (4) Reverse on credit customers' payments with the
+shift/attendant notice; (5) attendants' payments tied to one shortage or
+debt; (6) litres credit and debit on unbilled fuel; (7) the guide; (8) tests
+(money and permissions, with planted bugs), a scratch copy of the station's
+latest data (closed shifts' figures unchanged), desktop checks. Then update
+#17: the float. Later, to decide: office expenses, supplier bills and
+payments, and refunds, which today are edited or deleted in place.
+
+**Won't solve:** deciding which record is wrong (issue book, statements,
+dips); the station's own cash; pump readings (never changed); deliveries and
+stock (M9, phase 3).
+
+---
+
+## 3f. Fresh operational review of reversals, corrections and returns (proposal, 2026-10-08)
+
+**2026-10-09:** the owner favours separate manual account entries and frozen
+closed shifts. The automatic Fix entry/replacement approach below was not
+adopted; the operational analysis remains useful. See §3g.
+
+**Asked:** reason from the station's operations and possible mistakes, without
+using the existing correction tools or earlier designs as the starting point.
+Recommend a professional approach with as few user actions as possible.
+**Discussion proposal only:** the owner has not adopted this design or asked
+for implementation. It does not itself replace the decision in §3e.
+
+**Operating facts:** fuel is received into tanks and dispensed through pumps;
+customers pay immediately or owe for fuel; invoice customers are billed for
+their recorded fuel at agreed prices. Payments can settle several debts.
+The shift reconciles fuel sales, money collected, credit, drawer expenses,
+wages and float. Office payments and supplier transactions also occur outside
+shifts. Employee wages, advances and accountability are separate obligations.
+
+**Recommendation:** ordinary transaction screens own their corrections. One
+admin action, **Fix entry**, offers **Details are wrong** or **This did not
+happen**. For wrong details, use the original form, prefilled. Preserve the
+original and post linked entries that remove the wrong effects and record the
+right ones; do the entire approved change together. The admin supplies facts,
+not ledger lines. An unposted draft can simply be edited.
+
+A missing event uses its ordinary form, with the actual event date and today's
+recording date. A real refund or return also uses its normal business form:
+it is a new event, not an assertion that the original event never happened.
+Only actions appropriate to a record's stage are offered. This is one familiar
+interaction, not one identical posting rule for every business record.
+
+**The three distinctions that govern every record:**
+- A recording mistake changes the books to match evidence. It does not imply
+  new physical cash or stock movement.
+- A refund is money actually returned, with amount, recipient, method, date
+  and reference. A credit note or reassignment is not a refund.
+- A return is goods physically received back or sent to a supplier. The
+  financial credit and stock movement are linked but distinct; quantities
+  enter usable tank stock only when actually received and accepted under the
+  station's handling process.
+
+**Scenarios and effects:**
+
+| What happened | Treatment |
+|---|---|
+| Fuel debt assigned to the wrong customer | Replace the debtor allocation. Total fuel dispensed, stock and money received do not change. |
+| Wrong litres, fuel, price or duplicated customer fuel entry | Correct the billing record. If invoiced, use linked billing documents. Do not count a second pump sale or invent returned litres. |
+| Supplied fuel omitted from the customer's account | Add the missing billing record, linked to the supply; fuel already counted at the pump is not dispensed again. |
+| Real payment assigned to the wrong customer, invoice or shortage | Correct its allocation; retain the real money received. Unapply the original settlement exactly before applying the right one. |
+| Payment duplicated or never received | Reverse the false record and restore the exact obligations it wrongly settled. This is not cash paid back to the customer. |
+| Customer paid correctly, but the station later lost the money | Retain the customer's valid receipt. Record and investigate the station's shortage/loss; the customer does not owe twice. |
+| Cash recorded as M-Pesa, or wrong recorded collection total | Correct the classification or recorded amount using evidence. An unexplained gap remains a shortage. |
+| Expense or wage payment omitted, duplicated or wrongly described | Correct the obligation and the actual funding record as appropriate. A receipt found later is evidence of the old expense, not a new employee repayment. |
+| Real wage/payment went to the wrong recipient or exceeded what was due | Keep the real outgoing payment; record the recoverable amount or authorised loss separately and pay the intended recipient if still owed. |
+| Supplier invoice quantity differs from the fuel actually received | Keep the verified receipt quantity; resolve the bill with the supplier. A billing dispute does not create a tank movement. |
+| Delivery receipt quantity or cost was recorded wrongly | Correct from receipt/dip evidence. Show stock and cost consequences, including fuel already sold. A full reversal is unsuitable when dependent movements remain. |
+| Wrong transcribed pump or dip reading | Treat as a verified measurement-record correction, not an ordinary payment reversal. Check the measurement boundaries and affected neighbouring shifts; equipment faults and real losses require investigation. |
+
+**Customer billing:** before issue, correct the unbilled fuel or invoice draft.
+After issue, a reduction uses a credit note against the original invoice; an
+increase uses an appropriate linked additional bill/debit document. A full
+cancellation uses a full credit note; a small reduction can use a partial one.
+Keep supplied fuel valid and bill it exactly once if replacing an invoice.
+Existing real payments remain recorded; any excess is customer credit/refund
+due until applied or actually refunded. Fiscal changes must be matched in the
+fiscal invoicing system, not merely in the internal account.
+
+**Shift and employee accountability:** preserve the signed/as-closed report;
+show later approved changes and the resulting reconciliation alongside it.
+Correct operational facts before deciding responsibility. A correction can
+change the shortage, but does not itself prove employee liability. Any charge
+or revised responsibility allocation must be explicitly approved and explained,
+especially with two attendants. An actual loss is not cured by inventing a
+receipt. Wages, advances and shortage recoveries remain distinct. If an
+employee already paid a shortage later reduced by evidence, preserve their
+payment and show the resulting credit/refund due.
+
+**Dates and reports:** retain the actual event date, original record link,
+recording/correction timestamp and financial posting date. Post corrections
+in an allowed accounting period; do not silently alter a locked report.
+Balances and appropriate corrected reports must remove false original
+effects. Reassigning a real payment is not a second receipt; removing a
+duplicate receipt is not a refund. Reports distinguish corrections to
+earlier records from new physical receipts/payments. A supplier cost
+correction must account for both remaining stock value and affected cost of
+sales, with the adjustment shown rather than secretly rewriting a signed
+close report.
+
+**Smallest necessary controls:** original history retained; compulsory reason
+and identified admin approval; one-time reversal; exact settlement reversal;
+duplicate-submit protection; relevant evidence/reference; and a short preview
+of the affected customer/employee balance, cash/M-Pesa, stock and profit.
+Dependencies such as issued invoices, reconciled payments or consumed stock
+select the appropriate treatment or require the related correction first.
+
+**Scope limit:** this workflow records evidenced facts and approved decisions.
+It cannot identify stolen cash, prove a disputed delivery, establish who is
+responsible or make a genuine unpaid debt disappear. Those need reconciliation,
+investigation, supplier/customer agreement or an explicit loss/write-off
+decision. The return-handling process and employee-liability policy need their
+own operational decisions; the correction screen should not invent them.
+
+**Tasks if adopted:** (1) agree the record stages and accountability policy;
+(2) map each operation to physical cash/stock, receivable/payable and cost
+effects; (3) build the ordinary-screen workflow, beginning with customer
+payments and debts; (4) add issued-invoice documents, then expenses/employee
+records; (5) handle stock/cost dependencies as a separate scoped piece;
+(6) verify representative mistakes, settled records, refunds and returns,
+including that false cash receipts or imaginary stock are never created.
+
+**Primary sources checked 2026-10-08** (the proposed station workflow is our
+design inference from these practices):
+- Microsoft Business Central: [reverse postings](https://learn.microsoft.com/en-ca/dynamics365/business-central/finance-how-reverse-journal-posting)
+  (opposite entry then correct entry; one reversal),
+  [payment applications](https://learn.microsoft.com/en-us/dynamics365/business-central/receivables-how-apply-sales-transactions-manually)
+  (allocation separate from receipt; unapplication reopens the original entries).
+- Microsoft Business Central: [sales returns/cancellations](https://learn.microsoft.com/en-us/dynamics365/business-central/sales-how-process-sales-returns-cancellations)
+  (credit memo, optional return process and refund payment),
+  [invoice correction/cancellation](https://learn.microsoft.com/en-ca/dynamics365/business-central/sales-how-correct-cancel-sales-invoice)
+  (paid/part-paid invoices require credit-memo treatment).
+- Dynamics 365 Commerce: [shift reconciliation](https://learn.microsoft.com/en-us/dynamics365/commerce/fin-recon)
+  (computed versus declared amounts, per-tender adjustment and audit notes).
+- Microsoft Business Central: [cost adjustment](https://learn.microsoft.com/en-us/dynamics365/business-central/design-details-cost-adjustment)
+  (cost changes flow to remaining inventory and related sold stock; closed-period handling).
+- KRA: [eTIMS online portal guide](https://www.kra.go.ke/images/publications/eTIMS-Onlineportal-User-guide-2024.pdf)
+  (credit note linked to processed invoice, partial/full selection and reason).
+
+---
+
+## 3g. Manual account corrections with frozen shifts (owner direction, 2026-10-09; not built)
+
+**Asked:** avoid a complicated correction system and broad automation. Keep
+closed shifts untouched. Give the admin a clear manual explaining separate
+entries on the accounts involved; for example, a payment-like entry clears
+a wrong customer debt, then the admin separately adds a valid debt to the
+responsible attendant.
+
+**Direction accepted from the owner:** no automated Fix entry workflow,
+recalculated close or automatic cross-account postings. Ordinary debt/payment
+forms, payment/manual-debt reversal, billing notes and the admin's judgement
+carry the procedure. Original history and each later entry remain visible.
+The admin completes and checks both sides of any reassignment by hand.
+
+**Draft user manual:** `docs/MANUAL-ACCOUNT-CORRECTIONS.md`. It covers wrong,
+missing and duplicated customer debts/payments; attendant liability and
+repayments; unbilled and billed invoice fuel; cash/M-Pesa and measurement
+notes; expenses, wages and advances; supplier accounts; refunds and stock
+movements. It is a discussion draft, not a claim that these tools are built.
+
+**Small recommendation still to agree:** one **Account adjustment** option
+in the ordinary payment/debt form. It adjusts what is owed without reporting
+cash received/paid. This keeps the owner's payment-like method while avoiding
+false cash flow; it introduces no correction wizard or automatic second
+entry. Genuine cash/M-Pesa/bank payments retain those methods. The previous
+no-marker decision is recorded in §3e and is not silently overwritten.
+
+**Critical manual rules:** a wrong customer name does not itself prove an
+employee debt. An employee is charged only for additional confirmed
+responsibility not already assessed for the incident. Check original charges,
+prior adjustments and repayments, not only today's unpaid balance. A false
+shift receipt can have inflated employee debt; reversing it may require an
+employee credit, not another charge. A genuine customer payment lost later
+remains valid. Corrections target the identified debt; real payments remain
+recorded, and overpaid employees retain credit/refund due.
+
+**Limits:** changing account balances does not correct frozen litres, cash
+classification or expense totals. Notes explain the historical discrepancy;
+any needed expense, stock or valuation correction is a separate station-level
+entry outside the shift. The narrow treatment of those adjustments, including
+costs on fuel already sold, needs agreement; do not disguise them as receipts.
+
+**Tasks before building:** settle the adjustment classification and the
+scope of station-level expense/stock/cost adjustments; walk through the draft
+manual against representative scenarios; agree the smallest forms and reversal
+permissions; then build only those tools, with money/permission checks. No
+implementation or commit has been requested by this discussion.
+
+**Professional basis:** the ordinary-form manual sequence is our design
+inference. [Odoo credit notes/refunds](https://www.odoo.com/documentation/saas-18.1/applications/finance/accounting/customer_invoices/credit_notes.html)
+distinguishes credit, actual refund payment and physical return;
+[Business Central payment applications](https://learn.microsoft.com/en-us/dynamics365/business-central/receivables-how-apply-sales-transactions-manually)
+reopens the exact settled entries when an application is reversed. Other
+relevant primary sources are recorded with the manual and §3f.
+
+---
+
+## 3h. Editable closed-shift financial entries: feasibility (question, 2026-10-15)
+
+**Asked:** can cash/M-Pesa collected, credit sales, debt receipts, invoice
+consumption and expenses on a closed shift be editable, with pump readings
+fixed, without corrupting following shifts or requiring heavy processing?
+Which is easier/better: the original or revised shift figures?
+**Assessment only:** no change to the approved manual direction, code,
+database guards or deployment has been requested.
+
+**Conclusion from the current code:** this is technically feasible without
+replaying later shifts' physical stock/cost history, provided pump readings,
+shift dates/times, tank/pump assignments, deliveries, stock adjustments and
+wage/compensation records also remain unchanged. It is not currently safe to
+unlock the ordinary edit controls: the application and database deliberately
+refuse these edits, and several financial records must remain consistent.
+
+**Why later physical shifts are independent:**
+- The next shift copies the preceding closed pump's closing readings, not
+  its cash, customer debts, expenses or variance (`routes/shifts.ts:564–586`).
+- Opening a shift has no opening-cash/float carry-forward; current
+  accountability has no opening-float term (`shifts.ts:556–586`,
+  `services/shiftAccountability.ts:50–84`). Future float work must revisit
+  this assumption if it introduces a linked cash handover.
+- Tank stock is deliveries + stock adjustments − closed pump litres
+  (`services/stockCalculator.ts:30–65`). Invoice customer litres classify
+  fuel already measured by the pumps; they are not another stock deduction.
+- FIFO consumption at close uses the per-tank pump sales
+  (`services/tankStock.ts:85–129`, `routes/shifts.ts:1789–1833`). None of the
+  listed financial changes requires FIFO replay while those inputs stay fixed.
+
+**Current protections and separate records:** routes require an open shift
+and, for collections, re-check open status inside the write transaction
+(`shifts.ts:952–975`). Migrations 053 (`172–179`) and 054 (`43–45`) protect
+closed financial rows and immutable close snapshots. The closed detail
+deliberately displays snapshot figures and as-recorded lists
+(`shifts.ts:309–403`, `services/shiftSnapshot.ts:48–111`). The close posts a
+separate employee variance entry (`shifts.ts:1883–1888`). Changing a source
+amount alone would leave snapshots/employee balances stale and could make
+reports disagree with the screen. Removing one guard does not solve this.
+
+| Requested change | Existing foundation and affected financial data |
+|---|---|
+| Cash/M-Pesa split, total unchanged | Already corrected on station phase 2a. Variance unchanged; tender totals, fee/net and reports need the applicable-rate adjustment. |
+| Cash/M-Pesa total changed | Pure one-shift arithmetic and employee variance change. Uncommitted 2b supports the right absolute figures; station phase 2a supports split-only. Neither edits the original row. |
+| Credit sale added, removed or reassigned | Existing credit correction handles both `credits` and `shift_credits`, releases prior payment allocations to held credit, applies credit and recomputes affected accounts. A paid debt needs this allocation handling; changing only its amount/customer is unsafe (`correctionRules/creditSale.ts:131–188`). |
+| Debt receipt added, removed or changed | Existing receipt correction reverses exact settlements and posts a replacement; refunded/consumed allocations impose checks (`receivablePayments.ts:525–609`). Gross cash/M-Pesa already includes these receipts; validate the whole resulting reconciliation rather than increasing collections again automatically. |
+| Unbilled/draft invoice consumption | Existing fuel correction replaces entries and refreshes reserved drafts. Validate resulting invoice litres against frozen meter litres by fuel and pump (`invoiceConsumption.ts:89–158`, `invoiceDraftReservations.ts:219–289`). |
+| Already-issued invoice consumption | Existing fuel correction uses notes and accounting adjustments. Issued totals, real payments, held credit, agreed-price revenue and stored PDF must stay consistent; a direct quantity/customer overwrite is unsuitable (`correctionRules/fuelOnAccount.ts:229–295,361–390`, `documents.ts:6–10,58–60`). |
+| Expense added, removed, amount/category changed | Existing expense correction changes the live expense and shift-result adjustment. Expenses/profit and employee responsibility need consistent reporting; no stock/cost replay is required. Wage expense/payment records remain a separate payroll concern. |
+
+**Financial effects can extend beyond one shift without being corruption.**
+Customer repayments/held credit can settle debts from later shifts, so
+correcting an earlier debt may change those allocations and balances
+(`receivablePayments.ts:625–689`). Employee statements read the employee's
+ledger and apply real repayments chronologically (`employeeVariances.ts:145–313`).
+If shift A owed 2,000 and B owed 1,000, and 2,000 was repaid, reducing A's
+valid debt to 1,000 can free 1,000 to cover B. B's original readings, sales,
+cash and original shortage do not change; its amount still owed does.
+
+**Performance:** reconciliation is a small sum over one shift's rows, not a
+historical replay (`shiftAccountability.ts:50–84`). Account updates read the
+affected customers' debts/allocations; employee statements already read and
+allocate that employee's ledger. Those workloads grow with the affected
+account histories, but these edits do not require recalculating every shift,
+delivery batch or tank cost. No new edit workflow or full-database performance
+benchmark exists, so this is an architectural assessment, not a speed guarantee.
+
+**Avoid reopening and closing again:** close consumes FIFO, inserts tank
+snapshots, generates earnings, posts employee variance, applies held customer
+credit and recomputes stock caches/dips (`shifts.ts:1797–1924`). Reusing that
+workflow for financial amendments risks duplicate effects. Leave status closed
+and use a dedicated, atomic financial amendment with conflict checking and
+audit history; reuse the existing affected-account services.
+
+**Original versus revised:** keeping the immutable original close is easiest
+with the current architecture and preserves signed-off evidence. Showing the
+latest corrected figures as a clearly labelled working view can be more
+useful operationally, with **Original at close** available in history. Keep
+both meanings; never silently overwrite the signed snapshot. The existing
+snapshot plus correction lines already provide much of this foundation
+(`corrections.ts:615–634`), but a complete revised detail view and consistent
+daily/monthly/dashboard/cash-flow presentation still need work. Original-only
+storage does not freeze all historical reports: several reports read live rows.
+
+**Tasks if this direction is chosen:** define the editable fields and keep
+readings/status/physical inputs fixed; choose the original/revised display and
+reporting policy; save each approved amendment and its affected accounts in
+one transaction; handle billed/paid/refunded dependencies explicitly; test that
+later readings, stock, FIFO and wages are unchanged while expected customer
+and employee allocations change correctly. This remains an alternative under
+discussion, not an implementation go-ahead.
+
+**Verification this session:** source reviewed against station HEAD `c5c4ee8`
+and the uncommitted 2b differences. Seven synthetic calls to the pure
+accountability function confirmed unchanged pump sales and the expected
+variance signs for cash, split, credit, receipt, expense and invoice-fuel
+changes. No database was opened, backend started or new editable-shift path
+tested; existing suite assertions cover correction/allocation/snapshot
+behaviour, not unrestricted editing.
+
+**Professional cross-check (primary sources, checked 2026-10-15):**
+- [Dynamics 365 Commerce shift management](https://learn.microsoft.com/en-us/dynamics365/commerce/shift-drawer-management),
+  Close shift: finalized shifts cannot be resumed/modified. This supports
+  keeping the signed close separate from later changes; it is not proof that
+  another audited amendment design is technically impossible.
+- [Business Central invoice correction](https://learn.microsoft.com/en-us/dynamics365/business-central/sales-how-correct-cancel-sales-invoice):
+  issued/paid invoices have document dependencies; part/fully paid invoices
+  use corrective credit memos rather than simple edits.
+- [Business Central payment application](https://learn.microsoft.com/en-us/dynamics365/business-central/receivables-how-apply-sales-transactions-manually):
+  unapplying a settlement reopens its original entries; allocation changes
+  are distinct from changing the physical receipt.
+
+---
+
+## 3i. Simplify finance; independent collection totals; fixed issued consumption (owner, 2026-10-15)
+
+**Requirements:** remove M-Pesa fees completely. Cash and M-Pesa are separate
+correctable shift totals (the owner explicitly confirmed totals, not a receipt
+for every transaction); their sum may change. Retain tank levels, sale profit,
+expenses, customer debts, invoice fuel, recoverable employee deficits,
+deliveries, dips and supplier debts without building another complicated
+correction system. Once fuel is invoiced, keep its source consumption fixed
+and handle money payable/paid with notes and actual payments.
+
+**Concrete specification and full ripple trail:**
+`docs/SIMPLIFIED-FINANCE-AND-SHIFT-CORRECTIONS.md`. This records the separation
+of physical fuel, sale/cost/expense recognition, debts and cash movement, with
+current-code evidence and primary accounting/ERP sources. Customer/employee
+repayments settle debts, not another sale. Invoice price differences/notes can
+change revenue once. Supplier payments settle payables; fuel cost is allocated
+when sold, not deducted again when the supplier is paid.
+
+**Built in this session, uncommitted:** removed fee service/configuration API,
+settings, calculation, report/dashboard totals and desktop/mobile displays.
+Collections remain actual gross amounts. Existing historical fields and pushed
+migrations are retained but unused; collection/correction responses omit old
+fee fields. No migration or financial-history rewrite. Independent cash/M-Pesa
+totals already present in uncommitted 2b are now explicitly tested, including
+unchanged readings, tank records and FIFO consumption.
+
+**Validation:** all 36 backend suites and backend/desktop/mobile type checks
+pass; mobile production build passes; two planted fee regressions caught and
+restored. Scratch-copy receivables audit found no issues and the fingerprint
+check printed `REAL-DB-UNCHANGED`. Isolated servers stopped. Visual verification
+was blocked when Computer Use could not establish the browser URL; no further
+UI automation was attempted. Nothing committed, pushed or deployed.
+
+**Remaining changes proposed:** one current-financial reader for independent
+cash/M-Pesa adjustments plus active financial rows, shared by detail/daily/
+dashboard/period reports; preserve original close/history. Reuse current
+posting/allocation helpers and approved responsibility decisions. Enforce the
+new invoice boundary alongside suitable monetary note actions: current issued
+fuel correction replaces source rows, and 2b restricts some manual notes, so
+changing only a guard would strand errors. Apply normal exposure/approval
+checks to corrected unbilled fuel. Do not reopen/reclose or replay stock/FIFO
+for the requested financial scope.
+
+**Additional relevant finding:** cash flow currently treats delivery value as
+money paid even when the supplier bill is unpaid. Use actual posted supplier
+payments after checking historical coverage; this is a separate report change,
+not a reason to change inventory valuation or supplier debt.
+
+The broader financial edit/note/report work above is specified, not built.
+It does not authorise shipping all of the previously set-aside 2b changes.
 
 ---
 
@@ -666,9 +1196,10 @@ invoice number/file, `pricing_status` pending_price | priced). FIFO layers
 ## 5. Invoice actions on the phone
 
 The phone shows invoice customers read-only. Missing: issue an invoice, record
-an invoice payment, post credit/debit notes (with the attendant option) and
-reverse them. Reuse `shared/ui/InvoiceNote.tsx` (it already supports the
-mobile approval mode: the signed-in admin approves, no PIN prompt).
+an invoice payment, post monetary credit/debit notes and permitted reversals.
+Stages E1/E2 reuse the agreed B2/B6 rules and existing shared components; do
+not restore the old automatic attendant-liability option or issued-source
+editing. The signed-in phone admin approves through the existing mode.
 
 ---
 
@@ -684,13 +1215,14 @@ review both apps screen by screen when this item is reached.
 
 ## 7. Tier 4 (each its own piece of work)
 
-- **#16 Named sessions on desktop:** "who is using this?" at start-up instead
-  of the shared desktop-admin identity, so actions and approvals carry a real
-  person. Build on `services/approval.ts#resolveApprover`.
+- **#16 Named sessions on desktop:** G1 incorporates this into authenticated
+  identity and revocable sessions, avoiding a throwaway name-only picker.
+  Existing approval helpers can be reused.
   Detail: `.claude/plans/system-improvements-plan.md` Part C.
-- **#17 Advances/loans ledger:** chart of accounts, journal entries,
-  `ledger_parties`, advances and recoveries (closes the watchman-advance gap).
-  Detail: `.claude/plans/ledger-system-design.md`.
+- **#17 Advances/loans:** H1-H3 reuse labelled employee debt and real money
+  movements/targeted receipts. The old chart-of-accounts/journal proposal is
+  reference only, not a prerequisite or approved implementation scope.
+  Historical detail: `.claude/plans/ledger-system-design.md`.
 - **#18 Full access hardening:** desktop login replacing the shared key,
   revocable session registry, `login_enabled` separate from employment,
   rights matrix, handover/dispute workflow, admin accountability page, pilot.
@@ -707,14 +1239,15 @@ Still open:
 - Logging: about 99 of 148 route catch blocks log nothing; no
   `unhandledRejection` / `uncaughtException` handlers in `src/index.ts`.
 - No `updated_by` / `deleted_by` attribution; no admin audit-log view.
-- Supplier payables have no drift check (the advances ledger would fix it).
+- Supplier payables need their own drift check (C2); an advances system does
+  not reconcile supplier bills/payments.
 - No `tank_dips` index; some N+1 queries on hot paths.
 - Backups: `backup:database` exists, but no retention and no periodic
   restore-verification.
 - Remaining phone/desktop parity gaps (list them when this is reached).
 
 Already done since the audit (don't rebuild): pump/tank fuel-type check,
-overpayments held as customer credit, M-Pesa settings and dip trends on the
-desktop (Tier 3).
+overpayments held as customer credit and dip trends on the desktop (Tier 3).
+The old M-Pesa fee settings are now deliberately retired by A1.
 
 Detail with file:line citations: `.claude/plans/production-readiness-debug-plan.md`.

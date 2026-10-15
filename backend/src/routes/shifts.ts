@@ -19,7 +19,6 @@ import { recomputeCache, consumeBatchesFIFO, recomputeDipsForTankFromDate } from
 import { shiftTankMovement } from '../services/tankStock';
 import { compensate } from '../services/meterRollover';
 import { recomputeAccountBalance } from '../services/accountBalance';
-import { computeMpesaFee } from '../services/mpesaFees';
 import {
   listShiftHistory,
   getShiftHistoryNeighbors,
@@ -78,6 +77,14 @@ const BLIND_CLOSE_FIELDS = [
   'total_accounted',
   'variance',
 ] as const;
+
+function collectionView(row: any) {
+  if (!row) return row;
+  const collection = { ...row };
+  delete collection.mpesa_fee;
+  delete collection.mpesa_net;
+  return collection;
+}
 
 function staleShiftWrite(section: 'readings' | 'collections', currentRevision: number) {
   const label = section === 'readings' ? 'Pump readings' : 'Cash and M-Pesa collections';
@@ -295,7 +302,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       ? calculateShiftEarnings(compensationPlan, readings)
       : [];
 
-    const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
+    const collections = collectionView(await db('shift_collections').where({ shift_id: shift.id }).first());
     const closeReconciliation = await db('shift_close_reconciliations').where({ shift_id: shift.id }).first();
     const shiftReview = shift.status === 'closed' ? await getShiftReview(db, Number(shift.id)) : null;
     const reviewEvents = shift.status === 'closed'
@@ -968,9 +975,6 @@ router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, validate(upd
       });
     }
 
-    // Auto-compute Lipa na M-Pesa Buy Goods fee + net (Phase 1A)
-    const { fee: mpesaFee, net: mpesaNet } = await computeMpesaFee(mpesaAmount);
-
     const result = await db.transaction(async (trx) => {
       const changed = await trx('shifts')
         .where({
@@ -1000,8 +1004,6 @@ router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, validate(upd
         mpesa_amount: mpesaAmount,
         credits_amount: creditsAmount,
         total_collected: totalCollected,
-        mpesa_fee: mpesaFee,
-        mpesa_net: mpesaNet,
       };
       if (existing) {
         await trx('shift_collections').where({ shift_id: req.params.id }).update(values);
@@ -1012,7 +1014,7 @@ router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, validate(upd
       const collections = await trx('shift_collections').where({ shift_id: req.params.id }).first();
       return { collections, revision: currentRevision + 1 };
     });
-    res.json({ success: true, data: result.collections, revision: result.revision });
+    res.json({ success: true, data: collectionView(result.collections), revision: result.revision });
   } catch (err: any) {
     res.status(err.httpStatus || 500).json({
       success: false,

@@ -5,20 +5,11 @@ import { cents, closedShift, httpError, kes, methodName, positiveAmount, type Co
 
 // Cash and M-Pesa recorded the wrong way round on a closed shift's
 // collections (one total of each per shift). The drawer's total and the
-// shift's result do not change; only the split, and with it the M-Pesa fee at
-// the shift's rate. Nothing is rewritten: the correction's two lines (out of
-// one, into the other) are the record, shown on the shift and in the register.
+// shift's result do not change; only the split. Nothing is rewritten: the
+// correction's two lines (out of one, into the other) are the record, shown
+// on the shift and in the register.
 
 const ERROR_KINDS = ['wrong_split'];
-
-// The shift's M-Pesa fee rate (services/mpesaFees.ts reads the same table, but
-// on its own connection, which a correction's transaction would block).
-async function feeRate(conn: Conn, date: string) {
-  const row = await conn('mpesa_fee_config').where('effective_date', '<=', date)
-    .orderBy('effective_date', 'desc').orderBy('id', 'desc').first('fee_value');
-  return row ? Number(row.fee_value) : 0.55;
-}
-const fee = (gross: number, rate: number) => Math.round(gross * (rate / 100) * 100) / 100;
 
 // The split as closed plus earlier corrections of it.
 async function currentSplit(conn: Conn, shiftId: number) {
@@ -46,10 +37,8 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
   if (cents(amount) > cents(available)) {
     throw httpError(`Shift #${shift.id} shows ${kes(available)} in ${methodName(fromMethod)}; no more than that can move.`, 400, 'AMOUNT_EXCEEDS_SPLIT');
   }
-  const rate = await feeRate(conn, shift.date);
   const mpesaAfter = roundMoney(split.mpesa + (to === 'mpesa' ? amount : -amount));
   const cashAfter = roundMoney(split.cash + (to === 'cash' ? amount : -amount));
-  const feeDelta = roundMoney(fee(mpesaAfter, rate) - fee(split.mpesa, rate));
   const base = {
     record_type: 'collection', target_id: Number(split.collections.id), shift_id: shift.id, shift_open: false, party_type: null,
     party_id: null, party_name: null, fuel_type: null, litres: null, unit_price: null, amount, stage: null, invoice_id: null,
@@ -57,7 +46,7 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
   };
   const lines: PlanLine[] = [
     { ...base, seq: 1, action: 'reverse', method: fromMethod },
-    { ...base, seq: 2, action: 'add', method: to, fee_delta: feeDelta },
+    { ...base, seq: 2, action: 'add', method: to },
   ];
   return {
     effective_date: shift.date,
@@ -67,7 +56,6 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
     effects: [
       `Shift #${shift.id}: ${kes(amount)} recorded as ${methodName(fromMethod)} was ${methodName(to)}.`,
       `Cash ${kes(split.cash)} → ${kes(cashAfter)}; M-Pesa ${kes(split.mpesa)} → ${kes(mpesaAfter)}.`,
-      `The M-Pesa fee ${feeDelta >= 0 ? 'rises' : 'falls'} by ${kes(Math.abs(feeDelta))} (${rate}% at the shift's rate).`,
       "The drawer's total and the shift's result do not change.",
     ],
   };

@@ -32,6 +32,9 @@ async function main() {
     await db.migrate.latest();
     await migration.up(db);
     console.log('PASS migration 054 is repeatable');
+    // Fee calculation and split corrections must not depend on the retired
+    // configuration table, even on a database that has no historical rows.
+    await db.schema.dropTable('mpesa_fee_config');
 
     const today = getKenyaDate();
     const [attendant] = await db('employees').insert({ name: 'Day Attendant', daily_wage: 0, pin: hashPin('9999'), role: 'attendant', active: true });
@@ -245,15 +248,24 @@ async function main() {
     // ---- Cash and M-Pesa ----
     const e1 = await correct('collection', { error_kind: 'wrong_split', shift_id: s2, amount: 1000, payment_method: 'mpesa' });
     assert.equal(e1.status, 201, JSON.stringify(e1.body));
-    const rate = Number((await db('mpesa_fee_config').where('effective_date', '<=', today).orderBy('effective_date', 'desc').first())?.fee_value ?? 0.55);
-    const fee = (g: number) => Math.round(g * (rate / 100) * 100) / 100;
-    assert.equal(Number(e1.data.lines[1].fee_delta), Math.round((fee(7000) - fee(6000)) * 100) / 100);
+    const noFee = (correction: any) => {
+      for (const line of [...correction.preview.lines, ...correction.data.lines]) {
+        assert(!Object.hasOwn(line, 'fee_delta'), 'split corrections must not return a fee calculation');
+      }
+      assert(!correction.preview.effects.some((effect: string) => /fee|net M-Pesa/i.test(effect)), 'split preview must describe gross amounts only');
+    };
+    noFee(e1);
     assert(e1.preview.effects.includes('Cash KES 14,200.00 → KES 13,200.00; M-Pesa KES 6,000.00 → KES 7,000.00.'), JSON.stringify(e1.preview.effects));
     assert.equal(e1.preview.shifts[0].change, 0);
     assert.equal((await preview('collection', { error_kind: 'wrong_split', shift_id: s2, amount: 13201, payment_method: 'mpesa' })).body.code, 'AMOUNT_EXCEEDS_SPLIT', 'counted after the first move');
     const e2 = await correct('collection', { error_kind: 'wrong_split', shift_id: s2, amount: 500, payment_method: 'cash' });
     assert.equal(e2.status, 201, JSON.stringify(e2.body));
-    console.log('PASS cash and M-Pesa: the split and the fee move, the result does not; never more than was recorded');
+    noFee(e2);
+    assert.deepEqual(e1.data.lines.map((line: any) => [line.action, line.method, Number(line.amount), Number(line.shift_effect)]), [
+      ['reverse', 'cash', 1000, 0], ['add', 'mpesa', 1000, 0],
+    ], 'a split changes only gross tender classification');
+    assert.equal(e2.preview.shifts[0].change, 0);
+    console.log('PASS cash and M-Pesa: gross split moves without fees or configuration; the result does not change');
 
     // ---- The shifts as closed, and their corrected results ----
     for (const [key, shift] of [['s1', s1], ['s2', s2], ['s3', s3]] as const) {
@@ -287,8 +299,11 @@ async function main() {
     assert.equal((await db('shift_expenses').where({ id: ids.x2 }).first()).deleted_at, null);
     assert.match((await undo(c1x)).body.error, /corrected again by C-/);
     assert.match((await undo(e1)).body.error, /Undo that first/, 'a later split correction depends on it');
-    assert.equal((await undo(e2)).status, 201);
-    assert.equal((await undo(e1)).status, 201);
+    for (const split of [e2, e1]) {
+      const reversed = await undo(split);
+      assert.equal(reversed.status, 201, JSON.stringify(reversed.body));
+      for (const line of reversed.body.data.lines) assert(!Object.hasOwn(line, 'fee_delta'), 'undo must not expose fee deltas');
+    }
     const g6 = await undo(c5x);
     assert.equal(g6.status, 201, JSON.stringify(g6.body));
     assert.equal(await owes(beta), 1500, 'back to the 500 payment');

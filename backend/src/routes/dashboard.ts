@@ -76,15 +76,13 @@ router.get('/', async (req: any, res) => {
     }
 
     // Today's collections
-    let todayCash = 0, todayMpesa = 0, todayCreditsOnAccount = 0, todayMpesaFee = 0, todayMpesaNet = 0;
+    let todayCash = 0, todayMpesa = 0, todayCreditsOnAccount = 0;
     if (shiftIds.length > 0) {
       const collections = await db('shift_collections').whereIn('shift_id', shiftIds);
       for (const c of collections) {
         todayCash += Number(c.cash_amount) || 0;
         todayMpesa += Number(c.mpesa_amount) || 0;
         todayCreditsOnAccount += Number(c.credits_amount) || 0;
-        todayMpesaFee += Number(c.mpesa_fee) || 0;
-        todayMpesaNet += Number(c.mpesa_net) || 0;
       }
     }
 
@@ -267,18 +265,6 @@ router.get('/', async (req: any, res) => {
     // Closed-only basis for profit — see closedShiftIds comment above (today's section).
     const mtdNetSalesClosed = mtdSalesClosed + mtdInvoicePriceAdjustments;
     const mtdNetProfit = mtdNetSalesClosed - mtdCogs - mtdWages - mtdExpenses;
-
-    // ── Phase 1A: MTD M-Pesa fees ──
-    let mtdMpesaFees = 0;
-    let mtdMpesaGross = 0;
-    if (mtdShiftIds.length > 0) {
-      const mpesaResult = await db('shift_collections')
-        .whereIn('shift_id', mtdShiftIds)
-        .select(db.raw('SUM(mpesa_fee) as fees'), db.raw('SUM(mpesa_amount) as gross'))
-        .first();
-      mtdMpesaFees = Number((mpesaResult as any)?.fees) || 0;
-      mtdMpesaGross = Number((mpesaResult as any)?.gross) || 0;
-    }
 
     // ── Supplier payables (AP) ──
     let totalSupplierPayables = 0;
@@ -478,8 +464,6 @@ router.get('/', async (req: any, res) => {
       today_collections: {
         cash: todayCash,
         mpesa: todayMpesa,
-        mpesa_fee: todayMpesaFee,
-        mpesa_net: todayMpesaNet,
         credits: todayCreditsOnAccount,
         invoice_retail: todayInvoiceRetail,
         credit_receipts: todayCreditReceipts,
@@ -500,8 +484,6 @@ router.get('/', async (req: any, res) => {
       mtd_wages: mtdWages,
       mtd_wages_paid: mtdWagesPaid,
       mtd_net_profit: mtdNetProfit,
-      mtd_mpesa_fees: mtdMpesaFees,
-      mtd_mpesa_gross: mtdMpesaGross,
       // Business health
       total_outstanding_credits: totalOutstandingCredits,
       total_outstanding_money_credits: receivables.money_receivables,

@@ -134,8 +134,8 @@ twice), or paid but not recorded (for example a receipt found later).
 ### Cash and M-Pesa the wrong way round
 
 Say what the money really was and how much was recorded the wrong way round.
-The amount moves from one to the other; the M-Pesa fee is worked out again at
-that shift's rate. The drawer's total and the shift's result do not change.
+The amount moves from one to the other without a fee calculation. The combined
+gross total and shift result do not change. See `docs/M-PESA-COLLECTIONS.md`.
 It can never move more than the shift shows.
 
 ## What happens elsewhere

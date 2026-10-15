@@ -31,6 +31,11 @@ corrected by a new, dated entry that refers to the original.
   another in the same transaction (customer, employee, station, or revenue).
 - **Money arithmetic in cents** (`Math.round(x * 100)`), rounded back with the
   existing helpers (`roundMoney`, `toMoney`). Never accumulate floats.
+- **Retired financial features need historical-data coverage.** Test with
+  nonzero old fields and missing retired configuration, not only a fresh
+  empty database. Check nested API records as well as aggregate responses.
+  A1's `test:mpesa-fee-removal` follows this rule without changing legacy
+  columns, original close snapshots or pushed migrations.
 
 ## 2. Data immutability policy
 

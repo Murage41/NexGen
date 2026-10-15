@@ -24,7 +24,6 @@ import creditAccountsRouter from './routes/creditAccounts';
 import balanceMovesRouter from './routes/balanceMoves';
 import correctionsRouter from './routes/corrections';
 import customerInvoicesRouter from './routes/customerInvoices';
-import mpesaConfigRouter from './routes/mpesaConfig';
 import suppliersRouter from './routes/suppliers';
 import supplierInvoicesRouter from './routes/supplierInvoices';
 import supplierPaymentsRouter from './routes/supplierPayments';
@@ -116,7 +115,7 @@ app.get('/api/health/db-stats', requireAdmin, async (_req, res) => {
       'shift_collections', 'shift_expenses', 'shift_credits', 'wage_deductions',
       'fuel_deliveries', 'delivery_batches', 'batch_consumption',
       'tank_dips', 'tank_stock_ledger', 'shift_tank_snapshots',
-      'fuel_prices', 'mpesa_fee_config',
+      'fuel_prices',
       'credits', 'credit_accounts', 'credit_payments',
       'invoice_consumption', 'customer_invoices', 'invoice_lines',
       'invoice_payments', 'invoice_payment_allocations',
@@ -202,7 +201,6 @@ app.use('/api/credit-accounts', creditAccountsRouter);
 app.use('/api/balance-moves', balanceMovesRouter);
 app.use('/api/corrections', correctionsRouter);
 app.use('/api/customer-invoices', customerInvoicesRouter);
-app.use('/api/mpesa-config', mpesaConfigRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/supplier-invoices', supplierInvoicesRouter);
 app.use('/api/supplier-payments', supplierPaymentsRouter);

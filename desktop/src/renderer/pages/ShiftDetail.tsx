@@ -58,8 +58,6 @@ export default function ShiftDetail() {
   const [shift, setShift] = useState<any>(null);
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
-  const [mpesaFee, setMpesaFee] = useState(0);
-  const [mpesaNet, setMpesaNet] = useState(0);
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [wageDeduction, setWageDeduction] = useState<any>(null);
@@ -261,10 +259,6 @@ export default function ShiftDetail() {
         ? { cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount }
         : { cash_amount: 0, mpesa_amount: 0 };
       setCollections(draft?.collections || serverCollections);
-      if (d.collections) {
-        setMpesaFee(Number(d.collections.mpesa_fee) || 0);
-        setMpesaNet(Number(d.collections.mpesa_net) || 0);
-      }
       if (collectionConflictRevision !== null && options.resolveConflict !== 'collections') {
         setCollectionsDirty(true);
         setCollectionSync('review');
@@ -404,8 +398,6 @@ export default function ShiftDetail() {
       });
       serverCollectionRevision.current = Number(response.data.revision ?? serverCollectionRevision.current + 1);
       setCollectionConflictRevision(null);
-      setMpesaFee(Number(response.data.data?.mpesa_fee) || 0);
-      setMpesaNet(Number(response.data.data?.mpesa_net) || 0);
       if (revision === collectionRevision.current) {
         clearShiftDraftSection(id!, 'collections');
         setCollectionsDirty(false);
@@ -995,12 +987,6 @@ export default function ShiftDetail() {
             <span className="text-gray-500">M-Pesa Received</span>
             <span className="font-medium">{formatKES(totalMpesa)}</span>
           </div>
-          {totalMpesa > 0 && mpesaFee > 0 && (
-            <div className="flex justify-between text-xs text-gray-400 -mt-1">
-              <span className="pl-3">↳ fee {formatKES(mpesaFee)} · net {formatKES(mpesaNet)}</span>
-              <span></span>
-            </div>
-          )}
           {totalCreditReceipts > 0 && (
             <div className="col-span-2 grid grid-cols-2 gap-x-8 rounded border border-green-100 bg-white/70 px-3 py-2 text-xs">
               <div className="flex justify-between text-green-700">

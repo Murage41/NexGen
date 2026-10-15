@@ -5,20 +5,29 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-09-30.
+Last updated: 2026-10-16.
 
 ## Station PC
 
-- **Running `bcfb424`** (confirmed by the owner 2026-09-30: update #14,
-  Corrections phase 1, applied in the stop-first order with a backup before
-  the migration; all checks passed: Corrections menu opens empty, the closed
-  shifts the owner noted show the same shortage or surplus as before, and
-  closed shifts show Correct on desktop and phone). Latest migration there:
-  `053`.
-- **Pending station updates: none yet.** Corrections phase 2a is built and
-  tested on the development PC, **not committed**; once the owner asks to
-  commit and push, it becomes update **#15** (migration `054`, so a backup
-  before it; no new dependencies).
+- **Running `c5c4ee8`** (the owner reported update #15, Corrections phase
+  2a, applied on 2026-10-05). Latest migration there: `054`. Before it,
+  update #14 (`bcfb424`) was confirmed with all checks passed on 2026-09-30.
+- **Pending station update #16: A1 M-Pesa fee removal, not published.** A1 is
+  isolated on `codex/remove-mpesa-fees` in this chat's attached worktree,
+  starting from station `c5c4ee8`; code, automated checks and scratch desktop/
+  phone verification are complete (2026-10-15). Publication, installation and
+  the owner's station checkpoint remain. On 2026-10-16, GitHub fetch failed
+  because DNS could not resolve github.com; the connected GitHub service was
+  also unreachable. Do not give station installation commands until publication
+  is verified. The original development folder's
+  mixed fee/phase-2b work is preserved; it is not the A1 release candidate.
+  The owner wants independent cash/M-Pesa
+  totals, simpler finance and fixed consumption after invoicing; complete
+  proposed sequence in `docs/IMPLEMENTATION-STAGES.md`, indexed by
+  `docs/ROADMAP.md`. Manual opening floats are in `docs/SHIFT-FLOATS.md`.
+  The broader edit/note/report and float work is not built.
+  The whole of old 2b is not authorised to ship. The next station update is
+  **#16**, based on the station's code (`c5c4ee8`) once its scope is ready.
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date
@@ -56,27 +65,31 @@ Last updated: 2026-09-30.
 | 12 | `3131f77` | Low fuel warning per tank; open-shift tank card fixed (M7) | 051 |
 | 13 | `9bd40d5` | Station profile, logo, PDF invoices and notes; backups copy uploads (M8) | 052 |
 | 14 | `bcfb424` | Corrections phase 1: closed shifts read their snapshot, database guards, correcting fuel on account | 053 |
+| 15 | `c5c4ee8` | Corrections phase 2a: credit sales, debt payments, drawer expenses, cash/M-Pesa | 054 |
 
 ## How the system works now (recent decisions that code must respect)
 
-- **Closed shifts never change** (on the station since update #14: the
+- **Closed records never change** (on the station since update #14: the
   database refuses it, and a closed shift shows its close snapshot, never a
-  recalculation). A mistake on fuel on account is fixed by a numbered
-  **Correction** (C-2026-0001) that reverses and/or adds entries and makes any
-  credit or debit note itself; phase 2a (uncommitted) adds credit sales, debt
-  receipts, drawer expenses and the cash/M-Pesa split; see
-  `docs/CORRECTIONS.md`. Office payments, balance moves, invoice void and
-  price notes still work the old way (`docs/CLOSED-SHIFT-CORRECTIONS.md`)
-  until phase 2b.
+  recalculation). Numbered **Corrections** (C-2026-0001) cover fuel on account,
+  credit sales, shift debt receipts, drawer expenses and a cash/M-Pesa split
+  with an unchanged combined total. Existing office payment reversals, Move
+  balance, void and standalone debit-note actions remain in the station/A1
+  code. The older unshipped 2b proposal to replace these actions is not part
+  of A1. Independent totals and later financial changes follow the separate
+  stage plan. Meter readings stay fixed. See `docs/CORRECTIONS.md`.
 - **Attendant shortages:** an employee owes the shortages of their short shifts
   and pays them in money (cash, M-Pesa, bank). No write-offs, no paybacks, and
   surpluses never offset shortages (they are the station's). Pay is never
   reduced for shortages. See `docs/ATTENDANT-VARIANCES.md`.
 - **Invoice customers:** every note is fuel × litres × price per litre. A credit
   note beyond what the invoice owes becomes credit that pays their next invoice
-  (never paid out). A debit note is its own DN- bill, for an invoice or a
-  shift. A litres note on a shift can name that shift's attendant: their
-  shortage changes by the litres at **the shift's** pump price. See
+  (never paid out). A debit note is its own DN- bill, for an invoice or shift.
+  Existing litres notes can name the shift's attendant; their shift result
+  changes at the shift's retail price. A1 does not impose unshipped 2b's
+  price-only notes, cancellation or write-off behavior. The newly agreed
+  immutable issued-consumption boundary and suitable monetary notes are
+  future B2 work, not implemented by A1. See
   `docs/INVOICE-CUSTOMER-WORKFLOW.md`.
 - **Money customers:** overpayments are held as credit on account; credit
   limits warn and allow an admin-PIN override. See
@@ -152,7 +165,7 @@ Last updated: 2026-09-30.
   the credit note at the invoice price. Credit notes made by a correction book
   only the price difference as revenue (the shift's corrected result carries
   the rest).
-- **Corrections phase 2a: built and tested 2026-10-02, not yet committed**
+- **Corrections phase 2a: done, on the station since 2026-10-05 (update #15)**
   (`docs/ROADMAP.md` §3c, `docs/CORRECTIONS.md`): a closed shift's credit
   sales, debt receipts, drawer expenses and cash/M-Pesa split are corrected
   with the same wizard, register and undo, on desktop and phone. 36 backend
@@ -166,8 +179,105 @@ Last updated: 2026-09-30.
   daily report listed all five. The owner confirmed (2026-10-05) that the
   station's data since that copy holds nothing different, so no fresh copy is
   needed for this update.
-- **Next:** Corrections phase 2b, then phases 3–4 and M9 (order to confirm), phone invoice actions, a UI and design review, Tier 4,
-  Tier 5.
+- **Corrections phase 2b: built and tested 2026-10-05, not committed**
+  (`docs/ROADMAP.md` §3c, `docs/CORRECTIONS.md`): the shift's cash and M-Pesa
+  as the right figures (replaces "mixed up"), office payments of credit
+  customers, invoice customers and attendants, Move or write off a balance
+  (replaces Move balance; invoice customers can be written off), Cancel
+  invoice (replaces void), price-only notes by hand. Drawer wages moved to
+  phase 3. All 36 backend suites pass, including the new
+  `test:corrections-office`; 21 of 21 planted bugs caught. On a scratch copy
+  of the station's data (as copied 2026-09-30): migrations 053 to 055 run, all
+  124 closed shifts show the same figures and lists; on the desktop an invoice
+  payment (date), Cancel invoice (part paid; what was paid held as credit), a move
+  between customers and its undo, an office payment (method), an attendant's
+  repayment (amount) and a shift's cash/M-Pesa were corrected; on the phone a
+  move and an office payment (date). The receivables audit found nothing, and
+  the real database was unchanged. The browser test found and fixed: credit
+  notes made by a correction could be reversed by hand (would bill fuel
+  twice), a cancelled invoice still offered notes and showed "paid", an
+  undo's lines read "owes less" for both sides, the undo of a move paid the
+  oldest debt instead of reversing the move, and repayment previews did not
+  say what the employee owes.
+- **2026-10-06: mistakes are fixed by hand at station level** (decided by
+  the owner from listed scenarios; `docs/ROADMAP.md` §3e; not built). A closed
+  shift is never changed or corrected through. Desktop only, name and PIN: add
+  a debt by hand (reason compulsory), Reverse on payments and hand debts, a
+  payment fixes a wrong debt; attendants' payments tied to one shortage;
+  litres credit/debit on invoice customers' unbilled fuel. The shift Correct
+  buttons, Move balance, the attendant tick on notes and standalone debit
+  notes go. To confirm: the Cash Flow report will count payments added to fix
+  mistakes as money received (no marker, the owner's choice).
+- **2026-10-08: fresh operational review requested**: the owner asked for a
+  professional, simple approach to reversals, corrections and returns,
+  reasoned from station operations rather than the existing correction
+  features. Discussion proposal and primary sources saved in
+  `docs/ROADMAP.md` §3f; no implementation requested or design adopted.
+- **2026-10-09: manual account corrections reaffirmed**: the owner wants
+  closed shifts fully unchanged and separate admin entries following a user
+  manual, without the proposed automated Fix entry/replacement workflow.
+  Refinement recorded in `docs/ROADMAP.md` §3g; draft manual in
+  `docs/MANUAL-ACCOUNT-CORRECTIONS.md`. One Account adjustment option in the
+  ordinary payment/debt form is recommended to avoid false cash flow, but not
+  yet agreed; station-level expense/stock/cost adjustment scope also remains
+  to settle. No implementation requested.
+- **2026-10-15: editable closed-shift finances investigated**: the owner
+  asked about changing all listed financial entries while keeping readings
+  fixed. Source assessment in `docs/ROADMAP.md` §3h: no physical later-shift
+  or FIFO replay is needed for that scope, but snapshots, account allocations,
+  employee variance and issued documents require consistent amendment handling.
+  Direct editing is currently blocked; existing corrections cover much of
+  the financial work. This is a hypothetical assessment, not a replacement
+  decision or implementation request. No station data accessed.
+- **2026-10-15: fees removed; finance requirements clarified**: independent
+  shift cash/M-Pesa totals explicitly confirmed; once invoiced, source fuel
+  consumption must stay fixed and monetary notes handle changes. Ripple trail
+  and implementation proposal in `docs/SIMPLIFIED-FINANCE-AND-SHIFT-CORRECTIONS.md`
+  and roadmap §3i. Fee removal is built; all 36 backend suites, all three type
+  checks, mobile build, scratch receivables audit and real-DB fingerprint check
+  pass. Two planted fee regressions were caught and restored. UI verification
+  was blocked because Computer Use could not verify the browser URL. No
+  station update, commit or push. Remaining report/note/source-lock work is
+  specified, not implemented.
+- **2026-10-15: complete staged plan and opening-float specification drafted**:
+  `docs/IMPLEMENTATION-STAGES.md` combines the latest finance requirements and
+  the unimplemented backlog into individually checked releases, indexed in
+  `docs/ROADMAP.md`. `docs/SHIFT-FLOATS.md` specifies two explicit pre-opening
+  declarations (cash/M-Pesa), no monetary link to an earlier shift, actual
+  closing balances, minimal non-sale funds movements, shared report arithmetic
+  and historical compatibility. Opening money is not income; old missing floats
+  remain not captured. Advances should reuse employee debts and real money
+  records rather than require the old journal proposal. This session changed
+  planning documents only; it did not implement, commit, push or deploy features.
+- **2026-10-15: A1 implemented and verified separately**: the owner said
+  proceed. Attached worktree branch `codex/remove-mpesa-fees` starts from the
+  exact station commit `c5c4ee8` and includes only fee removal plus tests and
+  agreed planning/owner documentation. No old 2b handlers, independent-total
+  edits or migration 055 are included. The nested daily-report fee/net leak
+  found during isolation is also fixed. All 36 backend suites, all three
+  type checks and desktop/mobile builds pass. Two planted regressions were
+  caught (nested legacy fee exposure; fee deducted from gross collections),
+  original bytes restored and the clean targeted suite passed. The actual
+  bootstrap returns 404 for both retired configuration URLs. Settings and
+  desktop/phone closed-shift collections were verified using the in-app
+  browser on an isolated copy; this resolves the earlier unverified UI gate
+  for the A1 candidate. Scratch receivables audit has zero issues; isolated
+  listeners/tabs are closed and the final fingerprint is `REAL-DB-UNCHANGED`. Release
+  card: `docs/releases/A1-MPESA-FEE-REMOVAL.md` in the attached worktree;
+  owner guide: `docs/M-PESA-COLLECTIONS.md`. No commit, push or station update.
+- **2026-10-16: A1 publication authorised, network unavailable**: the owner
+  said proceed with commit/push and station update preparation. A1 is prepared
+  locally on its isolated branch. Git fetch and the connected GitHub service
+  cannot reach their hosts, so publication and the remote head are unverified.
+  Do not claim an update is available or run station fetch/merge commands yet.
+- **Next sequence:** publish A1 and finish the station checkpoint;
+  A2 consistent current/original financial views; A3 complete manual
+  opening floats; A4 independent closing cash/M-Pesa corrections. Then follow
+  the separate B-J releases in `docs/IMPLEMENTATION-STAGES.md`. Each dependent
+  release waits for its checks and the owner's station checkpoint. Stage IDs
+  are not station update numbers; #16 remains next, with scope assigned when
+  ready. Do not revive the obsolete promise of float as update #17 or ship all
+  old phase 2b as a bundle.
 - 2026-09-24: the project's rules and status moved into committed files
   (`CLAUDE.md`, this file, `docs/ROADMAP.md`, `docs/ENGINEERING-STANDARDS.md`,
   `scripts/e2e/`), and the roadmap was re-checked against the code.
@@ -213,9 +323,9 @@ Last updated: 2026-09-30.
 ## Development PC facts
 
 - `backend/data/nexgen.db` is a **copy of station data** that the owner
-  pastes in from the station from time to time (now: to shift 118,
-  2026-09-22, migrated only to `044`). Never run the backend on it and never
-  modify it. End-to-end tests run on a scratch copy (`scripts/e2e`,
+  pastes in from the station from time to time (latest recorded copy: see
+  Station PC above; it is not the live station database). Never run the
+  backend on it and never modify it. End-to-end tests run on a scratch copy (`scripts/e2e`,
   `docs/ENGINEERING-STANDARDS.md` §6), which migrates itself to the latest.
 - **Never start the ngrok tunnel on the development PC**: the phone link would
   reach two different databases (the owner had it stopped, 2026-09-09). That

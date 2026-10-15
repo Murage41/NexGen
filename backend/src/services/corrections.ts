@@ -68,10 +68,9 @@ export type PlanLine = {
   invoice_id: number | null;
   invoice_number: string | null;
   shift_effect: number;
-  // Money records: cash or M-Pesa; an expense's category; an M-Pesa fee change.
+  // Money records: cash or M-Pesa; an expense's category.
   method?: string | null;
   category?: string | null;
-  fee_delta?: number | null;
 };
 
 export type PlanDocument = {
@@ -415,7 +414,6 @@ export async function postCorrection(
         amount: line.amount,
         method: line.method ?? null,
         category: line.category ?? null,
-        fee_delta: line.fee_delta ?? null,
         stage: line.stage,
         invoice_id: extra.invoice_id ?? line.invoice_id,
         document_type: extra.document_type ?? null,
@@ -494,7 +492,6 @@ export async function undoCorrection(
         amount: line.amount,
         method: line.method,
         category: line.category,
-        fee_delta: line.fee_delta === null || line.fee_delta === undefined ? null : roundMoney(-Number(line.fee_delta)),
         stage: line.stage,
         invoice_id: line.invoice_id,
         shift_effect: roundMoney(-Number(line.shift_effect)),
@@ -540,6 +537,7 @@ export async function correctionDetail(conn: Conn, id: number) {
     .orderBy('l.seq')
     .select('l.*', 'a.name as party_name', 'i.invoice_number');
   for (const line of lines as any[]) {
+    delete line.fee_delta;
     if (line.document_type === 'credit_note') {
       line.document_number = (await conn('invoice_adjustment_notes').where({ id: line.document_id }).first('note_number'))?.note_number || null;
     } else if (line.document_type === 'debit_note') {
@@ -583,6 +581,7 @@ export async function shiftCorrections(conn: Conn, shiftId: number, asClosedVari
     .orderBy('c.id')
     .orderBy('l.seq')
     .select('l.*', 'c.number', 'c.kind', 'c.status', 'c.posting_date', 'c.reason_note', 'c.error_kind', 'a.name as party_name');
+  for (const line of lines as any[]) delete line.fee_delta;
   const change = roundMoney(lines.reduce((sum: number, l: any) => sum + Number(l.shift_effect || 0), 0));
   return {
     lines,

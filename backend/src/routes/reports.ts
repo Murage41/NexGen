@@ -92,8 +92,6 @@ router.get('/daily', requireAdmin, async (req, res) => {
     let totalInvoiceDieselLitres = 0;
     let totalWagesPaid = 0;
     let totalShiftExpenses = 0;
-    let totalMpesaFee = 0;
-    let totalMpesaNet = 0;
     let totalCreditReceipts = 0;
     let totalCreditReceiptsCash = 0;
     let totalCreditReceiptsMpesa = 0;
@@ -110,6 +108,10 @@ router.get('/daily', requireAdmin, async (req, res) => {
         .where('pump_readings.shift_id', shift.id);
 
       const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
+      if (collections) {
+        delete collections.mpesa_fee;
+        delete collections.mpesa_net;
+      }
       const expenses = await asRecordedRows(db('shift_expenses').where({ 'shift_expenses.shift_id': shift.id }), 'shift_expenses');
       // Phase 3B: invoice-mode consumption for this shift (retail-priced)
       const shiftInvoiceConsumption = await asClosedConsumption(
@@ -150,8 +152,6 @@ router.get('/daily', requireAdmin, async (req, res) => {
       const cash = Number(collections?.cash_amount) || 0;
       const mpesa = Number(collections?.mpesa_amount) || 0;
       const credits = Number(collections?.credits_amount) || 0;
-      const mpesaFee = Number(collections?.mpesa_fee) || 0;
-      const mpesaNet = Number(collections?.mpesa_net) || 0;
       const totalCollections = cash + mpesa + credits;
       const shiftCreditReceipts = hasShiftCreditReceipts
         ? await asClosedReceipts(db('credit_payments').where({ shift_id: shift.id }))
@@ -196,8 +196,6 @@ router.get('/daily', requireAdmin, async (req, res) => {
       totalInvoiceDieselLitres += shiftInvoiceDieselLitres;
       totalWagesPaid += actualWagePaid;
       totalShiftExpenses += shiftExpensesTotal;
-      totalMpesaFee += mpesaFee;
-      totalMpesaNet += mpesaNet;
       totalCreditReceipts += creditReceiptsTotal;
       totalCreditReceiptsCash += creditReceiptsCash;
       totalCreditReceiptsMpesa += creditReceiptsMpesa;
@@ -395,8 +393,6 @@ router.get('/daily', requireAdmin, async (req, res) => {
         // Collections
         total_cash: totalCash,
         total_mpesa: totalMpesa,
-        total_mpesa_fee: totalMpesaFee,
-        total_mpesa_net: totalMpesaNet,
         total_credits: totalCredits,
         total_invoice_retail: totalInvoiceRetail,
         invoice_petrol_litres: totalInvoicePetrolLitres,

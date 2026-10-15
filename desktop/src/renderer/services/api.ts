@@ -252,12 +252,6 @@ export const getCashFlow = (params?: { from?: string; to?: string }) => api.get(
 export const exportMonthlyReport = (month: string) => api.get('/reports/monthly/export.csv', { params: { month }, responseType: 'blob' });
 export const exportStockReconciliation = (month: string) => api.get('/reports/stock-reconciliation/export.csv', { params: { month }, responseType: 'blob' });
 
-// ============ M-Pesa Fee Config ============
-export const getMpesaFeeConfigs = () => api.get('/mpesa-config');
-export const getCurrentMpesaFeeConfig = () => api.get('/mpesa-config/current');
-export const createMpesaFeeConfig = (data: { fee_type: 'percentage' | 'fixed'; fee_value: number; effective_date: string; notes?: string }) =>
-  api.post('/mpesa-config', data);
-
 // ============ Tank Dip Trends ============
 export const getTankDipTrends = (months?: number) => api.get('/tank-dips/trends', { params: { months } });
 
