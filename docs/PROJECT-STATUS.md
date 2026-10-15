@@ -12,14 +12,15 @@ Last updated: 2026-10-16.
 - **Running `c5c4ee8`** (the owner reported update #15, Corrections phase
   2a, applied on 2026-10-05). Latest migration there: `054`. Before it,
   update #14 (`bcfb424`) was confirmed with all checks passed on 2026-09-30.
-- **Pending station update #16: A1 M-Pesa fee removal, not published.** A1 is
+- **Pending station update #16: A1 M-Pesa fee removal, published.** Code commit
+  `c885a61` is on `origin/main`; the following documentation commit records
+  publication. A1 was
   isolated on `codex/remove-mpesa-fees` in this chat's attached worktree,
   starting from station `c5c4ee8`; code, automated checks and scratch desktop/
-  phone verification are complete (2026-10-15). Publication, installation and
-  the owner's station checkpoint remain. On 2026-10-16, GitHub fetch failed
-  because DNS could not resolve github.com; the connected GitHub service was
-  also unreachable. Do not give station installation commands until publication
-  is verified. The original development folder's
+  phone verification are complete (2026-10-15). Installation and the owner's
+  station checkpoint remain. Initial GitHub DNS/service failures on 2026-10-16
+  cleared; normal push succeeded and `git ls-remote` verified the published
+  code commit. The original development folder's
   mixed fee/phase-2b work is preserved; it is not the A1 release candidate.
   The owner wants independent cash/M-Pesa
   totals, simpler finance and fixed consumption after invoicing; complete
@@ -27,7 +28,8 @@ Last updated: 2026-10-16.
   `docs/ROADMAP.md`. Manual opening floats are in `docs/SHIFT-FLOATS.md`.
   The broader edit/note/report and float work is not built.
   The whole of old 2b is not authorised to ship. The next station update is
-  **#16**, based on the station's code (`c5c4ee8`) once its scope is ready.
+  **#16**, A1 only, based on the station's code (`c5c4ee8`). No new migration
+  or dependency installation is required; migration remains `054`.
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date
@@ -66,6 +68,7 @@ Last updated: 2026-10-16.
 | 13 | `9bd40d5` | Station profile, logo, PDF invoices and notes; backups copy uploads (M8) | 052 |
 | 14 | `bcfb424` | Corrections phase 1: closed shifts read their snapshot, database guards, correcting fuel on account | 053 |
 | 15 | `c5c4ee8` | Corrections phase 2a: credit sales, debt payments, drawer expenses, cash/M-Pesa | 054 |
+| 16 (pending installation) | `c885a61` + publication record | A1: remove M-Pesa fees; staged roadmap and manual-float specification | no new migration |
 
 ## How the system works now (recent decisions that code must respect)
 
@@ -265,18 +268,22 @@ Last updated: 2026-10-16.
   listeners/tabs are closed and the final fingerprint is `REAL-DB-UNCHANGED`. Release
   card: `docs/releases/A1-MPESA-FEE-REMOVAL.md` in the attached worktree;
   owner guide: `docs/M-PESA-COLLECTIONS.md`. No commit, push or station update.
-- **2026-10-16: A1 publication authorised, network unavailable**: the owner
-  said proceed with commit/push and station update preparation. A1 is prepared
-  locally on its isolated branch. Git fetch and the connected GitHub service
-  cannot reach their hosts, so publication and the remote head are unverified.
-  Do not claim an update is available or run station fetch/merge commands yet.
-- **Next sequence:** publish A1 and finish the station checkpoint;
+- **2026-10-16: A1 committed and published**: the owner said proceed with
+  commit/push and station update preparation. Isolated code/plan commit
+  `c885a61` was pushed normally to `origin/main`, with the exact remote SHA
+  verified. Initial DNS/connected-service failures cleared before the push.
+  The publication record is a documentation-only follow-up in the same
+  update #16, not another station update. The original mixed primary checkout
+  remains on `c5c4ee8`; do not merge into or reset that dirty checkout.
+  No station installation has been reported. Existing verification remains
+  valid; no application code changed after the completed A1 checks.
+- **Next sequence:** install A1 and finish the station checkpoint;
   A2 consistent current/original financial views; A3 complete manual
   opening floats; A4 independent closing cash/M-Pesa corrections. Then follow
   the separate B-J releases in `docs/IMPLEMENTATION-STAGES.md`. Each dependent
   release waits for its checks and the owner's station checkpoint. Stage IDs
-  are not station update numbers; #16 remains next, with scope assigned when
-  ready. Do not revive the obsolete promise of float as update #17 or ship all
+  are not station update numbers; #16 is A1. Do not revive the obsolete
+  promise of float as update #17 or ship all
   old phase 2b as a bundle.
 - 2026-09-24: the project's rules and status moved into committed files
   (`CLAUDE.md`, this file, `docs/ROADMAP.md`, `docs/ENGINEERING-STANDARDS.md`,

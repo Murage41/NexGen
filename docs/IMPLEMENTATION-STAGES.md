@@ -21,8 +21,9 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   on station `c5c4ee8`. All 36 backend suites, three type checks, both client
   builds, two planted regressions and scratch API/UI checks pass. No schema
   change or old 2b/A4 behavior is included. The owner authorised A1 publication
-  on 2026-10-16; publication is blocked by unavailable GitHub/network access.
-  Station installation and the owner's checkpoint remain. Original mixed work
+  on 2026-10-16; code commit `c885a61` is published on `origin/main` and a
+  documentation-only follow-up records it. Station installation as update #16
+  and the owner's checkpoint remain. Original mixed work
   is preserved. Do not start A2 before that checkpoint.
 - Every other release below is **not built as an agreed complete release**.
   Existing helpers, screens and selected uncommitted code can be reused after

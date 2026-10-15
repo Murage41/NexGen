@@ -31,7 +31,7 @@ exclusions and measurable result. Split any broad row further before code.
 
 | Order | Separate releases | Current state |
 |---|---|---|
-| A1 | Approved baseline and complete M-Pesa fee removal | Isolated candidate passes automated/scratch UI checks; publication authorised 2026-10-16 but network unavailable; station checkpoint pending |
+| A1 | Approved baseline and complete M-Pesa fee removal | `c885a61` published on main with a documentation follow-up; automated/scratch UI checks pass; update #16 installation/checkpoint pending |
 | A2 | Shared current-financial view with original close retained | Planned |
 | A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Planned; never linked to the previous shift |
 | A4 | Independently correct closing cash and M-Pesa totals | Planned complete release; selected local code reusable |

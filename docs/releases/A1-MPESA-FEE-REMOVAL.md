@@ -3,10 +3,12 @@
 Scope authorised by the owner's instruction to proceed on 2026-10-15.
 Release base: station update #15, `c5c4ee8`, migration `054`.
 Implementation branch: `codex/remove-mpesa-fees`, in its attached worktree.
-Publication authorised 2026-10-16. GitHub DNS/fetch and the connected GitHub
-service are unavailable; the release is not yet published or installed.
-Retry a normal fetch/fast-forward-only push when connectivity is available;
-verify the remote commit before giving station installation commands.
+Publication authorised 2026-10-16. Code/plan commit `c885a61` is published on
+`origin/main`, verified with `git ls-remote` after a normal fast-forward push.
+An initial connectivity failure cleared. A documentation-only follow-up
+records publication within the same station update #16. Installation and the
+owner's station checkpoint are pending; use the final published release commit
+provided in the station command block.
 
 ## One workflow
 
