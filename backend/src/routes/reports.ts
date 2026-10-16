@@ -9,8 +9,6 @@ import {
   getPayrollCashPaid,
   getPayrollExpense,
   getTotalPayrollCashOutflow,
-  getRecordedShiftWagesPaid,
-  isShiftWageMirror,
 } from '../services/payrollAccounting';
 import {
   getCombinedDebtorAging,
@@ -22,7 +20,7 @@ import {
 } from '../services/receivableReporting';
 import { listShiftCorrections } from '../services/shiftCorrections';
 import { listCorrections } from '../services/corrections';
-import { asRecordedRows } from '../services/shiftSnapshot';
+import { readShiftFinancials } from '../services/shiftFinancials';
 import { owedOnShifts, varianceActivity, varianceRefundsPaid } from '../services/employeeVariances';
 
 const router = Router();
@@ -35,33 +33,6 @@ function sumMoney(rows: any[], selector: (row: any) => any): number {
   return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
 }
 
-// A day's shifts are reported as they were closed: an entry a later correction
-// reversed still counts here and its replacement does not. The correction is
-// listed on the day it was made (services/shiftCorrections.ts before 23 Sep
-// 2026, services/corrections.ts since). Open shifts have no corrections, so
-// these filters change nothing for them.
-function asClosedConsumption(query: any, table = '') {
-  const column = (name: string) => (table ? `${table}.${name}` : name);
-  return query
-    .whereNull(column('created_by_correction_id'))
-    .whereNull(column('created_by_record_correction_id'))
-    .where((q: any) => q
-      .whereNull(column('deleted_at'))
-      .orWhereNotNull(column('reversed_by_correction_id'))
-      .orWhereNotNull(column('reversed_by_record_correction_id')));
-}
-
-function asClosedReceipts(query: any) {
-  return query
-    .whereNull('deleted_at')
-    .whereNull('created_by_correction_id')
-    .whereNull('created_by_record_correction_id')
-    .where((q: any) => q
-      .where('status', 'posted')
-      .orWhereNotNull('reversed_by_correction_id')
-      .orWhereNotNull('reversed_by_record_correction_id'));
-}
-
 // ─── Daily Report ─────────────────────────────────────────────────────────────
 router.get('/daily', requireAdmin, async (req, res) => {
   try {
@@ -72,6 +43,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
       .select('shifts.*', 'employees.name as employee_name', 'employees.daily_wage')
       .where('shifts.shift_date', date)
       .orderBy('shifts.start_time');
+    const financials = await readShiftFinancials(db, shifts);
 
     // FIFO cost for COGS
     const fifoCosts = await getFIFOCostByFuelType(date, date);
@@ -96,52 +68,27 @@ router.get('/daily', requireAdmin, async (req, res) => {
     let totalCreditReceiptsCash = 0;
     let totalCreditReceiptsMpesa = 0;
 
-    const hasCreditPayments = await db.schema.hasTable('credit_payments');
-    const hasShiftCreditReceipts = hasCreditPayments
-      ? await db.schema.hasColumn('credit_payments', 'shift_id')
-      : false;
-
     for (const shift of shifts) {
+      const financial = financials.get(Number(shift.id))!;
+      const current = financial.current;
       const readings = await db('pump_readings')
         .join('pumps', 'pump_readings.pump_id', 'pumps.id')
         .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.fuel_type')
         .where('pump_readings.shift_id', shift.id);
 
-      const collections = await db('shift_collections').where({ shift_id: shift.id }).first();
-      if (collections) {
-        delete collections.mpesa_fee;
-        delete collections.mpesa_net;
-      }
-      const expenses = await asRecordedRows(db('shift_expenses').where({ 'shift_expenses.shift_id': shift.id }), 'shift_expenses');
-      // Phase 3B: invoice-mode consumption for this shift (retail-priced)
-      const shiftInvoiceConsumption = await asClosedConsumption(
-        db('invoice_consumption').where({ shift_id: shift.id }),
-      );
-      const shiftInvoiceRetail = shiftInvoiceConsumption.reduce(
-        (s: number, c: any) => s + Number(c.retail_amount || 0),
-        0,
-      );
-
-      const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
-      const actualWagePaid = shift.status === 'closed'
-        ? Number(shift.direct_wage_cash_amount ?? Math.max(0, Number(shift.wage_paid || 0) - Number(wageDeduction?.deduction_amount || 0)))
-        : 0;
-      const wageDeductionAmount = shift.status === 'closed'
-        ? Number(wageDeduction?.deduction_amount || 0)
-        : 0;
-      // Reconciliation must use the amount recorded at close. Legacy closes
-      // stored a gross wage; new closes store actual cash. A debt recovery is
-      // not another cash payout and must not be added to the new cash amount.
-      const reconciliationWage = shift.status === 'closed'
-        ? Number(shift.direct_wage_cash_amount ?? shift.wage_paid ?? 0)
-        : 0;
-      const shiftPayrollPayments = (await db('payroll_payments')
-        .where({ shift_id: shift.id, status: 'posted' }))
-        .filter((payment: any) => !isShiftWageMirror(payment));
-      const shiftPayrollPaid = sumMoney(shiftPayrollPayments, (payment: any) => payment.amount);
-
-      const shiftSales = readings.reduce((s: number, r: any) => s + (Number(r.amount_sold) || 0), 0);
-      const shiftExpensesTotal = expenses.reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
+      const collections = financial.collections;
+      const expenses = financial.expenses;
+      const shiftInvoiceConsumption = financial.invoiceConsumption;
+      const shiftInvoiceRetail = current.total_invoice_consumption;
+      const actualWagePaid = financial.actual_wage_paid;
+      const wageDeductionAmount = financial.wage_deduction;
+      const reconciliationWage = financial.reconciliation_wage;
+      const shiftPayrollPayments = financial.payrollPayments;
+      const shiftPayrollPaid = current.total_payroll_payments;
+      // Revenue remains the fixed meter sale, including historical inactive
+      // pumps. A backfilled close's saved reconciliation baseline is separate.
+      const shiftSales = sumMoney(readings, (reading) => reading.amount_sold);
+      const shiftExpensesTotal = current.total_expenses;
       const petrolLitres = readings
         .filter((r: any) => r.fuel_type === 'petrol')
         .reduce((s: number, r: any) => s + (Number(r.litres_sold) || 0), 0);
@@ -149,40 +96,15 @@ router.get('/daily', requireAdmin, async (req, res) => {
         .filter((r: any) => r.fuel_type === 'diesel')
         .reduce((s: number, r: any) => s + (Number(r.litres_sold) || 0), 0);
 
-      const cash = Number(collections?.cash_amount) || 0;
-      const mpesa = Number(collections?.mpesa_amount) || 0;
-      const credits = Number(collections?.credits_amount) || 0;
-      const totalCollections = cash + mpesa + credits;
-      const shiftCreditReceipts = hasShiftCreditReceipts
-        ? await asClosedReceipts(db('credit_payments').where({ shift_id: shift.id }))
-        : [];
-      const creditReceiptsCash = sumMoney(
-        shiftCreditReceipts.filter((receipt: any) => (receipt.payment_method || 'cash') !== 'mpesa'),
-        (receipt: any) => receipt.amount,
-      );
-      const creditReceiptsMpesa = sumMoney(
-        shiftCreditReceipts.filter((receipt: any) => receipt.payment_method === 'mpesa'),
-        (receipt: any) => receipt.amount,
-      );
-      const creditReceiptsTotal = roundMoney(creditReceiptsCash + creditReceiptsMpesa);
-      const salesCash = roundMoney(cash - creditReceiptsCash);
-      const salesMpesa = roundMoney(mpesa - creditReceiptsMpesa);
-      const salesCollections = roundMoney(salesCash + salesMpesa);
-      const expectedShiftTotal = roundMoney(shiftSales + creditReceiptsTotal);
-      const expectedCash = roundMoney(cash);
-      const expectedMpesa = roundMoney(mpesa);
-      const expectedTotalReceived = roundMoney(expectedCash + expectedMpesa);
-      const shiftAccounted = roundMoney(
-        cash + mpesa + credits + shiftInvoiceRetail + shiftExpensesTotal
-          + reconciliationWage + shiftPayrollPaid,
-      );
-
-      const shiftInvoicePetrolLitres = shiftInvoiceConsumption
-        .filter((c: any) => c.fuel_type === 'petrol')
-        .reduce((s: number, c: any) => s + Number(c.litres || 0), 0);
-      const shiftInvoiceDieselLitres = shiftInvoiceConsumption
-        .filter((c: any) => c.fuel_type === 'diesel')
-        .reduce((s: number, c: any) => s + Number(c.litres || 0), 0);
+      const cash = current.total_cash;
+      const mpesa = current.total_mpesa;
+      const credits = current.total_credits;
+      const totalCollections = roundMoney(cash + mpesa + credits);
+      const creditReceiptsCash = current.credit_receipts_cash;
+      const creditReceiptsMpesa = current.credit_receipts_mpesa;
+      const creditReceiptsTotal = current.total_credit_receipts;
+      const shiftInvoicePetrolLitres = financial.invoice_petrol_litres;
+      const shiftInvoiceDieselLitres = financial.invoice_diesel_litres;
 
       totalSales += shiftSales;
       if (shift.status === 'closed') totalSalesClosed += shiftSales;
@@ -207,63 +129,59 @@ router.get('/daily', requireAdmin, async (req, res) => {
         end_time: shift.end_time,
         status: shift.status,
         notes: shift.notes,
+        financial_view: 'current',
+        original_financials: financial.original,
         readings,
         collections,
         expenses,
+        shift_credits: financial.shiftCredits,
+        credit_receipts: financial.creditReceipts,
         invoice_consumption: shiftInvoiceConsumption,
         invoice_retail_amount: shiftInvoiceRetail,
         petrol_litres: petrolLitres,
         diesel_litres: dieselLitres,
         total_sales: shiftSales,
+        expected_sales: current.expected_sales,
         total_collections: totalCollections,
-        sales_cash: salesCash,
-        sales_mpesa: salesMpesa,
-        sales_collections: salesCollections,
+        sales_cash: current.sales_cash,
+        sales_mpesa: current.sales_mpesa,
+        sales_collections: current.sales_collections,
         total_credit_receipts: creditReceiptsTotal,
         credit_receipts_cash: creditReceiptsCash,
         credit_receipts_mpesa: creditReceiptsMpesa,
-        expected_shift_total: expectedShiftTotal,
-        expected_cash: expectedCash,
-        expected_mpesa: expectedMpesa,
-        expected_total_received: expectedTotalReceived,
+        expected_shift_total: current.expected_shift_total,
+        expected_cash: current.expected_cash,
+        expected_mpesa: current.expected_mpesa,
+        expected_total_received: current.expected_total_received,
         standard_wage: Number(shift.daily_wage),
         wage_deduction: wageDeductionAmount,
         actual_wage_paid: actualWagePaid,
         reconciliation_wage: reconciliationWage,
         payroll_payments: shiftPayrollPayments,
         payroll_paid_from_shift: shiftPayrollPaid,
-        shift_accounted: shiftAccounted,
+        shift_accounted: current.total_accounted,
         // Debt receipts are already inside cash/M-Pesa received totals;
         // keep them separate only so old debt is not treated as new pump sales.
-        variance: roundMoney(shiftAccounted - expectedShiftTotal),
+        variance: current.variance,
       });
     }
 
     // Phase 3B: Invoice customers summary — per-account breakdown for the day
-    const shiftIdsForInvoice = shifts.map((s: any) => s.id);
+    const invoiceRows = [...financials.values()].flatMap((financial) => financial.invoiceConsumption);
     let invoiceCustomersSummary: any[] = [];
-    if (shiftIdsForInvoice.length > 0) {
-      const rows = await db('invoice_consumption')
-        .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
-        .whereIn('invoice_consumption.shift_id', shiftIdsForInvoice)
-        .where((q: any) => asClosedConsumption(q, 'invoice_consumption'))
-        .select(
-          'invoice_consumption.account_id',
-          'credit_accounts.name as account_name',
-          'invoice_consumption.fuel_type',
-        )
-        .sum('invoice_consumption.litres as litres')
-        .sum('invoice_consumption.retail_amount as retail_amount')
-        .groupBy('invoice_consumption.account_id', 'credit_accounts.name', 'invoice_consumption.fuel_type');
+    if (invoiceRows.length > 0) {
+      const accountIds = [...new Set(invoiceRows.map((row: any) => Number(row.account_id)))];
+      const accounts = await db('credit_accounts').whereIn('id', accountIds).select('id', 'name');
+      const accountNames = new Map(accounts.map((account: any) => [Number(account.id), account.name]));
 
       // Collapse to one row per account with per-fuel-type breakdown
       const byAccount: Record<number, any> = {};
-      for (const r of rows as any[]) {
+      for (const r of invoiceRows) {
         const id = r.account_id;
         if (!byAccount[id]) {
           byAccount[id] = {
             account_id: id,
-            account_name: r.account_name,
+            account_name: accountNames.get(Number(id)) ?? null,
             petrol_litres: 0,
             diesel_litres: 0,
             retail_amount: 0,
@@ -381,6 +299,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
       success: true,
       data: {
         date,
+        financial_view: 'current',
         shifts: shiftDetails,
         expenses: dayExpenses,
         // Sales
@@ -528,38 +447,21 @@ async function computeMonthlyReport(month: string) {
       }
     }
 
-    // Collections breakdown
-    const collections = await db('shift_collections')
-      .join('shifts', 'shift_collections.shift_id', 'shifts.id')
-      .where('shifts.shift_date', '>=', startDate)
-      .where('shifts.shift_date', '<=', endDate)
-      .sum('cash_amount as total_cash')
-      .sum('mpesa_amount as total_mpesa')
-      .sum('credits_amount as total_credits')
-      .first();
-    const invoiceRetailRow = await db('invoice_consumption as consumption')
-      .join('shifts', 'consumption.shift_id', 'shifts.id')
-      .whereNull('consumption.deleted_at')
-      .where(function (this: any) {
-        this.whereNull('consumption.entry_status').orWhere('consumption.entry_status', 'active');
-      })
-      .whereBetween('shifts.shift_date', [startDate, endDate])
-      .sum({ total: 'consumption.retail_amount' })
-      .first();
-    const totalInvoiceRetail = Number((invoiceRetailRow as any)?.total || 0);
-
-    // Legacy shift wages are cash outflows. Payroll expense comes from the
-    // immutable earnings ledger and may be paid on a different date.
+    // All financial totals and expense categories use the same current sources
+    // as shift detail. Pump sales and invoice revenue retain their own dates.
     const allShifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
       .where('shifts.shift_date', '>=', startDate)
       .where('shifts.shift_date', '<=', endDate)
-      .select('shifts.id', 'shifts.status', 'shifts.wage_paid', 'employees.daily_wage');
-
-    let totalWagesPaid = 0;
-    for (const shift of allShifts) {
-      totalWagesPaid += shift.status === 'closed' ? (Number(shift.wage_paid) || 0) : 0;
-    }
+      .select('shifts.*', 'employees.daily_wage');
+    const financials = await readShiftFinancials(db, allShifts);
+    const financialViews = [...financials.values()];
+    const collections = {
+      total_cash: sumMoney(financialViews, (view) => view.current.total_cash),
+      total_mpesa: sumMoney(financialViews, (view) => view.current.total_mpesa),
+      total_credits: sumMoney(financialViews, (view) => view.current.total_credits),
+    };
+    const totalInvoiceRetail = sumMoney(financialViews, (view) => view.current.total_invoice_consumption);
 
     // General expenses
     const generalExpenses = await db('expenses')
@@ -570,13 +472,7 @@ async function computeMonthlyReport(month: string) {
       .first();
 
     // Shift expenses
-    const shiftExpenses = await db('shift_expenses')
-      .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
-      .whereNull('shift_expenses.deleted_at')
-      .where('shifts.shift_date', '>=', startDate)
-      .where('shifts.shift_date', '<=', endDate)
-      .sum('shift_expenses.amount as total')
-      .first();
+    const totalShiftExpenses = sumMoney(financialViews, (view) => view.current.total_expenses);
 
     // Expense categories (merged from both general and shift expenses)
     const generalCats = await db('expenses')
@@ -587,21 +483,15 @@ async function computeMonthlyReport(month: string) {
       .sum('amount as total')
       .groupBy('category');
 
-    const shiftCats = await db('shift_expenses')
-      .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
-      .whereNull('shift_expenses.deleted_at')
-      .where('shifts.shift_date', '>=', startDate)
-      .where('shifts.shift_date', '<=', endDate)
-      .select('shift_expenses.category')
-      .sum('shift_expenses.amount as total')
-      .groupBy('shift_expenses.category');
-
     const categoryMap: Record<string, number> = {};
-    for (const c of [...generalCats, ...shiftCats]) {
+    for (const c of generalCats) {
       categoryMap[c.category] = (categoryMap[c.category] || 0) + (Number(c.total) || 0);
     }
+    for (const expense of financialViews.flatMap((view) => view.expenses)) {
+      categoryMap[expense.category] = (categoryMap[expense.category] || 0) + Number(expense.amount || 0);
+    }
     const expenseCategories = Object.entries(categoryMap)
-      .map(([category, total]) => ({ category, total }))
+      .map(([category, total]) => ({ category, total: roundMoney(total) }))
       .sort((a, b) => b.total - a.total);
 
     // ── COGS: Use FIFO batch consumption for accurate costing ──
@@ -653,20 +543,12 @@ async function computeMonthlyReport(month: string) {
 
     // Shortages on the period's shifts that attendants still owe, and the
     // period's variance activity (services/employeeVariances.ts).
-    const periodShiftIds = await db('shifts')
-      .where('shift_date', '>=', startDate)
-      .where('shift_date', '<=', endDate)
-      .pluck('id');
+    const periodShiftIds = allShifts.map((shift: any) => shift.id);
     const unrecoveredLosses = await owedOnShifts(db, periodShiftIds);
     const attendantVariances = await varianceActivity(db, startDate, endDate);
 
     // Daily breakdown
-    const closedShifts = await db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .where('shifts.shift_date', '>=', startDate)
-      .where('shifts.shift_date', '<=', endDate)
-      .where('shifts.status', 'closed')
-      .select('shifts.id', 'shifts.shift_date', 'shifts.start_time', 'shifts.wage_paid', 'employees.daily_wage');
+    const closedShifts = allShifts.filter((shift: any) => shift.status === 'closed');
 
     const dailyMap: Record<string, {
       sales: number;
@@ -694,9 +576,14 @@ async function computeMonthlyReport(month: string) {
         if (r.fuel_type === 'diesel') dailyMap[dayKey].diesel_litres += Number(r.litres_sold) || 0;
       }
 
-      const shiftExpResult = await db('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at').sum('amount as total').first();
-      dailyMap[dayKey].expenses += Number((shiftExpResult as any)?.total) || 0;
+    }
 
+    for (const shift of allShifts) {
+      const dayKey = shift.shift_date || (shift.start_time as string).split('T')[0];
+      if (!dailyMap[dayKey]) {
+        dailyMap[dayKey] = { sales: 0, invoice_price_adjustments: 0, petrol_litres: 0, diesel_litres: 0, expenses: 0, wages: 0 };
+      }
+      dailyMap[dayKey].expenses += financials.get(Number(shift.id))!.current.total_expenses;
     }
 
     const dailyEarnings = await db('employee_earnings')
@@ -772,14 +659,15 @@ async function computeMonthlyReport(month: string) {
 
     const payrollExpense = await getPayrollExpense(startDate, endDate);
     const payrollCashPaid = await getPayrollCashPaid(startDate, endDate);
-    totalWagesPaid = await getTotalPayrollCashOutflow(startDate, endDate);
-    const totalExpenses = (Number((generalExpenses as any)?.total) || 0) + (Number((shiftExpenses as any)?.total) || 0);
+    const totalWagesPaid = await getTotalPayrollCashOutflow(startDate, endDate);
+    const totalExpenses = roundMoney((Number((generalExpenses as any)?.total) || 0) + totalShiftExpenses);
     // Profit uses closed-shift-only net sales — see netSalesClosed comment above.
     const grossProfit = netSalesClosed - cogs;
     const netProfit = grossProfit - payrollExpense - totalExpenses;
 
     return {
       month,
+      financial_view: 'current',
       // Fuel breakdown
       fuel_sales: fuelSales,
       total_sales: netSales,
@@ -1017,17 +905,13 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     const from = (req.query.from as string) || getKenyaMonth() + '-01';
     const to = (req.query.to as string) || getKenyaDate();
 
-    // Cash Inflows
-    const collResult = await db('shift_collections')
-      .join('shifts', 'shift_collections.shift_id', 'shifts.id')
-      .where('shifts.shift_date', '>=', from)
-      .where('shifts.shift_date', '<=', to)
-      .sum('cash_amount as cash')
-      .sum('mpesa_amount as mpesa')
-      .sum('credits_amount as credits_on_account')
-      .first();
-    const shiftCashReceived = Number((collResult as any)?.cash) || 0;
-    const shiftMpesaReceived = Number((collResult as any)?.mpesa) || 0;
+    const shifts = await db('shifts').whereBetween('shift_date', [from, to]);
+    const financials = await readShiftFinancials(db, shifts);
+    const financialViews = [...financials.values()];
+
+    // Current retained collections already contain shift-linked debt receipts.
+    const shiftCashReceived = sumMoney(financialViews, (view) => view.current.total_cash);
+    const shiftMpesaReceived = sumMoney(financialViews, (view) => view.current.total_mpesa);
 
     // Shift-linked debt receipts are already inside shift cash/M-Pesa totals.
     // Only direct back-office receivable payments are added separately.
@@ -1058,14 +942,7 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     const totalWagesPaid = await getTotalPayrollCashOutflow(from, to);
 
     // Shift expenses
-    const shiftExpResult = await db('shift_expenses')
-      .join('shifts', 'shift_expenses.shift_id', 'shifts.id')
-      .whereNull('shift_expenses.deleted_at')
-      .where('shifts.shift_date', '>=', from)
-      .where('shifts.shift_date', '<=', to)
-      .sum('shift_expenses.amount as total')
-      .first();
-    const totalShiftExpenses = Number((shiftExpResult as any)?.total) || 0;
+    const totalShiftExpenses = sumMoney(financialViews, (view) => view.current.total_expenses);
 
     // General expenses
     const genExpResult = await db('expenses')
@@ -1079,15 +956,9 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     // Drawer collections are the cash/M-Pesa remaining after shift payouts.
     // Reconstruct receipts before showing those same payouts as outflows, so
     // wages/expenses are not subtracted a second time from retained cash.
-    const drawerPayroll = await db('payroll_payments as p')
-      .join('shifts as s', 'p.shift_id', 's.id')
-      .where('p.status', 'posted')
-      .whereBetween('s.shift_date', [from, to])
-      .whereIn('p.payment_method', ['cash', 'mpesa'])
-      .where(q => q.whereNull('p.reference').orWhere('p.reference', 'not like', 'SHIFT-WAGE:%'))
-      .sum('p.amount as total').first();
-    const directShiftCash = await getRecordedShiftWagesPaid(from, to);
-    const drawerPayouts = roundMoney(Number(drawerPayroll?.total || 0) + directShiftCash + totalShiftExpenses);
+    const drawerPayroll = sumMoney(financialViews, (view) => view.drawer_payroll_paid);
+    const directShiftCash = sumMoney(financialViews, (view) => view.actual_wage_paid);
+    const drawerPayouts = roundMoney(drawerPayroll + directShiftCash + totalShiftExpenses);
     const totalInflows = roundMoney(recordedInflows + drawerPayouts);
 
     // Money paid back to employees: repaid money a correction freed
@@ -1118,6 +989,7 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
       success: true,
       data: {
         period: { from, to },
+        financial_view: 'current',
         inflows: {
           cash_sales: shiftCashReceived,
           mpesa_sales: shiftMpesaReceived,

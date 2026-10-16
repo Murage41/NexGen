@@ -7,10 +7,12 @@ training whoever handles the office.
 
 **Before a shift closes, fix it on the shift. After it closes, correct it.**
 
-A closed shift never changes. Its figures (sales, cash, M-Pesa, credits, fuel
-on account, debt payments, expenses, shortage or surplus) stay exactly as they
-were when it closed, on every screen. The database itself refuses to change
-them.
+A closed shift keeps its original records and saved close. The database
+refuses changes to those records. In A2, the shift screen and financial reports
+show the current figures, including corrections; **Original close → View
+original figures** shows the saved figures. See
+[Current shift figures](CURRENT-SHIFT-FIGURES.md). A2 is queued after A1;
+the station keeps its earlier display until A2 is installed and checked.
 
 A mistake found later is fixed by a **correction**: a numbered record
 (C-2026-0001, C-2026-0002, …) that says what was wrong, what the right record
@@ -140,17 +142,19 @@ It can never move more than the shift shows.
 
 ## What happens elsewhere
 
-**The shift.** Its own figures and lists do not move. It shows a note: "2
-corrections since close: result at close short KES 300; corrected result short
-KES 800", with each correction listed. Attendants see the corrections on their
-own shifts (without customers' balances).
+**The shift.** Its main figures and lists include current corrections. The
+original close remains available separately. A note compares the result at
+close with the current result and lists each correction. Attendants see the
+corrections on their own shifts (without customers' balances).
 
 **The attendant.** Their shortage on that shift changes as described in step 4,
 through their Variances, like any other correction of their shortage.
 
-**Reports.** The daily report shows each shift as it closed and lists the
-corrections posted that day. Monthly expense totals and categories include
-corrected expenses on the shift's date.
+**Reports.** Daily figures, the dashboard and relevant monthly/cash-flow
+totals include current corrections. Corrected drawer expenses belong to the
+shift's date; the correction register records when the correction was made.
+Invoice revenue adjustments retain their posting date. History exports have
+separately labelled Original and Current financial columns.
 
 **Tank stock, fuel sales and fuel cost never change.** These records are how
 metered sales were paid or accounted for; the pumps measured the fuel either

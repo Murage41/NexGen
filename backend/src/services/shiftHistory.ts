@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { readShiftFinancials } from './shiftFinancials';
 
 export const SHIFT_HISTORY_DEFAULT_LIMIT = 25;
 export const SHIFT_HISTORY_MAX_LIMIT = 100;
@@ -303,5 +304,28 @@ export async function exportShiftHistory(
     .orderBy('shifts.start_time', direction)
     .orderBy('shifts.id', direction);
 
-  return { rows, total };
+  const financials = await readShiftFinancials(connection, rows.map((row: any) => Number(row.id)));
+  return {
+    rows: rows.map((row: any) => {
+      const financial = financials.get(Number(row.id));
+      const current = financial?.current;
+      return {
+        ...row,
+        original_close_available: Boolean(financial?.original),
+        current_expected_sales: current?.expected_sales ?? null,
+        current_expected_shift_total: current?.expected_shift_total ?? null,
+        current_cash_received: current?.total_cash ?? null,
+        current_mpesa_received: current?.total_mpesa ?? null,
+        current_credit_receipts: current?.total_credit_receipts ?? null,
+        current_credits_issued: current?.total_credits ?? null,
+        current_invoice_consumption: current?.total_invoice_consumption ?? null,
+        current_expenses: current?.total_expenses ?? null,
+        current_direct_wage_payment: current?.employee_wage ?? null,
+        current_payroll_payments: current?.total_payroll_payments ?? null,
+        current_total_accounted: current?.total_accounted ?? null,
+        current_variance: current?.variance ?? null,
+      };
+    }),
+    total,
+  };
 }

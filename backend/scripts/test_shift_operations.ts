@@ -26,6 +26,7 @@ async function main() {
     await db.schema.createTable('employees', (table) => {
       table.increments('id').primary();
       table.string('name').notNullable();
+      table.decimal('daily_wage').defaultTo(0);
     });
     await db.schema.createTable('shifts', (table) => {
       table.increments('id').primary();

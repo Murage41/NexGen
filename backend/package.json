@@ -30,6 +30,7 @@
     "test:corrections": "tsx scripts/test_corrections.ts",
     "test:corrections-money": "tsx scripts/test_corrections_money.ts",
     "test:mpesa-fee-removal": "tsx scripts/test_mpesa_fee_removal.ts",
+    "test:shift-financial-views": "tsx scripts/test_shift_financial_views.ts",
     "test:invoice-notes": "tsx scripts/test_invoice_notes.ts",
     "test:employee-variances": "tsx scripts/test_employee_variances.ts",
     "test:invoice-draft-reservations": "tsx scripts/test_invoice_draft_reservations.ts",

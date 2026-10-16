@@ -32,7 +32,7 @@ exclusions and measurable result. Split any broad row further before code.
 | Order | Separate releases | Current state |
 |---|---|---|
 | A1 | Approved baseline and complete M-Pesa fee removal | `c885a61` published on main with a documentation follow-up; automated/scratch UI checks pass; update #16 installation/checkpoint pending |
-| A2 | Shared current-financial view with original close retained | Planned |
+| A2 | Shared current-financial view with original close retained | Developed; queued after A1. [Release card](releases/A2-CURRENT-FINANCIAL-VIEWS.md), [owner guide](CURRENT-SHIFT-FIGURES.md) |
 | A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Planned; never linked to the previous shift |
 | A4 | Independently correct closing cash and M-Pesa totals | Planned complete release; selected local code reusable |
 | B1 → B3 | Customer credit/shift receipts; fixed issued consumption with monetary notes; unbilled fuel and draft/limit controls | Planned separate releases |
@@ -47,8 +47,10 @@ exclusions and measurable result. Split any broad row further before code.
 | J1 → J10 | Remaining validation, dates/uniqueness, logging, backups, measured performance, parity, dependencies, owner-decided privacy, cost precision and API contracts/pagination | Recheck each audit finding; release one bounded slice at a time |
 
 Each release needs numeric examples, permissions/conflict checks, appropriate
-automated and desktop/phone checks, unchanged-record evidence, a user-guide
-update, and a real station checkpoint before dependent work. A3 must be a
+automated and desktop/phone checks, unchanged-record evidence and a user-guide
+update before dependent development. The owner permits development to continue
+before station installation (2026-10-16). Queue individual commits; install and
+check one update before the next installation. A3 must be a
 complete working float workflow before activation: no opening capture with
 old closing/report arithmetic. Original closes remain preserved throughout.
 

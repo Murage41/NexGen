@@ -10,6 +10,7 @@ import {
   exportMonthlyReport, exportStockReconciliation,
 } from '../services/api';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
+import { useAuth } from '../context/AuthContext';
 
 type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow';
 
@@ -25,6 +26,7 @@ function downloadBlob(response: any, fallbackFilename: string) {
 }
 
 export default function Reports() {
+  const { isAdmin } = useAuth();
   const [tab, setTab] = useState<Tab>('daily');
   const [date, setDate] = useState(getKenyaDate());
   const [month, setMonth] = useState(getKenyaMonth());
@@ -131,6 +133,7 @@ export default function Reports() {
   return (
     <div className="pb-6">
       <PageHeader title="Reports" back />
+      {isAdmin && ['daily', 'monthly', 'cashflow'].includes(tab) && <p className="px-4 text-xs text-gray-500 mb-3">Current financial figures include later corrections. Original closes remain on each shift.</p>}
 
       {/* Tabs */}
       <div className="flex bg-gray-100 rounded-xl p-1 mb-4 overflow-x-auto">

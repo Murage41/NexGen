@@ -26,15 +26,32 @@ Last updated: 2026-10-16.
   totals, simpler finance and fixed consumption after invoicing; complete
   proposed sequence in `docs/IMPLEMENTATION-STAGES.md`, indexed by
   `docs/ROADMAP.md`. Manual opening floats are in `docs/SHIFT-FLOATS.md`.
-  The broader edit/note/report and float work is not built.
+  A2's consistent current/original financial views are developed separately
+  and queued after A1; floats and the broader edit/note work are not built.
   The whole of old 2b is not authorised to ship. The next station update is
   **#16**, A1 only, based on the station's code (`c5c4ee8`). No new migration
   or dependency installation is required; migration remains `054`.
+- **A2 development: current financial views, queued after A1.** The owner
+  authorised A2 on 2026-10-16 and changed the delivery workflow: finish and
+  test individual development commits, then install/check one at a time on
+  the station. `codex/current-shift-financials` starts from A1's installation
+  target `7695895`. Closed detail, daily/dashboard and relevant period totals
+  share current financial facts; Original close and Original/Current history
+  columns retain the saved evidence. No new migration, posting, float, stock
+  replay, independent-total correction form or old 2b bundle is included.
+  Release card: `docs/releases/A2-CURRENT-FINANCIAL-VIEWS.md`; owner guide:
+  `docs/CURRENT-SHIFT-FIGURES.md`. All 37 backend suites, three type checks,
+  both client builds, three planted bugs, scratch desktop/phone checks and
+  the receivables audit pass. Final real-DB fingerprint is unchanged.
+  Station checks gate the next installation,
+  not the next development stage. Neither A1 nor A2 installation is confirmed.
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date
-  again as the station runs: before an update that changes how existing
-  records are read or migrated, ask the owner for a fresh copy (the station's
+  again as the station runs. Development can use synthetic fixtures and
+  isolated copies of this available backup with its age recorded. Before
+  installing an update that changes historical reads or migrations, refresh
+  the copy when needed for that installation check (the station's
   `backend\data\nexgen.db` with its `-wal` and `-shm` files, or the newest
   file in `backend\data\backups\`) and check on a scratch copy of it.
 - `npm install` on the station reports 12 known vulnerabilities (1 low, 6
@@ -69,12 +86,14 @@ Last updated: 2026-10-16.
 | 14 | `bcfb424` | Corrections phase 1: closed shifts read their snapshot, database guards, correcting fuel on account | 053 |
 | 15 | `c5c4ee8` | Corrections phase 2a: credit sales, debt payments, drawer expenses, cash/M-Pesa | 054 |
 | 16 (pending installation) | `c885a61` + publication record | A1: remove M-Pesa fees; staged roadmap and manual-float specification | no new migration |
+| A2 (queued after #16) | A2 release commit, directly after `7695895`; see release card | Current financial views and preserved original close | no new migration |
 
 ## How the system works now (recent decisions that code must respect)
 
-- **Closed records never change** (on the station since update #14: the
-  database refuses it, and a closed shift shows its close snapshot, never a
-  recalculation). Numbered **Corrections** (C-2026-0001) cover fuel on account,
+- **Closed source records and saved closes never change** (database guards
+  have been on the station since update #14). Station/A1 detail shows the
+  original close by default. Queued A2 shows current figures and active lists,
+  retaining Original close separately. Numbered **Corrections** (C-2026-0001) cover fuel on account,
   credit sales, shift debt receipts, drawer expenses and a cash/M-Pesa split
   with an unchanged combined total. Existing office payment reversals, Move
   balance, void and standalone debit-note actions remain in the station/A1
@@ -277,11 +296,20 @@ Last updated: 2026-10-16.
   remains on `c5c4ee8`; do not merge into or reset that dirty checkout.
   No station installation has been reported. Existing verification remains
   valid; no application code changed after the completed A1 checks.
-- **Next sequence:** install A1 and finish the station checkpoint;
-  A2 consistent current/original financial views; A3 complete manual
-  opening floats; A4 independent closing cash/M-Pesa corrections. Then follow
-  the separate B-J releases in `docs/IMPLEMENTATION-STAGES.md`. Each dependent
-  release waits for its checks and the owner's station checkpoint. Stage IDs
+- **2026-10-16: A2 developed and workflow updated.** Closed detail and its
+  current lists, daily/dashboard, relevant monthly/cash-flow figures and
+  history CSV use a shared reader. Original snapshots and explicit original
+  views remain available. Historical wages, paid credits, inactive pumps,
+  older corrections and missing snapshots have regression coverage. The
+  release card records checks and the separate station checkpoint. Development
+  continues in bounded, tested commits before station installation; the older
+  mixed checkout and actual development database are preserved.
+- **Next development:** implement the complete A3 manual opening-float
+  workflow, then A4 independent closing cash/M-Pesa corrections.
+  Follow the separate B-J releases in `docs/IMPLEMENTATION-STAGES.md`. Install
+  A1 and check it before A2; each later installation waits for the preceding
+  station checkpoint, while dependent development waits for development checks.
+  Stage IDs
   are not station update numbers; #16 is A1. Do not revive the obsolete
   promise of float as update #17 or ship all
   old phase 2b as a bundle.

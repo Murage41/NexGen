@@ -3,10 +3,9 @@ import db from '../database';
 import { getFIFOCostByFuelType } from '../services/stockCalculator';
 import { detectDriftSummary } from '../services/driftDetector';
 import { getKenyaDate } from '../utils/timezone';
-import {
-  getTotalPayrollCashOutflow,
-  getUnmirroredShiftWagesPaid,
-} from '../services/payrollAccounting';
+import { getTotalPayrollCashOutflow } from '../services/payrollAccounting';
+import { readShiftFinancials } from '../services/shiftFinancials';
+import { sumMoney } from '../services/shiftAccountability';
 import { getCurrentReceivableTotals } from '../services/receivableReporting';
 import { totalOwedByAttendants } from '../services/employeeVariances';
 import { decorateShiftStaleness, listStaleOpenShifts } from '../services/shiftOperations';
@@ -46,6 +45,7 @@ router.get('/', async (req: any, res) => {
     // ── Today's shifts ──
     const todayShifts = await db('shifts')
       .where('shift_date', today);
+    const todayFinancials = [...(await readShiftFinancials(db, todayShifts)).values()];
     const shiftIds = todayShifts.map((s: any) => s.id);
     // Closed-only subset: COGS (FIFO batch_consumption) is only ever computed at shift
     // close, so any profit/margin figure must be based on closed-shift sales too, or an
@@ -75,48 +75,14 @@ router.get('/', async (req: any, res) => {
       }
     }
 
-    // Today's collections
-    let todayCash = 0, todayMpesa = 0, todayCreditsOnAccount = 0;
-    if (shiftIds.length > 0) {
-      const collections = await db('shift_collections').whereIn('shift_id', shiftIds);
-      for (const c of collections) {
-        todayCash += Number(c.cash_amount) || 0;
-        todayMpesa += Number(c.mpesa_amount) || 0;
-        todayCreditsOnAccount += Number(c.credits_amount) || 0;
-      }
-    }
-
-    let todayInvoiceRetail = 0;
-    if (shiftIds.length > 0) {
-      const invoiceResult = await db('invoice_consumption')
-        .whereIn('shift_id', shiftIds)
-        // As the shifts closed: a later correction does not move them.
-        .whereNull('created_by_record_correction_id')
-        .where((q) => q.whereNull('deleted_at').orWhereNotNull('reversed_by_record_correction_id'))
-        .sum('retail_amount as total')
-        .first();
-      todayInvoiceRetail = Number((invoiceResult as any)?.total) || 0;
-    }
-
-    let todayCreditReceiptsCash = 0;
-    let todayCreditReceiptsMpesa = 0;
-    if (shiftIds.length > 0 && await db.schema.hasTable('credit_payments')) {
-      const hasShiftId = await db.schema.hasColumn('credit_payments', 'shift_id');
-      if (hasShiftId) {
-        const receipts = await db('credit_payments')
-          .whereIn('shift_id', shiftIds)
-          // As the shifts closed: a later correction does not move them.
-          .whereNull('created_by_record_correction_id')
-          .where((q) => q.where({ status: 'posted' }).orWhereNotNull('reversed_by_record_correction_id'))
-          .whereNull('deleted_at')
-          .select('payment_method', 'amount');
-        for (const receipt of receipts) {
-          if (receipt.payment_method === 'mpesa') todayCreditReceiptsMpesa += Number(receipt.amount) || 0;
-          else todayCreditReceiptsCash += Number(receipt.amount) || 0;
-        }
-      }
-    }
-    const todayCreditReceipts = todayCreditReceiptsCash + todayCreditReceiptsMpesa;
+    // The owner sees the same current financial sources as shift detail.
+    const todayCash = sumMoney(todayFinancials, (view) => view.current.total_cash);
+    const todayMpesa = sumMoney(todayFinancials, (view) => view.current.total_mpesa);
+    const todayCreditsOnAccount = sumMoney(todayFinancials, (view) => view.current.total_credits);
+    const todayInvoiceRetail = sumMoney(todayFinancials, (view) => view.current.total_invoice_consumption);
+    const todayCreditReceiptsCash = sumMoney(todayFinancials, (view) => view.current.credit_receipts_cash);
+    const todayCreditReceiptsMpesa = sumMoney(todayFinancials, (view) => view.current.credit_receipts_mpesa);
+    const todayCreditReceipts = sumMoney(todayFinancials, (view) => view.current.total_credit_receipts);
 
     // Today's COGS from FIFO batch consumption
     const todayFifoCosts = await getFIFOCostByFuelType(today, today);
@@ -127,16 +93,7 @@ router.get('/', async (req: any, res) => {
     if (todayLitresPetrol > 0) avgCosts['petrol'] = (todayFifoCosts['petrol'] || 0) / todayLitresPetrol;
     if (todayLitresDiesel > 0) avgCosts['diesel'] = (todayFifoCosts['diesel'] || 0) / todayLitresDiesel;
 
-    // Today's wages — use stored wage_paid for closed shifts, daily_wage preview for open
-    const todayLegacyWagesPaid = await getUnmirroredShiftWagesPaid(today, today);
-    const todayWageDeductionsRow = shiftIds.length > 0
-      ? await db('wage_deductions')
-        .whereIn('shift_id', shiftIds)
-        .whereNull('deleted_at')
-        .sum('deduction_amount as total')
-        .first()
-      : null;
-    const todayWageDeductions = Number(todayWageDeductionsRow?.total || 0);
+    // Earned payroll expense and actual payments keep their posting dates.
     const todayEarningsRow = await db('employee_earnings')
       .whereNull('reversed_at')
       .whereIn('status', ['approved', 'posted'])
@@ -144,27 +101,10 @@ router.get('/', async (req: any, res) => {
       .sum('gross_amount as total')
       .first();
     const todayWages = Number(todayEarningsRow?.total || 0);
-    const todayPayrollPaidFromShiftsRow = shiftIds.length > 0
-      ? await db('payroll_payments')
-        .whereIn('shift_id', shiftIds)
-        .where({ status: 'posted' })
-        .sum('amount as total')
-        .first()
-      : null;
-    const todayPayrollPaidFromShifts = Number(todayPayrollPaidFromShiftsRow?.total || 0);
     const todayWagesPaid = await getTotalPayrollCashOutflow(today, today);
 
     // Today's expenses (shift + general)
-    let todayShiftExpenses = 0;
-    if (shiftIds.length > 0) {
-      const seResult = await db('shift_expenses')
-        .whereIn('shift_id', shiftIds)
-        .whereNull('created_by_record_correction_id')
-        .where((q) => q.whereNull('deleted_at').orWhereNotNull('reversed_by_record_correction_id'))
-        .sum('amount as total')
-        .first();
-      todayShiftExpenses = Number((seResult as any)?.total) || 0;
-    }
+    const todayShiftExpenses = sumMoney(todayFinancials, (view) => view.current.total_expenses);
     const geResult = await db('expenses')
       .where('date', today)
       .whereNull('deleted_at')
@@ -189,23 +129,15 @@ router.get('/', async (req: any, res) => {
 
     // Today's variance must match shift detail. Shift-linked debt receipts
     // are included inside entered cash/M-Pesa totals, not added on top.
-    const todayExpectedTotal = todaySales + todayCreditReceipts;
-    const todayTotalAccounted =
-      todayCash +
-      todayMpesa +
-      todayCreditsOnAccount +
-      todayInvoiceRetail +
-      todayShiftExpenses +
-      todayLegacyWagesPaid +
-      todayWageDeductions +
-      todayPayrollPaidFromShifts;
-    const todayVariance = todayTotalAccounted - todayExpectedTotal;
+    const todayExpectedTotal = sumMoney(todayFinancials, (view) => view.current.expected_shift_total);
+    const todayTotalAccounted = sumMoney(todayFinancials, (view) => view.current.total_accounted);
+    const todayVariance = sumMoney(todayFinancials, (view) => view.current.variance);
 
     // ── Month-to-date figures ──
     const mtdShifts = await db('shifts')
       .where('shift_date', '>=', monthStart)
-      .where('shift_date', '<=', today)
-      .select('id', 'status');
+      .where('shift_date', '<=', today);
+    const mtdFinancials = [...(await readShiftFinancials(db, mtdShifts)).values()];
     const mtdShiftIds = mtdShifts.map((s: any) => s.id);
     const mtdClosedShiftIds = mtdShifts.filter((s: any) => s.status === 'closed').map((s: any) => s.id);
 
@@ -229,7 +161,7 @@ router.get('/', async (req: any, res) => {
       mtdSalesClosed = Number((mtdClosedResult as any)?.sales) || 0;
     }
 
-    // MTD wages — use stored wage_paid for closed shifts, daily_wage preview for open
+    // MTD payroll expense follows earned dates; cash paid follows payment dates.
     const mtdEarningsRow = await db('employee_earnings')
       .whereNull('reversed_at')
       .whereIn('status', ['approved', 'posted'])
@@ -240,11 +172,7 @@ router.get('/', async (req: any, res) => {
     const mtdWagesPaid = await getTotalPayrollCashOutflow(monthStart, today);
 
     // MTD expenses
-    let mtdShiftExp = 0;
-    if (mtdShiftIds.length > 0) {
-      const r = await db('shift_expenses').whereIn('shift_id', mtdShiftIds).whereNull('deleted_at').sum('amount as total').first();
-      mtdShiftExp = Number((r as any)?.total) || 0;
-    }
+    const mtdShiftExp = sumMoney(mtdFinancials, (view) => view.current.total_expenses);
     const mtdGenExp = await db('expenses')
       .whereNull('deleted_at')
       .where('date', '>=', monthStart)
@@ -445,6 +373,7 @@ router.get('/', async (req: any, res) => {
     }
 
     const fullData = {
+      financial_view: 'current',
       // Today
       today_sales: todaySales,
       today_net_sales: todayNetSales,

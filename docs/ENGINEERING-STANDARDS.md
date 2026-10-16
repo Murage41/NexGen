@@ -8,11 +8,10 @@ and points here. Read the section that matches the change before writing code.
 NexGen is an accounting system. What was recorded stays recorded; a mistake is
 corrected by a new, dated entry that refers to the original.
 
-- **A closed shift never changes.** No edit, no pencil. Mistakes found later are
-  fixed on the balances: **Move balance** between a money customer, an employee
-  and the station (`services/balanceMoves.ts`), and for invoice customers
-  **credit and debit notes** (`services/invoiceAdjustments.ts`). See
-  `docs/CLOSED-SHIFT-CORRECTIONS.md`.
+- **A closed shift's recorded facts never change.** Its saved close and source
+  facts remain protected. Later corrections use the existing posting helpers.
+  A2 shows current financial facts separately from the preserved original close;
+  changing a read view never reopens, recloses or posts to an account.
 - **Financial rows are never deleted.** Payments, receipts, notes and
   repayments are *reversed* (status `reversed`, who, when, reason); an unpaid
   document is *voided*. Soft delete (`deleted_at`) is only for non-financial
@@ -110,23 +109,22 @@ cache instead of recomputing; computing at event time and never updating.
 - **Shared UI.** Components used by both desktop and mobile live in
   `shared/ui/` and take their API calls as props.
 - **Closed records are corrected, never changed** (Corrections,
-  `docs/CORRECTIONS.md`). A closed shift's figures come from its close snapshot
-  (`shift_close_reconciliations`, `services/shiftSnapshot.ts`), never from
-  recalculating rows; database triggers refuse changes to a closed shift's
+  `docs/CORRECTIONS.md`). Original figures come from the close snapshot
+  (`shift_close_reconciliations`, `services/shiftSnapshot.ts`); current figures
+  use `services/shiftFinancials.ts`. Database triggers refuse changes to a closed shift's
   recorded facts and to any snapshot (migration 053). A mistake is a
   Correction (`services/corrections.ts`): one preview-and-post service, one
   rule per record type (`services/correctionRules/`), approval bound to the
   plan hash, undo as a cancelling correction. A new record type adds a rule;
   it never adds its own button, route or table.
-- **A closed shift's records are listed and totalled as they were at close**:
-  a row a correction reversed still counts, a row it added does not
-  (`services/shiftSnapshot.ts`: `asRecordedConsumption` for fuel on account,
-  `asRecordedRows` for credit sales and drawer expenses, `asRecordedReceipts`
-  for debt receipts; `asClosedConsumption` and `asClosedReceipts` in
-  `routes/reports.ts`; the dashboard's filters). Anything new that totals a
-  shift's records for its reconciliation uses that rule; anything about what a
-  customer owes, or a monthly total (expenses by category), uses live rows, so
-  corrections count there on the record's own date.
+- **Current versus original is explicit.** Default closed detail and financial
+  reports use the common current reader: active full sale/expense/fuel rows,
+  posted receipts and collection adjustments once. `?view=original` uses the
+  saved snapshot and `asRecorded*` helpers, preserving the backfilled distinction.
+  Never mix original lists with current totals. Anchor closed reconciliation
+  sales/wage basis to its saved close; actual wage cash is a separate figure.
+  Fixed meter revenue and posting-dated invoice revenue events keep their own
+  meanings. Missing historical inputs are not invented or backfilled on GET.
 - **A correction rule** (`services/correctionRules/`) never writes a closed
   record's facts: it reverses (soft delete or status, plus a
   `reversed_by_record_correction_id` link) and adds (a new row with a

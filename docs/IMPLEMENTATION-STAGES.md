@@ -24,16 +24,25 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   on 2026-10-16; code commit `c885a61` is published on `origin/main` and a
   documentation-only follow-up records it. Station installation as update #16
   and the owner's checkpoint remain. Original mixed work
-  is preserved. Do not start A2 before that checkpoint.
-- Every other release below is **not built as an agreed complete release**.
+  is preserved. The owner changed the sequence on 2026-10-16: development can
+  continue before station checks; installation still proceeds one update at a time.
+- A2 is developed on `codex/current-shift-financials`, based on `7695895`.
+  Current and original views, reports, history exports and both clients use
+  the agreed financial basis. Development evidence and installation checks
+  are in [the A2 release card](releases/A2-CURRENT-FINANCIAL-VIEWS.md).
+  All 37 backend suites, three type checks, both client builds, three planted
+  bugs and scratch desktop/phone/audit checks pass. It is queued after A1;
+  no station installation is confirmed.
+- A3 and later releases below are **not built as agreed complete releases**.
   Existing helpers, screens and selected uncommitted code can be reused after
   review; that does not make a release complete or authorise all old 2b work.
 - Preserve existing local work. Start the approved release from the station's
   known code and preserve the older 2b work separately; do not reset, revert
   unrelated files, or quietly include that whole change set.
-- One row is one release. Finish its evidence, installation and station
-  check before starting a dependent release. A group letter is never a
-  bundled update containing all of that group's rows.
+- One row is one development release/commit. Finish its development evidence
+  before dependent development. Queue station installation separately: install
+  and check one update before the next installation. A group letter is never
+  a bundled update containing all of that group's rows.
 - Keep pump readings fixed in finance work. Do not reopen/reclose a shift or
   replay FIFO to change money, debts, billing allocation or expenses.
 - Keep original close snapshots, issued documents and historical allocation
@@ -70,9 +79,10 @@ route families, pages or dependency packages hidden inside one release.
 - Money and permission changes need meaningful tests and planted-bug checks;
   prove the backend before wiring its UI. Document any genuinely inapplicable
   gate rather than silently skipping it.
-- Obtain a fresh verified station copy before migrations or historical-read
-  changes. Test only an isolated scratch copy, never the development copy of
-  real station data or a development ngrok tunnel.
+- Development can use synthetic fixtures and isolated copies of the available
+  station backup, recording its age. Obtain current station data before the
+  queued migration/historical-read installation checks when needed. Never test
+  on the development copy of real station data or a development ngrok tunnel.
 - Compare pre/post figures and underlying records. Original closes and issued
   source/documents must remain unchanged. For an approved physical/cost
   amendment, show exactly its intended stock/COGS delta and unaffected records.
@@ -83,15 +93,16 @@ route families, pages or dependency packages hidden inside one release.
 - Update owner guides, roadmap and status. Commit/push only when requested;
   install one update with its own backup/check command block in station
   Command Prompt. The owner confirms the release's actual station case.
-- Do not advance to dependent work until that station check passes. Restore
-  verification precedes risky migrations; never restore an old database over
-  newer station business as a casual application rollback.
+- Station checks block the next installation, not further isolated development
+  after the current release passes its development checks. Restore verification
+  precedes risky migrations; never restore an old database over newer station
+  business as a casual application rollback.
 
 ## A. Establish the approved financial baseline
 
 | Release | Scope | Not included | Required evidence before moving on |
 |---|---|---|---|
-| A1 | Isolate the approved station baseline and remove M-Pesa fees from runtime, API, settings and both clients. | Shipping all old 2b; rewriting historical fee columns or pushed migrations. | Development checks and visual verification pass on the isolated candidate; commit/release and station checkpoint remain. |
+| A1 | Isolate the approved station baseline and remove M-Pesa fees from runtime, API, settings and both clients. | Shipping all old 2b; rewriting historical fee columns or pushed migrations. | Development complete and published (`c885a61`, installation target `7695895`); station checkpoint remains. |
 | A2 | One common current-financial reader for shift detail, daily/dashboard and relevant period totals; original close remains accessible. | Changing source readings, original snapshots or physical stock; a new correction engine. | The same amended case gives identical current totals everywhere; original figures remain reproducible; read-only views change no money. |
 | A3 | Complete opening-float and custody reconciliation system under `SHIFT-FLOATS.md`: manually enter opening cash and opening M-Pesa before opening; coherent closing figures/readers and minimum explicit money-in/out where needed. | Previous-shift lookup, inferred/default carried balances, automatic inter-shift transfers, loan/general-ledger work. | Both declarations required, explicit zero valid; opening/closing and movements reconcile; float creates no sale/profit; a later shift uses only its own declaration. |
 | A4 | Correct independent closing cash and M-Pesa totals with reason, approval, history and conflict checking. | Receipt-per-transaction capture; requiring the combined total to stay unchanged; modifying opening floats or meters incidentally. | Cash-only, M-Pesa-only and combined changes work; variance and reports agree; original close, later openings, tank records and FIFO stay unchanged. |
@@ -263,7 +274,8 @@ single change; nor may J6 silently absorb every screen in both applications.
 | Supplier drift and remaining Tier 5 | C2 and bounded J releases; advances alone do not fix supplier-payables drift. |
 | Accepted future scope | eTIMS remains with the fiscal system; statutory payroll, full ledger unification and multi-station architecture need separate decisions. |
 
-The owner instructed us to proceed, beginning with A1. Dependencies can be
-refined in release cards; do not reorder silently, bundle future stages or
-begin the next dependent release before the preceding station checkpoint
-has passed. Commit/push and station installation follow the repository rules.
+The owner instructed us to proceed and then explicitly allowed development
+before station installation on 2026-10-16. Do not reorder silently or bundle
+future stages. Complete and test each development release, then install the
+queued commits one at a time with their own station checks. Commit/push and
+station installation follow the repository rules.

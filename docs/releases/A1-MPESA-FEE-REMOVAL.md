@@ -70,8 +70,10 @@ Development verification completed 2026-10-15:
 
 The owner checks one shift on the station after installation: M-Pesa remains
 the entered amount, the fee settings/display are absent and reconciliation
-matches the original gross-money calculation. Do not begin dependent A2 until
-that checkpoint passes. Station update #16 is not installed by this work.
+matches the original gross-money calculation. The owner's later instruction
+on 2026-10-16 allows A2 development before this check; each queued station
+installation still waits for the preceding update's check. Station update #16
+is not installed by this work.
 
 ## Recovery
 

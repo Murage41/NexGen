@@ -53,6 +53,7 @@ import { getShiftReview, updateShiftReview } from '../services/shiftReview';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
 import { computeShiftAccountability } from '../services/shiftAccountability';
+import { readShiftFinancials } from '../services/shiftFinancials';
 import { asRecordedConsumption, asRecordedReceipts, asRecordedRows, snapshotFigures } from '../services/shiftSnapshot';
 import { shiftCorrections } from '../services/corrections';
 import { listBalanceMoves } from '../services/balanceMoves';
@@ -156,10 +157,14 @@ router.get('/export.csv', requireAdmin, async (req, res) => {
     const headers = [
       'Shift ID', 'Shift Date', 'Employee', 'Status', 'Started At', 'Ended At',
       'Compensation Plan ID', 'Wage Paid', 'Review Status', 'Review Notes', 'Reviewed At',
-      'Expected Sales', 'Expected Shift Total', 'Cash Received', 'M-Pesa Received',
-      'Debt Receipts', 'Credits Issued', 'Invoice Consumption', 'Expenses',
-      'Direct Wage Payment', 'Payroll Payments', 'Total Accounted', 'Variance',
+      'Original Expected Sales', 'Original Expected Shift Total', 'Original Cash Received', 'Original M-Pesa Received',
+      'Original Debt Receipts', 'Original Credits Issued', 'Original Invoice Consumption', 'Original Expenses',
+      'Original Direct Wage Payment', 'Original Payroll Payments', 'Original Total Accounted', 'Original Variance',
       'Variance Type', 'Variance Reason', 'Approved At', 'Cancellation Reason',
+      'Original Close Available', 'Current Expected Sales', 'Current Expected Shift Total',
+      'Current Cash Received', 'Current M-Pesa Received', 'Current Debt Receipts',
+      'Current Credits Issued', 'Current Invoice Consumption', 'Current Expenses',
+      'Current Direct Wage Payment', 'Current Payroll Payments', 'Current Total Accounted', 'Current Variance',
     ];
     const body = rows.map((row: any) => [
       row.id, row.shift_date, row.employee_name, row.status, row.start_time, row.end_time,
@@ -168,6 +173,10 @@ router.get('/export.csv', requireAdmin, async (req, res) => {
       row.credit_receipts, row.credits_issued, row.invoice_consumption, row.expenses,
       row.direct_wage_payment, row.payroll_payments, row.total_accounted, row.variance,
       row.variance_type, row.variance_reason, row.approved_at, row.cancellation_reason,
+      row.original_close_available, row.current_expected_sales, row.current_expected_shift_total,
+      row.current_cash_received, row.current_mpesa_received, row.current_credit_receipts,
+      row.current_credits_issued, row.current_invoice_consumption, row.current_expenses,
+      row.current_direct_wage_payment, row.current_payroll_payments, row.current_total_accounted, row.current_variance,
     ].map(csvCell).join(','));
     const range = options.from || options.to
       ? `${options.from || 'first'}-to-${options.to || 'latest'}`
@@ -239,270 +248,297 @@ router.get('/:id/neighbors', requireAuth, requireOwnShiftOrAdmin, async (req: an
 // GET shift with full details
 router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
   try {
-    const shift = await db('shifts')
-      .join('employees', 'shifts.employee_id', 'employees.id')
-      .select('shifts.*', 'employees.name as employee_name', 'employees.daily_wage as employee_wage')
-      .where('shifts.id', req.params.id)
-      .first();
+    // Lists, totals, saved close and correction history must describe the same
+    // database snapshot when another device posts a correction during a GET.
+    // The existing open-shift pump sync also commits before the response.
+    const response = await db.transaction(async (trx) => {
+      const shift = await trx('shifts')
+        .join('employees', 'shifts.employee_id', 'employees.id')
+        .select('shifts.*', 'employees.name as employee_name', 'employees.daily_wage as employee_wage')
+        .where('shifts.id', req.params.id)
+        .first();
 
-    if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
+      if (!shift) return { status: 404, body: { success: false, error: 'Shift not found' } };
 
-    // Sync pump readings with active pumps for open shifts
-    if (shift.status === 'open') {
-      const activePumps = await db('pumps').where({ active: true });
-      const activePumpIds = activePumps.map((p: any) => p.id);
-      const existingReadings = await db('pump_readings').where({ shift_id: shift.id }).select('pump_id');
-      const existingPumpIds = existingReadings.map((r: any) => r.pump_id);
+      const originalView = req.query.view === 'original';
+      if (req.query.view && !originalView && req.query.view !== 'current') {
+        return { status: 400, body: { success: false, error: 'view must be current or original.' } };
+      }
+      if (originalView && shift.status !== 'closed') {
+        return { status: 409, body: { success: false, error: 'An original close is available only for a closed shift.' } };
+      }
 
-      // Remove readings for deactivated pumps
-      for (const pumpId of existingPumpIds) {
-        if (!activePumpIds.includes(pumpId)) {
-          await db('pump_readings').where({ shift_id: shift.id, pump_id: pumpId }).delete();
+      // Sync pump readings with active pumps for open shifts
+      if (shift.status === 'open') {
+        const activePumps = await trx('pumps').where({ active: true });
+        const activePumpIds = activePumps.map((p: any) => p.id);
+        const existingReadings = await trx('pump_readings').where({ shift_id: shift.id }).select('pump_id');
+        const existingPumpIds = existingReadings.map((r: any) => r.pump_id);
+
+        // Remove readings for deactivated pumps
+        for (const pumpId of existingPumpIds) {
+          if (!activePumpIds.includes(pumpId)) {
+            await trx('pump_readings').where({ shift_id: shift.id, pump_id: pumpId }).delete();
+          }
+        }
+
+        // Add readings for newly added pumps
+        for (const pump of activePumps) {
+          if (!existingPumpIds.includes(pump.id)) {
+            const lastReading = await trx('pump_readings')
+              .join('shifts', 'pump_readings.shift_id', 'shifts.id')
+              .where('pump_readings.pump_id', pump.id)
+              .where('shifts.status', 'closed')
+              .orderBy('shifts.end_time', 'desc')
+              .select('pump_readings.closing_litres', 'pump_readings.closing_amount')
+              .first();
+            const openLitres = lastReading ? lastReading.closing_litres : (pump.initial_litres || 0);
+            const openAmount = lastReading ? lastReading.closing_amount : (pump.initial_amount || 0);
+            await trx('pump_readings').insert({
+              shift_id: shift.id, pump_id: pump.id,
+              opening_litres: openLitres, opening_amount: openAmount,
+              closing_litres: openLitres, closing_amount: openAmount,
+              litres_sold: 0, amount_sold: 0,
+            });
+          }
         }
       }
 
-      // Add readings for newly added pumps
-      for (const pump of activePumps) {
-        if (!existingPumpIds.includes(pump.id)) {
-          const lastReading = await db('pump_readings')
-            .join('shifts', 'pump_readings.shift_id', 'shifts.id')
-            .where('pump_readings.pump_id', pump.id)
-            .where('shifts.status', 'closed')
-            .orderBy('shifts.end_time', 'desc')
-            .select('pump_readings.closing_litres', 'pump_readings.closing_amount')
-            .first();
-          const openLitres = lastReading ? lastReading.closing_litres : (pump.initial_litres || 0);
-          const openAmount = lastReading ? lastReading.closing_amount : (pump.initial_amount || 0);
-          await db('pump_readings').insert({
-            shift_id: shift.id, pump_id: pump.id,
-            opening_litres: openLitres, opening_amount: openAmount,
-            closing_litres: openLitres, closing_amount: openAmount,
-            litres_sold: 0, amount_sold: 0,
-          });
-        }
-      }
-    }
+      const readings = await trx('pump_readings')
+        .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+        .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
+        .where('pump_readings.shift_id', shift.id)
+        .modify(query => { if (shift.status === 'open') query.where('pumps.active', true); });
+      const compensationPlan = shift.compensation_plan_id
+        ? await getCompensationPlanById(Number(shift.compensation_plan_id), trx)
+        : await getCompensationPlan(
+          Number(shift.employee_id),
+          shift.shift_date || String(shift.start_time).slice(0, 10),
+          trx,
+        );
+      const earnings = await trx('employee_earnings')
+        .where({ shift_id: shift.id })
+        .whereNull('reversed_at')
+        .orderBy('id');
+      const earningPreview = shift.status === 'open' && compensationPlan
+        ? calculateShiftEarnings(compensationPlan, readings)
+        : [];
 
-    const readings = await db('pump_readings')
-      .join('pumps', 'pump_readings.pump_id', 'pumps.id')
-      .select('pump_readings.*', 'pumps.label as pump_label', 'pumps.nozzle_label', 'pumps.fuel_type', 'pumps.meter_capacity_litres', 'pumps.meter_capacity_amount')
-      .where('pump_readings.shift_id', shift.id)
-      .where('pumps.active', true);
-    const compensationPlan = shift.compensation_plan_id
-      ? await getCompensationPlanById(Number(shift.compensation_plan_id))
-      : await getCompensationPlan(
-        Number(shift.employee_id),
-        shift.shift_date || String(shift.start_time).slice(0, 10),
+      let collections = collectionView(await trx('shift_collections').where({ shift_id: shift.id }).first());
+      const closeReconciliation = await trx('shift_close_reconciliations').where({ shift_id: shift.id }).first();
+      if (originalView && !closeReconciliation) {
+        return { status: 409, body: { success: false, error: 'No original close was saved for this shift.' } };
+      }
+      const shiftReview = shift.status === 'closed' ? await getShiftReview(trx, Number(shift.id)) : null;
+      const reviewEvents = shift.status === 'closed'
+        ? await trx('shift_review_events')
+          .leftJoin('employees as review_actor', 'shift_review_events.actor_employee_id', 'review_actor.id')
+          .where('shift_review_events.shift_id', shift.id)
+          .select('shift_review_events.*', 'review_actor.name as actor_name')
+          .orderBy('shift_review_events.created_at', 'asc')
+          .orderBy('shift_review_events.id', 'asc')
+        : [];
+      // Current records are the default. The explicit original view reconstructs
+      // the saved close, including its legacy/backfilled source rules.
+      const asClosed = originalView && Boolean(closeReconciliation);
+      const expenses = await trx('shift_expenses').where({ 'shift_expenses.shift_id': shift.id }).modify((query: any) => {
+        if (asClosed) asRecordedRows(query, 'shift_expenses');
+        else query.whereNull('shift_expenses.deleted_at');
+      });
+      // account_id tells a correction which customer the credit is on now.
+      const shiftCredits = await trx('shift_credits')
+        .leftJoin('credits', 'shift_credits.credit_id', 'credits.id')
+        .where('shift_credits.shift_id', shift.id)
+        .modify((query: any) => {
+          if (asClosed) asRecordedRows(query, 'shift_credits');
+          else query.whereNull('shift_credits.deleted_at');
+        })
+        .select('shift_credits.*', 'credits.account_id as account_id');
+      const wageDeduction = await trx('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
+      const payrollPayments = await trx('payroll_payments')
+        .where({ shift_id: shift.id, status: 'posted' })
+        .where((query) => {
+          query.whereNull('reference').orWhere('reference', 'not like', 'SHIFT-WAGE:%');
+        })
+        .orderBy('id');
+
+      // Phase 3B: invoice-mode consumption (litre ledger, retail-priced for shift balance)
+      const invoiceConsumption = await trx('invoice_consumption')
+        .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
+        .leftJoin('pumps as invoice_pumps', 'invoice_consumption.pump_id', 'invoice_pumps.id')
+        .leftJoin('tanks as invoice_tanks', 'invoice_consumption.tank_id', 'invoice_tanks.id')
+        .where('invoice_consumption.shift_id', shift.id)
+        .modify((query: any) => {
+          // Reconstruct historical rows only for the explicit original view.
+          if (asClosed) {
+            asRecordedConsumption(query, 'invoice_consumption', Boolean(closeReconciliation.backfilled));
+          } else {
+            query.whereNull('invoice_consumption.deleted_at')
+              .where((q: any) => q.whereNull('invoice_consumption.entry_status').orWhere('invoice_consumption.entry_status', 'active'));
+          }
+        })
+        .select(
+          'invoice_consumption.*',
+          'credit_accounts.name as account_name',
+          'credit_accounts.phone as account_phone',
+          'invoice_pumps.label as pump_label',
+          'invoice_pumps.nozzle_label as nozzle_label',
+          'invoice_tanks.label as tank_label',
+        )
+        .orderBy('invoice_consumption.created_at', 'asc');
+
+      // Credit receipts collected during this shift (old-debt payments received)
+      const creditReceipts = await trx('credit_payments')
+        .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
+        .where('credit_payments.shift_id', shift.id)
+        .modify((query: any) => {
+          if (asClosed) asRecordedReceipts(query, 'credit_payments', Boolean(closeReconciliation.backfilled));
+          else query.where('credit_payments.status', 'posted').whereNull('credit_payments.deleted_at');
+        })
+        .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone', 'credit_accounts.type as account_type', 'credit_accounts.employee_id as account_employee_id')
+        .orderBy('credit_payments.date', 'asc');
+
+      // What the attendant owes on their variances (Employees -> Variances).
+      const variances = await getVarianceStatement(trx, Number(shift.employee_id));
+      const outstandingDebts = variances.rows
+        .filter((row) => row.owed > 0)
+        .map((row) => ({ shift_id: row.shift_id, date: row.date, balance: row.owed }))
+        .reverse();
+      const total_outstanding_debt = variances.totals.owes;
+
+      const grossEarningPreview = earningPreview.reduce(
+        (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
+        0,
       );
-    const earnings = await db('employee_earnings')
-      .where({ shift_id: shift.id })
-      .whereNull('reversed_at')
-      .orderBy('id');
-    const earningPreview = shift.status === 'open' && compensationPlan
-      ? calculateShiftEarnings(compensationPlan, readings)
-      : [];
-
-    const collections = collectionView(await db('shift_collections').where({ shift_id: shift.id }).first());
-    const closeReconciliation = await db('shift_close_reconciliations').where({ shift_id: shift.id }).first();
-    const shiftReview = shift.status === 'closed' ? await getShiftReview(db, Number(shift.id)) : null;
-    const reviewEvents = shift.status === 'closed'
-      ? await db('shift_review_events')
-        .leftJoin('employees as review_actor', 'shift_review_events.actor_employee_id', 'review_actor.id')
-        .where('shift_review_events.shift_id', shift.id)
-        .select('shift_review_events.*', 'review_actor.name as actor_name')
-        .orderBy('shift_review_events.created_at', 'asc')
-        .orderBy('shift_review_events.id', 'asc')
-      : [];
-    // A closed shift lists its records as it closed; corrections since are
-    // listed separately (record_corrections).
-    const asClosed = shift.status === 'closed' && Boolean(closeReconciliation);
-    const expenses = await db('shift_expenses').where({ 'shift_expenses.shift_id': shift.id }).modify((query: any) => {
-      if (asClosed) asRecordedRows(query, 'shift_expenses');
-      else query.whereNull('shift_expenses.deleted_at');
-    });
-    // account_id tells a correction which customer the credit is on now.
-    const shiftCredits = await db('shift_credits')
-      .leftJoin('credits', 'shift_credits.credit_id', 'credits.id')
-      .where('shift_credits.shift_id', shift.id)
-      .modify((query: any) => {
-        if (asClosed) asRecordedRows(query, 'shift_credits');
-        else query.whereNull('shift_credits.deleted_at');
-      })
-      .select('shift_credits.*', 'credits.account_id as account_id');
-    const wageDeduction = await db('wage_deductions').where({ shift_id: shift.id }).whereNull('deleted_at').first();
-    const payrollPayments = await db('payroll_payments')
-      .where({ shift_id: shift.id, status: 'posted' })
-      .where((query) => {
-        query.whereNull('reference').orWhere('reference', 'not like', 'SHIFT-WAGE:%');
-      })
-      .orderBy('id');
-
-    // Phase 3B: invoice-mode consumption (litre ledger, retail-priced for shift balance)
-    const invoiceConsumption = await db('invoice_consumption')
-      .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
-      .leftJoin('pumps as invoice_pumps', 'invoice_consumption.pump_id', 'invoice_pumps.id')
-      .leftJoin('tanks as invoice_tanks', 'invoice_consumption.tank_id', 'invoice_tanks.id')
-      .where('invoice_consumption.shift_id', shift.id)
-      .modify((query: any) => {
-        // A closed shift lists its fuel on account as it closed; corrections
-        // since are listed separately (record_corrections).
-        if (shift.status === 'closed' && closeReconciliation) {
-          asRecordedConsumption(query, 'invoice_consumption', Boolean(closeReconciliation.backfilled));
-        } else {
-          query.whereNull('invoice_consumption.deleted_at');
-        }
-      })
-      .select(
-        'invoice_consumption.*',
-        'credit_accounts.name as account_name',
-        'credit_accounts.phone as account_phone',
-        'invoice_pumps.label as pump_label',
-        'invoice_pumps.nozzle_label as nozzle_label',
-        'invoice_tanks.label as tank_label',
-      )
-      .orderBy('invoice_consumption.created_at', 'asc');
-
-    // Credit receipts collected during this shift (old-debt payments received)
-    const creditReceipts = await db('credit_payments')
-      .join('credit_accounts', 'credit_payments.account_id', 'credit_accounts.id')
-      .where('credit_payments.shift_id', shift.id)
-      .modify((query: any) => {
-        if (asClosed) asRecordedReceipts(query, 'credit_payments', Boolean(closeReconciliation.backfilled));
-        else query.where('credit_payments.status', 'posted').whereNull('credit_payments.deleted_at');
-      })
-      .select('credit_payments.*', 'credit_accounts.name as account_name', 'credit_accounts.phone as account_phone', 'credit_accounts.type as account_type', 'credit_accounts.employee_id as account_employee_id')
-      .orderBy('credit_payments.date', 'asc');
-
-    // What the attendant owes on their variances (Employees -> Variances).
-    const variances = await getVarianceStatement(db, Number(shift.employee_id));
-    const outstandingDebts = variances.rows
-      .filter((row) => row.owed > 0)
-      .map((row) => ({ shift_id: row.shift_id, date: row.date, balance: row.owed }))
-      .reverse();
-    const total_outstanding_debt = variances.totals.owes;
-
-    const grossEarningPreview = earningPreview.reduce(
-      (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
-      0,
-    );
-    // Earnings are an expense when earned. Only actual direct payments belong
-    // in drawer accountability; monthly/weekly earnings accrue without leaving
-    // the shift drawer.
-    const employee_wage = shift.status === 'closed'
-      ? (shift.wage_paid ?? shift.employee_wage ?? 0)
-      : compensationPlan?.pay_schedule === 'daily'
-        ? grossEarningPreview
-        : 0;
-    const accountability = computeShiftAccountability({
-      readings,
-      collections,
-      shiftCredits,
-      invoiceConsumption,
-      creditReceipts,
-      expenses,
-      employee_wage,
-      payrollPayments,
-    });
-    // A closed shift shows the figures it closed with (its snapshot), never a
-    // recalculation; corrections made since show the result they lead to.
-    const figures = shift.status === 'closed' && closeReconciliation
-      ? { ...accountability, ...snapshotFigures(closeReconciliation) }
-      : accountability;
-    const viewer = (req as any).employee;
-    const recordCorrections = shift.status === 'closed'
-      ? await shiftCorrections(db, Number(shift.id), closeReconciliation ? Number(closeReconciliation.variance) : null)
-      : null;
-    if (recordCorrections && viewer?.role !== 'admin') {
-      recordCorrections.lines = recordCorrections.lines.map((line: any) => ({
-        number: line.number,
-        kind: line.kind,
-        status: line.status,
-        posting_date: line.posting_date,
-        error_kind: line.error_kind,
-        record_type: line.record_type,
-        action: line.action,
-        method: line.method,
-        category: line.category,
-        fuel_type: line.fuel_type,
-        litres: line.litres,
-        amount: line.amount,
-        shift_effect: line.shift_effect,
-        charge_to: line.charge_to,
-        reason_note: line.reason_note,
-      }));
-    }
-    const visiblePayments = viewer?.role === 'admin' ? payrollPayments : payrollPayments.filter(p => Number(p.employee_id) === Number(viewer?.id));
-    const visibleReceipts = viewer?.role === 'admin' ? creditReceipts : creditReceipts.filter((p: any) => p.account_type !== 'employee' || Number(p.account_employee_id) === Number(viewer?.id));
-    // The attendant sees what was corrected on their shift and what it did to
-    // their shortage; customers' balances stay with administrators.
-    const corrections = (shift.status === 'closed'
-      ? await listShiftCorrections(db, { shiftId: Number(shift.id) })
-      : []
-    ).map((row: any) => (viewer?.role === 'admin' ? row : {
-      id: row.id,
-      created_at: row.created_at,
-      posting_date: row.posting_date,
-      entry_type: row.entry_type,
-      correction_kind: row.correction_kind,
-      reason: row.reason,
-      variance_before: row.variance_before,
-      variance_after: row.variance_after,
-      approved_by_name: row.approved_by_name,
-      details: row.details ? { attendant: row.details.attendant } : null,
-    }));
-    const activityTimeline = buildShiftTimeline({
-      shift,
-      closeReconciliation,
-      shiftCredits,
-      invoiceConsumption,
-      creditReceipts: visibleReceipts,
-      expenses,
-      payrollPayments: visiblePayments,
-      reviewEvents,
-      corrections,
-    });
-
-    res.json({
-      success: true,
-      data: {
-        ...shift,
+      // Earnings are an expense when earned. Only actual direct payments belong
+      // in drawer accountability; monthly/weekly earnings accrue without leaving
+      // the shift drawer.
+      const employee_wage = shift.status === 'closed'
+        ? (shift.wage_paid ?? shift.employee_wage ?? 0)
+        : compensationPlan?.pay_schedule === 'daily'
+          ? grossEarningPreview
+          : 0;
+      const accountability = computeShiftAccountability({
         readings,
-        collections: collections || null,
-        close_reconciliation: closeReconciliation || null,
-        corrections,
-        // Corrections (services/corrections.ts) made to this shift since close.
-        record_corrections: recordCorrections,
-        snapshot_backfilled: Boolean(closeReconciliation?.backfilled),
-        // Mistakes on this shift fixed later by moving balances; the shift itself
-        // is unchanged. Administrators only (they name customers and amounts).
-        balance_moves: viewer?.role === 'admin' && shift.status === 'closed'
-          ? await listBalanceMoves(db, { shiftId: Number(shift.id) })
-          : [],
-        review: shiftReview || null,
-        activity_timeline: activityTimeline,
+        collections,
+        shiftCredits,
+        invoiceConsumption,
+        creditReceipts,
         expenses,
-        shift_credits: shiftCredits,
-        invoice_consumption: invoiceConsumption,
-        credit_receipts: visibleReceipts,
-        wage_deduction: wageDeduction || null,
-        payroll_payments: visiblePayments,
-        compensation_plan: compensationPlan,
-        earnings,
-        earning_preview: earningPreview,
-        gross_earning_preview: grossEarningPreview,
-        default_direct_wage_payment: shift.status === 'open' ? employee_wage : 0,
-        total_gross_earnings: earnings.reduce(
-          (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
-          0,
-        ),
-        outstanding_debts: outstandingDebts,
-        total_outstanding_debt,
-        attendant_variances: variances.totals,
-        ...(viewer?.role !== 'admin' && shift.status === 'open'
-          ? Object.fromEntries(Object.entries(accountability).filter(([key]) => !(BLIND_CLOSE_FIELDS as readonly string[]).includes(key)))
-          : figures),
-      },
+        employee_wage,
+        payrollPayments,
+      });
+      const closedFinancials = shift.status === 'closed'
+        ? (await readShiftFinancials(trx, [shift])).get(Number(shift.id))
+        : null;
+      const figures = originalView && closeReconciliation
+        ? { ...accountability, ...snapshotFigures(closeReconciliation) }
+        : closedFinancials?.current || accountability;
+      if (closedFinancials && !originalView) collections = closedFinancials.collections;
+      const viewer = (req as any).employee;
+      const recordCorrections = shift.status === 'closed'
+        ? await shiftCorrections(trx, Number(shift.id), closeReconciliation ? Number(closeReconciliation.variance) : null)
+        : null;
+      if (recordCorrections && closedFinancials) {
+        Object.assign(recordCorrections, { current_variance: closedFinancials.current.variance });
+      }
+      if (recordCorrections && viewer?.role !== 'admin') {
+        recordCorrections.lines = recordCorrections.lines.map((line: any) => ({
+          number: line.number,
+          kind: line.kind,
+          status: line.status,
+          posting_date: line.posting_date,
+          error_kind: line.error_kind,
+          record_type: line.record_type,
+          action: line.action,
+          method: line.method,
+          category: line.category,
+          fuel_type: line.fuel_type,
+          litres: line.litres,
+          amount: line.amount,
+          shift_effect: line.shift_effect,
+          charge_to: line.charge_to,
+          reason_note: line.reason_note,
+        }));
+      }
+      const visiblePayments = viewer?.role === 'admin' ? payrollPayments : payrollPayments.filter(p => Number(p.employee_id) === Number(viewer?.id));
+      const visibleReceipts = viewer?.role === 'admin' ? creditReceipts : creditReceipts.filter((p: any) => p.account_type !== 'employee' || Number(p.account_employee_id) === Number(viewer?.id));
+      // The attendant sees what was corrected on their shift and what it did to
+      // their shortage; customers' balances stay with administrators.
+      const corrections = (shift.status === 'closed'
+        ? await listShiftCorrections(trx, { shiftId: Number(shift.id) })
+        : []
+      ).map((row: any) => (viewer?.role === 'admin' ? row : {
+        id: row.id,
+        created_at: row.created_at,
+        posting_date: row.posting_date,
+        entry_type: row.entry_type,
+        correction_kind: row.correction_kind,
+        reason: row.reason,
+        variance_before: row.variance_before,
+        variance_after: row.variance_after,
+        approved_by_name: row.approved_by_name,
+        details: row.details ? { attendant: row.details.attendant } : null,
+      }));
+      const activityTimeline = buildShiftTimeline({
+        shift,
+        closeReconciliation,
+        shiftCredits,
+        invoiceConsumption,
+        creditReceipts: visibleReceipts,
+        expenses,
+        payrollPayments: visiblePayments,
+        reviewEvents,
+        corrections,
+      });
+
+      return { status: 200, body: {
+        success: true,
+        data: {
+          ...shift,
+          readings,
+          collections: collections || null,
+          close_reconciliation: closeReconciliation || null,
+          financial_view: shift.status === 'closed' ? (originalView ? 'original' : 'current') : 'live',
+          original_financials: closedFinancials?.original || null,
+          current_financials: closedFinancials?.current || null,
+          actual_wage_paid: closedFinancials?.actual_wage_paid ?? null,
+          corrections,
+          // Corrections (services/corrections.ts) made to this shift since close.
+          record_corrections: recordCorrections,
+          snapshot_backfilled: Boolean(closeReconciliation?.backfilled),
+          // Mistakes on this shift fixed later by moving balances; the shift itself
+          // is unchanged. Administrators only (they name customers and amounts).
+          balance_moves: viewer?.role === 'admin' && shift.status === 'closed'
+            ? await listBalanceMoves(trx, { shiftId: Number(shift.id) })
+            : [],
+          review: shiftReview || null,
+          activity_timeline: activityTimeline,
+          expenses,
+          shift_credits: shiftCredits,
+          invoice_consumption: invoiceConsumption,
+          credit_receipts: visibleReceipts,
+          wage_deduction: wageDeduction || null,
+          payroll_payments: visiblePayments,
+          compensation_plan: compensationPlan,
+          earnings,
+          earning_preview: earningPreview,
+          gross_earning_preview: grossEarningPreview,
+          default_direct_wage_payment: shift.status === 'open' ? employee_wage : 0,
+          total_gross_earnings: earnings.reduce(
+            (sum: number, earning: any) => sum + Number(earning.gross_amount || 0),
+            0,
+          ),
+          outstanding_debts: outstandingDebts,
+          total_outstanding_debt,
+          attendant_variances: variances.totals,
+          ...(viewer?.role !== 'admin' && shift.status === 'open'
+            ? Object.fromEntries(Object.entries(accountability).filter(([key]) => !(BLIND_CLOSE_FIELDS as readonly string[]).includes(key)))
+            : figures),
+        },
+      } };
     });
+    res.status(response.status).json(response.body);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

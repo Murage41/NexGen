@@ -22,6 +22,7 @@ async function main() {
   const { accountabilityFromRows } = await import('../src/services/shiftSnapshot');
   const migration = await import('../migrations/20260930_053_corrections');
   const { default: invoicesRouter } = await import('../src/routes/customerInvoices');
+  const { default: reportsRouter } = await import('../src/routes/reports');
   const { default: shiftsRouter } = await import('../src/routes/shifts');
   const { default: correctionsRouter } = await import('../src/routes/corrections');
   const { default: authRouter } = await import('../src/routes/auth');
@@ -120,6 +121,7 @@ async function main() {
     app.use('/auth', authRouter);
     app.use(auth.requireAuth);
     app.use('/inv', invoicesRouter);
+    app.use('/reports', reportsRouter);
     app.use('/shifts', shiftsRouter);
     app.use('/corrections', correctionsRouter);
     server = app.listen(0, '127.0.0.1');
@@ -156,7 +158,8 @@ async function main() {
     const row = (id: number) => db('invoice_consumption').where({ id }).first();
     const owed = async (shiftId: number) => (await getVarianceStatement(db, attendant)).rows.find((r: any) => r.shift_id === shiftId)?.owed || 0;
     const onAccount = async () => Number((await db('credit_accounts').where({ employee_id: attendant, type: 'employee' }).first()).balance);
-    const shiftView = async (shiftId: number, headers = desktop) => (await call('GET', `/shifts/${shiftId}`, headers)).body.data;
+    const shiftView = async (shiftId: number, headers = desktop, original = false) =>
+      (await call('GET', `/shifts/${shiftId}${original ? '?view=original' : ''}`, headers)).body.data;
     const before = { s1: await shiftView(s1.id), s2: await shiftView(s2.id), s3: await shiftView(s3.id) };
     assert.equal(before.s1.variance, -300);
     assert.equal(await owed(s1.id), 300);
@@ -309,17 +312,38 @@ async function main() {
     assert.equal((await preview({ error_kind: 'duplicate', target_id: e7b, charge_to: 'station' })).body.code, 'CREDIT_LITRES_EXCEED_INVOICE', '3 L credited + 8 L > 10 L billed');
     console.log('PASS a hand-made note on the invoice is flagged; credits never exceed the litres billed');
 
-    // ---- Closed shifts show what they closed with ----
-    // Even if a row were added some other way, the figures stay the snapshot's.
+    // ---- Current rows and original close stay independently available ----
     await db('shift_expenses').insert({ shift_id: s3.id, category: 'other', amount: 100 });
     assert.notEqual((await accountabilityFromRows(db, s3.id)).variance, 0, 'recalculating the rows would move it');
     for (const [key, shift] of [['s1', s1], ['s2', s2], ['s3', s3]] as const) {
-      const view = await shiftView(shift.id);
+      const view = await shiftView(shift.id, desktop, true);
       assert.equal(view.variance, before[key].variance, `${key}: the result as closed`);
       assert.equal(view.total_invoice_consumption, before[key].total_invoice_consumption);
       assert.deepEqual(view.invoice_consumption.map((e: any) => e.id).sort(), before[key].invoice_consumption.map((e: any) => e.id).sort(), `${key}: the entries as closed`);
     }
     const s1View = await shiftView(s1.id);
+    assert.deepEqual([s1View.total_invoice_consumption, s1View.variance,
+      s1View.original_financials.total_invoice_consumption, s1View.original_financials.variance],
+    [14760, -4240, 18700, -300], 'current unbilled/draft fuel uses the corrected litres while the close remains original');
+    assert.deepEqual(s1View.invoice_consumption.map((entry: any) => [entry.fuel_type, Number(entry.litres)]).sort(),
+      [['petrol', 32], ['petrol', 50]].sort());
+    const s2View = await shiftView(s2.id);
+    assert.deepEqual([s2View.total_invoice_consumption, s2View.variance], [11200, -1300], 'issued fuel corrections are reflected in financial views without changing pump sales');
+    const s3View = await shiftView(s3.id);
+    assert.deepEqual([s3View.total_invoice_consumption, s3View.total_expenses, s3View.variance], [4370, 100, 4470], 'new active rows contribute to current values, even without a Correction header');
+    for (const [date, retail, petrol, diesel, variance] of [
+      [daysAgo(10), 14760, 82, 0, -4240],
+      [daysAgo(9), 11200, 20, 40, -1300],
+      [daysAgo(8), 4370, 0, 23, 4470],
+    ] as const) {
+      const daily = await call('GET', `/reports/daily?date=${date}`, desktop);
+      assert.equal(daily.status, 200, JSON.stringify(daily.body));
+      const data = daily.body.data;
+      assert.deepEqual([data.total_invoice_retail, data.invoice_petrol_litres, data.invoice_diesel_litres, data.shifts[0].variance],
+        [retail, petrol, diesel, variance], `${date}: daily fuel and accountability use active source rows`);
+      assert.equal(data.invoice_customers.reduce((sum: number, customer: any) => sum + customer.retail_amount, 0), retail,
+        'customer summary must use the same current invoice fuel as shift detail');
+    }
     assert.equal(s1View.record_corrections.change, -3940, '-500 - 3800 + 360');
     assert.equal(s1View.record_corrections.corrected_variance, -4240);
     const s1Attendant = await shiftView(s1.id, attendantSession);
@@ -348,6 +372,8 @@ async function main() {
     assert.equal(await onAccount(), await owed(s1.id) + await owed(s2.id) + await owed(s3.id));
     assert.deepEqual(await draftLines(), { petrol: 32, diesel: 50 }, 'the draft lets go of the petrol and takes the diesel back');
     assert.equal((await shiftView(s1.id)).record_corrections.change, -3440);
+    const afterUndo = await shiftView(s1.id);
+    assert.deepEqual([afterUndo.total_invoice_consumption, afterUndo.variance], [15260, -3740], 'undo restores diesel source value once');
     assert.equal((await call('POST', `/corrections/${c1.body.data.id}/undo`, phoneAdmin, { reason_note: 'a second time over' })).body.code, 'UNDO_BLOCKED');
     console.log('PASS undo: a cancelling correction; blocked when it made notes or was undone');
 

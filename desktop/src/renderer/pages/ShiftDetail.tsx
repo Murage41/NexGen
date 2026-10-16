@@ -2,7 +2,7 @@ import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/Cr
 import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
 import { correctionApi, desktopApproval } from '../services/api';
-import { CorrectionForm, RECORD_LABELS, ShiftCorrectionsBanner, type RecordType } from '../../../../shared/ui/Corrections';
+import { CorrectionForm, OriginalCloseFigures, RECORD_LABELS, ShiftCorrectionsBanner, type RecordType } from '../../../../shared/ui/Corrections';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -758,46 +758,46 @@ export default function ShiftDetail() {
   const invoicePumpSources = readings.filter((reading: any) => reading.fuel_type === newInvoice.fuel_type);
   const numVal = (v: any) => { const n = parseFloat(v); return n === 0 ? '' : v; };
   const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
-  const expectedSales = readings.reduce((s: number, r: any) => s + (parseFloat(r.amount_sold) || 0), 0);
-  const totalCash = parseFloat(String(collections.cash_amount)) || 0;
-  const totalMpesa = parseFloat(String(collections.mpesa_amount)) || 0;
-  const totalCredits = shiftCredits.reduce((s: number, c: any) => s + Number(c.amount || 0), 0);
-  const totalInvoiceConsumption = invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0);
-  const totalExpenses = expenses.reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
+  const expectedSales = isOpen ? readings.reduce((s: number, r: any) => s + (parseFloat(r.amount_sold) || 0), 0) : Number(shift.expected_sales ?? 0);
+  const totalCash = isOpen ? parseFloat(String(collections.cash_amount)) || 0 : Number(shift.total_cash ?? 0);
+  const totalMpesa = isOpen ? parseFloat(String(collections.mpesa_amount)) || 0 : Number(shift.total_mpesa ?? 0);
+  const totalCredits = isOpen ? shiftCredits.reduce((s: number, c: any) => s + Number(c.amount || 0), 0) : Number(shift.total_credits ?? 0);
+  const totalInvoiceConsumption = isOpen ? invoiceConsumption.reduce((s: number, c: any) => s + Number(c.retail_amount || 0), 0) : Number(shift.total_invoice_consumption ?? 0);
+  const totalExpenses = isOpen ? expenses.reduce((s: number, e: any) => s + Number(e.amount || 0), 0) : Number(shift.total_expenses ?? 0);
   const totalPayrollPayments = Number(shift.total_payroll_payments || 0);
   const employeeWage = Number(shift.employee_wage || 0);
   const enteredWagePaid = Math.max(0, Number(wagePaid) || 0);
   const compensationPlan = shift.compensation_plan;
   const grossShiftEarnings = Number(isOpen ? shift.gross_earning_preview : shift.total_gross_earnings) || 0;
   const earningBreakdown = (isOpen ? shift.earning_preview : shift.earnings) || [];
-  const directDrawerPayment = isOpen ? enteredWagePaid : Number(shift.wage_paid ?? shift.employee_wage ?? 0);
-  const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
-  const creditReceiptsCash = creditReceipts
+  const directDrawerPayment = isOpen ? enteredWagePaid : Number(shift.actual_wage_paid ?? shift.wage_paid ?? shift.employee_wage ?? 0);
+  const totalCreditReceipts = isOpen ? creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0) : Number(shift.total_credit_receipts ?? 0);
+  const creditReceiptsCash = isOpen ? creditReceipts
     .filter((r: any) => (r.payment_method || 'cash') !== 'mpesa')
-    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-  const creditReceiptsMpesa = creditReceipts
+    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0) : Number(shift.credit_receipts_cash ?? 0);
+  const creditReceiptsMpesa = isOpen ? creditReceipts
     .filter((r: any) => r.payment_method === 'mpesa')
-    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
-  const salesCash = totalCash - creditReceiptsCash;
-  const salesMpesa = totalMpesa - creditReceiptsMpesa;
+    .reduce((s: number, r: any) => s + Number(r.amount || 0), 0) : Number(shift.credit_receipts_mpesa ?? 0);
+  const salesCash = isOpen ? totalCash - creditReceiptsCash : Number(shift.sales_cash ?? 0);
+  const salesMpesa = isOpen ? totalMpesa - creditReceiptsMpesa : Number(shift.sales_mpesa ?? 0);
   const salesCollections = salesCash + salesMpesa;
   const drawerCash = totalCash;
   const drawerMpesa = totalMpesa;
   const drawerTotal = drawerCash + drawerMpesa;
-  const expectedShiftTotal = expectedSales + totalCreditReceipts;
-  const salesAccounted = salesCollections
+  const expectedShiftTotal = isOpen ? expectedSales + totalCreditReceipts : Number(shift.expected_shift_total ?? 0);
+  const salesAccounted = isOpen ? salesCollections
     + totalCredits
     + totalInvoiceConsumption
     + totalExpenses
     + directDrawerPayment
-    + totalPayrollPayments;
-  const totalAccounted = drawerTotal
+    + totalPayrollPayments : Number(shift.sales_accounted ?? 0);
+  const totalAccounted = isOpen ? drawerTotal
     + totalCredits
     + totalInvoiceConsumption
     + totalExpenses
     + directDrawerPayment
-    + totalPayrollPayments;
-  const variance = Math.round((totalAccounted - expectedShiftTotal) * 100) / 100;
+    + totalPayrollPayments : Number(shift.total_accounted ?? 0);
+  const variance = isOpen ? Math.round((totalAccounted - expectedShiftTotal) * 100) / 100 : Number(shift.variance ?? 0);
   const closeReviewComplete = closeReview.readings
     && closeReview.collections
     && closeReview.entries;
@@ -891,7 +891,7 @@ export default function ShiftDetail() {
         <div className="bg-white border border-gray-200 p-4 mb-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="font-semibold text-gray-800 flex items-center gap-2"><CheckCircle size={16} className="text-green-600" /> Close Reconciliation</h2>
+              <h2 className="font-semibold text-gray-800 flex items-center gap-2"><CheckCircle size={16} className="text-green-600" /> Original close</h2>
               <p className="text-xs text-gray-500 mt-1">Approved {new Date(shift.close_reconciliation.approved_at).toLocaleString('en-KE')}</p>
             </div>
             <span className={`capitalize text-sm font-semibold ${Number(shift.close_reconciliation.variance) < 0 ? 'text-red-600' : Number(shift.close_reconciliation.variance) > 0 ? 'text-amber-700' : 'text-green-700'}`}>
@@ -903,9 +903,10 @@ export default function ShiftDetail() {
             <span>Collections reviewed</span>
             <span>Entries reviewed</span>
           </div>
+          <OriginalCloseFigures figures={shift.original_financials} formatMoney={formatKES} />
           {corrections.length > 0 && (
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">
-              After {corrections.length} correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>. The figures above are as the shift was closed.
+              After {corrections.length} earlier correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>. The original close above is preserved; current figures are below.
             </p>
           )}
           {shift.close_reconciliation.variance_reason && (
@@ -968,7 +969,7 @@ export default function ShiftDetail() {
 
       {/* Accountability Summary Card */}
       <div className={`rounded-lg p-4 mb-6 ${variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-        <h3 className="text-xs font-semibold text-gray-500 uppercase mb-3">Shift Accountability</h3>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase mb-3">{isOpen ? 'Shift Accountability' : 'Current figures, including later corrections'}</h3>
         <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm mb-3">
           <div className="flex justify-between">
             <span className="text-gray-500">Expected Sales (Pump)</span>
@@ -1273,6 +1274,7 @@ export default function ShiftDetail() {
       </div>
 
       {/* Sales Collections */}
+      {isClosed && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Sales Collections</h2>

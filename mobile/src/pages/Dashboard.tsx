@@ -82,6 +82,7 @@ export default function Dashboard() {
       </div>
 
       {/* Today's figures are the owner's; attendants get the shift status only. */}
+      {isAdmin && data && <p className="text-xs text-gray-500 mb-2">Current financial figures, including later corrections.</p>}
       {isAdmin && data && (
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div className="bg-white rounded-xl p-3 shadow-sm">

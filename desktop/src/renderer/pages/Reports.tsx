@@ -171,6 +171,7 @@ export default function Reports() {
       <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2 mb-6">
         <BarChart3 size={24} /> Reports
       </h1>
+      {['daily', 'monthly', 'cashflow'].includes(activeTab) && <p className="text-xs text-gray-500 mb-4">Current financial figures include later corrections. Original closes remain on each shift.</p>}
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b overflow-x-auto">
@@ -421,7 +422,7 @@ export default function Reports() {
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <div className="p-4 border-b bg-blue-50">
                     <h2 className="text-sm font-semibold text-blue-800 uppercase tracking-wide">Corrections Posted This Day</h2>
-                    <p className="text-xs text-blue-700 mt-1">Shifts above are shown as they were closed. These corrections are dated today and name the shift they correct.</p>
+                    <p className="text-xs text-blue-700 mt-1">Shifts above show current figures. These corrections are listed by posting date and name the shift they correct.</p>
                   </div>
                   <div className="px-4">
                     <ShiftCorrectionList corrections={dailyData.corrections} />
@@ -434,7 +435,7 @@ export default function Reports() {
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <div className="p-4 border-b bg-amber-50">
                     <h2 className="text-sm font-semibold text-amber-800 uppercase tracking-wide">Corrections Posted This Day</h2>
-                    <p className="text-xs text-amber-700 mt-1">Shifts above are shown as they were closed. Full details are on the Corrections page.</p>
+                    <p className="text-xs text-amber-700 mt-1">Shifts above show current figures. These corrections are listed by posting date; full details are on the Corrections page.</p>
                   </div>
                   <ul className="px-4 py-2 text-sm divide-y divide-gray-100">
                     {dailyData.record_corrections.map((c: any) => (

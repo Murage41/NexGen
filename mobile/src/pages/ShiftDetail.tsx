@@ -1,6 +1,6 @@
 import { ShiftCorrectionList, describeShiftBalance } from '../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../shared/ui/BalanceMove';
-import { CorrectionForm, RECORD_LABELS, ShiftCorrectionsBanner, type RecordType } from '../../../shared/ui/Corrections';
+import { CorrectionForm, OriginalCloseFigures, RECORD_LABELS, ShiftCorrectionsBanner, type RecordType } from '../../../shared/ui/Corrections';
 import { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCreditReceipt, getCreditAccounts, updateShiftReview, getShiftNeighbors, createOperationKey, correctionApi } from '../services/api';
@@ -226,7 +226,7 @@ export default function ShiftDetail() {
   const compensationPlan = shift.compensation_plan;
   const grossShiftEarnings = Number(isOpen ? shift.gross_earning_preview : shift.total_gross_earnings) || 0;
   const earningBreakdown = (isOpen ? shift.earning_preview : shift.earnings) || [];
-  const directDrawerPayment = isOpen ? enteredWagePaid : Number(shift.wage_paid ?? shift.employee_wage ?? 0);
+  const directDrawerPayment = isOpen ? enteredWagePaid : Number(shift.actual_wage_paid ?? shift.wage_paid ?? shift.employee_wage ?? 0);
 
   const totalDebt = debts.reduce((s: number, d: any) => s + (d.balance || 0), 0);
   const totalCreditReceipts = Number(
@@ -348,7 +348,7 @@ export default function ShiftDetail() {
         <div className="bg-white border border-gray-200 p-4 mb-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-semibold text-gray-800 flex items-center gap-1"><CheckCircle size={15} className="text-green-600" /> Close Reconciliation</p>
+              <p className="font-semibold text-gray-800 flex items-center gap-1"><CheckCircle size={15} className="text-green-600" /> Original close</p>
               <p className="text-xs text-gray-400 mt-1">{new Date(shift.close_reconciliation.approved_at).toLocaleString('en-KE')}</p>
             </div>
             <span className={`capitalize text-xs font-semibold ${Number(shift.close_reconciliation.variance) < 0 ? 'text-red-600' : Number(shift.close_reconciliation.variance) > 0 ? 'text-amber-700' : 'text-green-700'}`}>
@@ -360,9 +360,10 @@ export default function ShiftDetail() {
             <span>Collections reviewed</span>
             <span>Entries reviewed</span>
           </div>
+          <OriginalCloseFigures figures={shift.original_financials} formatMoney={fmt} />
           {corrections.length > 0 && (
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">
-              After {corrections.length} correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>. The figures above are as the shift was closed.
+              After {corrections.length} earlier correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>. The original close above is preserved; current figures are below.
             </p>
           )}
           {shift.close_reconciliation.variance_reason && (
@@ -426,7 +427,7 @@ export default function ShiftDetail() {
 
       {/* Accountability Card */}
       <div className={`rounded-xl p-4 mb-4 ${blind ? 'bg-white shadow-sm' : variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-        <p className="text-[10px] text-gray-500 uppercase font-semibold mb-2">{blind ? 'Recorded so far' : 'Accountability'}</p>
+        <p className="text-[10px] text-gray-500 uppercase font-semibold mb-2">{blind ? 'Recorded so far' : isOpen ? 'Accountability' : 'Current figures, including later corrections'}</p>
 
         {!blind && (
           <>
@@ -606,6 +607,7 @@ export default function ShiftDetail() {
       </div>
 
       {/* Collections */}
+      {!isOpen && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
         <div className="flex items-center justify-between mb-2">
           <p className="font-semibold text-gray-700">Sales Collections</p>

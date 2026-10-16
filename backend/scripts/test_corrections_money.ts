@@ -25,6 +25,7 @@ async function main() {
   const { default: shiftsRouter } = await import('../src/routes/shifts');
   const { default: correctionsRouter } = await import('../src/routes/corrections');
   const { default: reportsRouter } = await import('../src/routes/reports');
+  const { default: dashboardRouter } = await import('../src/routes/dashboard');
   const { default: authRouter } = await import('../src/routes/auth');
 
   let server: ReturnType<express.Express['listen']> | undefined;
@@ -61,6 +62,7 @@ async function main() {
     app.use('/shifts', shiftsRouter);
     app.use('/corrections', correctionsRouter);
     app.use('/reports', reportsRouter);
+    app.use('/dashboard', dashboardRouter);
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>((r) => server!.once('listening', r));
     const port = (server.address() as any).port;
@@ -125,8 +127,19 @@ async function main() {
     const owes = async (account: number) => Number((await db('credit_accounts').where({ id: account }).first()).balance);
     const holds = (account: number) => customerCreditBalance(account, db);
     const owed = async (shiftId: number) => (await getVarianceStatement(db, attendant)).rows.find((r: any) => r.shift_id === shiftId)?.owed || 0;
-    const view = async (shiftId: number, headers = desktop) => (await call('GET', `/shifts/${shiftId}`, headers)).body.data;
+    const view = async (shiftId: number, headers = desktop, original = false) =>
+      (await call('GET', `/shifts/${shiftId}${original ? '?view=original' : ''}`, headers)).body.data;
     const before = { s1: await view(s1), s2: await view(s2), s3: await view(s3) };
+    const stableTables = ['shifts', 'pump_readings', 'shift_collections', 'shift_close_reconciliations',
+      'shift_tank_snapshots', 'tanks', 'tank_stock_ledger', 'delivery_batches', 'batch_consumption',
+      'employee_earnings', 'payroll_payments', 'wage_deductions'];
+    const stored = async (tables: string[]) => {
+      const result: Record<string, any[]> = {};
+      for (const table of tables) result[table] = await db(table).orderBy('id');
+      return result;
+    };
+    const protectedBefore = await stored(stableTables);
+    const originalVariances = await db('employee_variance_entries').where({ entry_type: 'shift' }).orderBy('id');
     assert.deepEqual([before.s1.variance, before.s2.variance, before.s3.variance], [-400, 200, 0]);
     assert.deepEqual([await owes(alpha), await owes(gamma), await owed(s1)], [700, 0, 400]);
 
@@ -269,7 +282,7 @@ async function main() {
 
     // ---- The shifts as closed, and their corrected results ----
     for (const [key, shift] of [['s1', s1], ['s2', s2], ['s3', s3]] as const) {
-      const v = await view(shift);
+      const v = await view(shift, desktop, true);
       for (const figure of ['variance', 'total_credits', 'total_credit_receipts', 'total_expenses', 'total_cash', 'total_mpesa']) {
         assert.equal(v[figure], (before as any)[key][figure], `${key} ${figure} as closed`);
       }
@@ -285,7 +298,77 @@ async function main() {
     const asAttendant = await view(s1, attendantSession);
     assert(asAttendant.record_corrections.lines.length > 0);
     assert.equal(asAttendant.record_corrections.lines[0].party_name, undefined);
-    console.log('PASS the shifts keep their figures and lists as closed; corrected results add up');
+    const assertCurrentViews = async (afterUndo: boolean) => {
+      // Independent expected values from the credit book and drawer amounts,
+      // not from a reconciliation service or the correction preview.
+      const expected = afterUndo ? [
+        [s1, 9200, 3600, 1700, 0, 200, 15500, 18000, -2500],
+        [s2, 14200, 6000, 0, 1500, 0, 21000, 19500, 1500],
+        [s3, 8200, 0, 2700, 800, 150, 11850, 9800, 2050],
+      ] : [
+        [s1, 9200, 3600, 1200, 0, 200, 15000, 18000, -3000],
+        [s2, 13700, 6500, 0, 1500, 0, 21000, 19500, 1500],
+        [s3, 8200, 0, 2700, 750, 150, 11850, 9750, 2100],
+      ];
+      const readOnlyTables = [...stableTables, 'shift_credits', 'shift_expenses', 'invoice_consumption',
+        'credit_accounts', 'credits', 'credit_payments', 'credit_payment_allocations',
+        'employee_variance_entries', 'corrections', 'correction_lines'];
+      const readOnlyBefore = await stored(readOnlyTables);
+      for (const [id, cash, mpesa, credits, receipts, expenses, accounted, expectedTotal, variance] of expected) {
+        const current = await view(id);
+        assert.deepEqual([current.total_cash, current.total_mpesa, current.total_credits,
+          current.total_credit_receipts, current.total_expenses, current.total_accounted,
+          current.expected_shift_total, current.variance],
+        [cash, mpesa, credits, receipts, expenses, accounted, expectedTotal, variance], `shift ${id}: current working figures`);
+        assert.deepEqual([current.collections.cash_amount, current.collections.mpesa_amount], [cash, mpesa], `shift ${id}: current collection rows`);
+        const expectedSales = id === s1 ? [added(b3), ...(afterUndo ? [c2] : [])] : id === s3 ? [added(b4), added(b5)] : [];
+        const expectedReceipts = id === s2 ? [added(c3x)] : id === s3 ? [added(afterUndo ? c4x : c5x), added(c6x)] : [];
+        const expectedExpenses = id === s1 ? [afterUndo ? ids.x2 : added(d2)] : id === s3 ? [added(d4)] : [];
+        for (const [list, entryIds] of [['shift_credits', expectedSales], ['credit_receipts', expectedReceipts], ['expenses', expectedExpenses]] as const) {
+          assert.deepEqual(current[list].map((row: any) => Number(row.id)).sort((a: number, b: number) => a - b),
+            entryIds.sort((a, b) => a - b), `shift ${id}: current ${list} lists only active replacements`);
+        }
+        const original = await view(id, desktop, true);
+        const initial = id === s1 ? before.s1 : id === s2 ? before.s2 : before.s3;
+        assert.deepEqual(current.close_reconciliation, initial.close_reconciliation, `shift ${id}: snapshot remains untouched`);
+        assert.equal(current.original_financials.variance, initial.variance);
+        assert.equal(original.variance, initial.variance, `shift ${id}: explicit original view`);
+      }
+      const daily = ok(await call('GET', `/reports/daily?date=${today}`), 200);
+      const dashboard = ok(await call('GET', '/dashboard'), 200);
+      const monthly = ok(await call('GET', `/reports/monthly?month=${today.slice(0, 7)}`), 200);
+      const cashFlow = ok(await call('GET', `/reports/cash-flow?from=${today}&to=${today}`), 200);
+      const cash = afterUndo ? 31600 : 31100;
+      const mpesa = afterUndo ? 9600 : 10100;
+      const credits = afterUndo ? 4400 : 3900;
+      const receipts = afterUndo ? 2300 : 2250;
+      const variance = afterUndo ? 1050 : 600;
+      assert.deepEqual([daily.total_cash, daily.total_mpesa, daily.total_credits,
+        daily.total_credit_receipts, daily.total_shift_expenses, daily.total_sales,
+        daily.total_payroll_expense, daily.net_profit], [cash, mpesa, credits, receipts, 350, 45000, 2400, 42250]);
+      assert.equal(daily.shifts.reduce((sum: number, shift: any) => sum + shift.variance, 0), variance);
+      for (const [id, shiftCash, shiftMpesa, , , , , , shiftVariance] of expected) {
+        const row = daily.shifts.find((shift: any) => shift.id === id);
+        assert.deepEqual([row.collections.cash_amount, row.collections.mpesa_amount, row.variance], [shiftCash, shiftMpesa, shiftVariance]);
+      }
+      assert.deepEqual([dashboard.today_collections.cash, dashboard.today_collections.mpesa,
+        dashboard.today_collections.credits, dashboard.today_collections.credit_receipts,
+        dashboard.today_variance, dashboard.today_expenses, dashboard.today_net_profit],
+      [cash, mpesa, credits, receipts, variance, 350, 42250]);
+      assert.deepEqual([monthly.total_cash, monthly.total_mpesa, monthly.total_credits,
+        monthly.total_expenses, monthly.net_profit], [cash, mpesa, credits, 350, 42250]);
+      assert.deepEqual([cashFlow.inflows.shift_cash_received, cashFlow.inflows.shift_mpesa_received,
+        cashFlow.inflows.drawer_payouts_already_reflected, cashFlow.outflows.shift_expenses,
+        cashFlow.outflows.wages_paid, cashFlow.net_cash_flow], [cash, mpesa, 2750, 350, 2400, 41200]);
+      assert.deepEqual(await stored(readOnlyTables), readOnlyBefore,
+      'all financial views are read-only, including customer allocations and employee/payroll records');
+      assert.deepEqual(await stored(stableTables), protectedBefore, 'financial corrections never rerun the close, stock, costing or payroll');
+      assert.deepEqual(await db('employee_variance_entries').where({ entry_type: 'shift' }).orderBy('id'), originalVariances);
+    };
+    await assertCurrentViews(false);
+    assert.deepEqual([asAttendant.total_credits, asAttendant.total_expenses, asAttendant.variance], [1200, 200, -3000], 'the attendant sees current figures on their own closed shift');
+    assert.equal((await call('GET', '/reports/daily', attendantSession)).status, 403);
+    console.log('PASS current details, daily/dashboard/monthly and cash flow agree; original closes and physical/payroll records remain unchanged');
 
     // ---- Undo ----
     const undo = async (c: any, headers = phoneAdmin) => call('POST', `/corrections/${c.data.id}/undo`, headers, { reason_note: 'Made in error, putting it back' });
@@ -307,6 +390,7 @@ async function main() {
     const g6 = await undo(c5x);
     assert.equal(g6.status, 201, JSON.stringify(g6.body));
     assert.equal(await owes(beta), 1500, 'back to the 500 payment');
+    await assertCurrentViews(true);
     console.log('PASS undo: sales, expenses, payments and splits come back; blocked when something depends on them');
 
     // ---- Every balance still adds up ----

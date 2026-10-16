@@ -464,8 +464,31 @@ export function CorrectionUndo({
 
 const result = (value: number) => (value < 0 ? `short ${kes(-value)}` : value > 0 ? `over ${kes(value)}` : 'balanced');
 
-// On a closed shift: the corrections made since it closed and the result they
-// lead to. The shift's own figures stay as it closed.
+export function OriginalCloseFigures({ figures, formatMoney }: {
+  figures: Record<string, unknown> | null | undefined;
+  formatMoney: (amount: number) => string;
+}) {
+  if (!figures) return null;
+  const rows = [
+    ['expected_sales', 'Expected sales'], ['expected_shift_total', 'Expected shift total'],
+    ['total_cash', 'Cash'], ['total_mpesa', 'M-Pesa'], ['total_credit_receipts', 'Debt receipts included'],
+    ['total_credits', 'Credits issued'], ['total_invoice_consumption', 'Invoice fuel value'],
+    ['total_expenses', 'Expenses'], ['employee_wage', 'Direct wage payment'],
+    ['total_payroll_payments', 'Other payroll payments'], ['total_accounted', 'Total accounted'], ['variance', 'Over / short'],
+  ];
+  return (
+    <details className="mt-3 border-t pt-2 text-sm">
+      <summary className="cursor-pointer text-blue-700">View original figures</summary>
+      <dl className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs">
+        {rows.map(([key, label]) => (
+          <div key={key} className="flex justify-between gap-3"><dt className="text-gray-500">{label}</dt><dd>{formatMoney(Number(figures[key] ?? 0))}</dd></div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+// On a closed shift: corrections alongside its preserved original close.
 export function ShiftCorrectionsBanner({ corrections, asClosed }: { corrections: any; asClosed: number }) {
   if (!corrections?.lines?.length) return null;
   const numbers = [...new Set(corrections.lines.map((l: any) => l.number))];
@@ -473,10 +496,10 @@ export function ShiftCorrectionsBanner({ corrections, asClosed }: { corrections:
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-gray-800 space-y-1">
       <p className="font-semibold">
-        {numbers.length} correction{numbers.length === 1 ? '' : 's'} since close: result at close {result(asClosed)}; corrected result{' '}
-        {result(Number(corrections.corrected_variance ?? asClosed))}.
+        {numbers.length} correction{numbers.length === 1 ? '' : 's'} since close: result at close {result(asClosed)}; current result{' '}
+        {result(Number(corrections.current_variance ?? corrections.corrected_variance ?? asClosed))}.
       </p>
-      <p className="text-xs text-gray-600">The shift's own figures stay as it closed. Corrections are recorded next to it, never in it.</p>
+      <p className="text-xs text-gray-600">The original close is preserved. Current figures include the corrections recorded since.</p>
       <ul className="text-xs space-y-0.5">
         {byNumber.map(({ number, lines }: any) => {
           const change = lines.reduce((sum: number, l: any) => sum + Number(l.shift_effect || 0), 0);
