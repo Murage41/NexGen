@@ -25,6 +25,7 @@ const validCollectionTotal = (value: string) => {
   return /^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)
     && Number.isFinite(number) && number >= 0 && number <= 100000000;
 };
+const validCustomerCorrectionAmount = (value: string) => validCollectionTotal(value) && Number(value) > 0;
 
 export type RecordType = 'fuel_on_account' | 'credit_sale' | 'debt_receipt' | 'drawer_expense' | 'collection' | 'opening_funds' | 'shift_funds';
 
@@ -167,6 +168,7 @@ export function CorrectionForm({
   const approver = useApprover(approval);
   const fuel = recordType === 'fuel_on_account';
   const collection = recordType === 'collection';
+  const customerMoney = recordType === 'credit_sale' || recordType === 'debt_receipt';
   const balanceBased = shift?.reconciliation_basis === 'balances_v1';
   // A record being corrected offers every mistake but "missing"; adding a
   // missing record offers only that.
@@ -206,6 +208,10 @@ export function CorrectionForm({
     if (recordType === 'drawer_expense') api.categories().then(setCategories).catch(() => setCategories([]));
   }, []);
 
+  useEffect(() => {
+    if (customerMoney && kind === 'wrong_amount' && target) setAmount(String(target.amount ?? ''));
+  }, [recordType, kind, target?.id, target?.amount]);
+
   // What the request needs for this record and mistake.
   const needs = {
     litres: fuel && ['wrong_litres', 'wrong_fuel', 'missing'].includes(kind),
@@ -236,11 +242,14 @@ export function CorrectionForm({
   if (override) request.limit_override = true;
   const totalsChanged = !collection || Number(cashAmount) !== Number(target?.cash_amount)
     || Number(mpesaAmount) !== Number(target?.mpesa_amount);
+  const moneyAmountChanged = !customerMoney || kind !== 'wrong_amount' || Number(amount) !== Number(target?.amount);
   const complete = Boolean(kind)
     && totalsChanged
+    && moneyAmountChanged
     && (!needs.litres || Number(litres) > 0)
     && (!needs.fuel || Boolean(fuelType))
-    && (!needs.amount || (amount.trim() !== '' && Number.isFinite(Number(amount)) && (recordType === 'opening_funds' ? Number(amount) >= 0 : Number(amount) > 0)))
+    && (!needs.amount || (customerMoney ? validCustomerCorrectionAmount(amount)
+      : amount.trim() !== '' && Number.isFinite(Number(amount)) && (recordType === 'opening_funds' ? Number(amount) >= 0 : Number(amount) > 0)))
     && (!needs.collectionTotals || (validCollectionTotal(cashAmount) && validCollectionTotal(mpesaAmount)))
     && (!needs.customer || Number(accountId) > 0)
     && (!needs.method || Boolean(method))
@@ -311,6 +320,13 @@ export function CorrectionForm({
         <p className="text-xs text-gray-600">{MISSING[recordType]} Shift #{shift?.id}{day(shift?.shift_date)}.</p>
       )}
 
+      {recordType === 'credit_sale' && (
+        <p className="text-xs text-gray-600">Correct the full credit sale, not its unpaid balance. Payments already received stay with the customer who paid and are reapplied or held as credit. Counted cash and M-Pesa stay as recorded.</p>
+      )}
+      {recordType === 'debt_receipt' && (
+        <p className="text-xs text-gray-600">This corrects the customer's payment record and what the shift was expected to hold. Add a missing payment only when money was actually received. Counted cash and M-Pesa stay as recorded; correct the closing totals separately if that count was wrong.</p>
+      )}
+
       {kinds.length > 1 && (
         <fieldset className="space-y-1">
           <legend className="text-xs font-semibold text-gray-700 mb-1">What was wrong?</legend>
@@ -359,8 +375,10 @@ export function CorrectionForm({
             </label>
           )}
           {needs.amount && (
-            <label className="block">{label(recordType === 'opening_funds' ? 'Correct full opening amount (KES)' : 'Amount (KES)')}
-              <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <label className="block">{label(recordType === 'opening_funds' ? 'Correct full opening amount (KES)' : recordType === 'credit_sale' ? 'Full credit sale amount (KES)' : recordType === 'debt_receipt' ? 'Full payment received (KES)' : 'Amount (KES)')}
+              <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min={customerMoney ? '0.01' : '0'} max={customerMoney ? '100000000' : undefined} value={amount} onChange={(e) => setAmount(e.target.value)} />
+              {customerMoney && !validCustomerCorrectionAmount(amount) && <span className="block mt-1 text-xs text-gray-500">Enter a positive amount up to 100,000,000 KES, with at most two decimal places.</span>}
+              {customerMoney && !moneyAmountChanged && <span className="block mt-1 text-xs text-gray-500">Change the full amount to see the correction preview.</span>}
             </label>
           )}
           {needs.customer && (
@@ -405,7 +423,7 @@ export function CorrectionForm({
           <ul className="list-disc pl-4 space-y-0.5">
             {plan.data.effects.map((effect: string, i: number) => <li key={i}>{effect}</li>)}
           </ul>
-          {collection && (plan.data.shifts || []).map((impact: any) => (
+          {(collection || customerMoney) && (plan.data.shifts || []).map((impact: any) => (
             <p key={impact.shift_id} className="font-semibold mt-2">Shift #{impact.shift_id} result after correction: {result(Number(impact.corrected))}.</p>
           ))}
         </div>

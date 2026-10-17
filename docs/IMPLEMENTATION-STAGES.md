@@ -40,14 +40,22 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   scratch desktop/phone checks pass. See [the A3 release card](releases/A3-SHIFT-FLOATS.md)
   and [operating guide](OPENING-FUNDS-GUIDE.md). Queue after A2; station
   installation/checkpoint remain separate.
-- A4 is developed on `codex/closing-total-corrections`, based on `8997896`.
+- A4 is published as `03d0653` on `codex/closing-total-corrections`, based on `8997896`.
   Both full current cash/M-Pesa totals can be corrected independently, including
   zero and changed combined totals, through existing approval/history/undo.
   All 41 backend suites, three type checks, both builds and three planted bugs
   pass. See [the A4 release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md)
   and [operating guide](CLOSING-TOTAL-CORRECTIONS.md). Queue after A3; no new
   migration. Station installation/checkpoints remain separate.
-- B1 and later releases below are **not built as agreed complete releases**.
+- B1 is developed on `codex/customer-shift-corrections`, based on `03d0653`.
+  Credit-sale and shift debt-receipt corrections validate exact allocations,
+  use net/projected age exposure, bind approval to current account/shift
+  history and keep counted funds separate. All 42 backend suites, three type
+  checks, both builds, five planted faults and scratch desktop/phone/undo
+  checks pass. See [the B1 release card](releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md)
+  and [operating guide](CUSTOMER-SHIFT-CORRECTIONS.md). Queue after A4; no new
+  migration. Station installation/checkpoints remain separate.
+- B2 and later releases below are **not built as agreed complete releases**.
   Existing helpers, screens and selected uncommitted code can be reused after
   review; that does not make a release complete or authorise all old 2b work.
 - Preserve existing local work. Start the approved release from the station's

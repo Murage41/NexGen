@@ -3,8 +3,8 @@ import type { ApplyContext, CorrectionRequest, CorrectionRule, Plan, PlanLine, R
 import { recomputeAccountBalance } from '../accountBalance';
 import { applyCustomerCredit, reverseMoneyAccountPaymentInTransaction, roundMoney } from '../receivablePayments';
 import {
-  cents, closedShift, customerOutlook, earliest, httpError, kes, laterCorrection, methodName, moneyCustomer,
-  outlookText, positiveAmount, type Conn, type ShiftRef,
+  assertCreditAllocations, cents, closedShift, customerOutlook, earliest, httpError, kes, laterCorrection, methodName, moneyCustomer,
+  outlookText, strictCorrectionAmount, type Conn, type ShiftRef,
 } from './common';
 
 // Corrections of a debt receipt: a credit customer's payment taken into a
@@ -22,6 +22,10 @@ async function liveReceipt(conn: Conn, paymentId: number) {
   if (!payment || payment.deleted_at) throw httpError('Payment not found.', 404, 'PAYMENT_NOT_FOUND');
   if ((payment.status || 'posted') !== 'posted') throw httpError('This payment was already reversed or corrected.', 409, 'PAYMENT_NOT_ACTIVE');
   if (!payment.shift_id) throw httpError('This payment was not taken in a shift.', 400, 'NOT_SHIFT_RECEIPT');
+  if (!Number.isFinite(Number(payment.amount)) || Number(payment.amount) <= 0
+    || !Number.isFinite(Number(payment.unapplied_amount || 0)) || Number(payment.unapplied_amount || 0) < 0) {
+    throw httpError('This payment\'s amounts are inconsistent. Run the receivables integrity audit first.', 409, 'PAYMENT_ALLOCATION_INCOMPLETE');
+  }
   // Its money must still be all there: none of it refunded since.
   const refunded: any = await conn('customer_refund_allocations as allocation')
     .join('customer_refunds as refund', 'allocation.refund_id', 'refund.id')
@@ -32,10 +36,18 @@ async function liveReceipt(conn: Conn, paymentId: number) {
   if (cents(refunded?.total) > 0) {
     throw httpError('Part of this payment was held as credit and has been refunded to the customer, so it cannot be corrected.', 409, 'PAYMENT_PARTLY_REFUNDED');
   }
-  const applied: any = await conn('credit_payment_allocations').where({ payment_id: payment.id }).whereNull('reversed_at')
-    .sum({ total: 'amount_applied' }).first();
-  if (cents(applied?.total) + cents(payment.unapplied_amount) !== cents(payment.amount)) {
+  const allocations = await conn('credit_payment_allocations').where({ payment_id: payment.id }).whereNull('reversed_at');
+  const applied = allocations.reduce((total: number, allocation: any) => total + cents(allocation.amount_applied), 0);
+  if (applied + cents(payment.unapplied_amount) !== cents(payment.amount)) {
     throw httpError('This payment\'s history is incomplete. Run the receivables integrity audit first.', 409, 'PAYMENT_ALLOCATION_INCOMPLETE');
+  }
+  for (const creditId of new Set(allocations.map((allocation: any) => Number(allocation.credit_id)))) {
+    const credit = await conn('credits').where({ id: creditId }).first();
+    if (!credit || credit.deleted_at || credit.reversed_by_record_correction_id
+      || ['reversed', 'cancelled'].includes(String(credit.status)) || Number(credit.account_id) !== Number(payment.account_id)) {
+      throw httpError('This payment has an allocation to a missing, reversed or different customer debt. Run the receivables integrity audit first.', 409, 'PAYMENT_ALLOCATION_INCOMPLETE');
+    }
+    await assertCreditAllocations(conn, credit);
   }
   return payment;
 }
@@ -68,7 +80,7 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
       break;
     }
     case 'wrong_amount': {
-      const amount = positiveAmount(req.amount, 'Enter the amount received.');
+      const amount = strictCorrectionAmount(req.amount, 'Enter the amount received.');
       if (cents(amount) === cents(target.amount)) throw httpError('Nothing would change: enter the amount received.', 400, 'NO_CHANGE');
       add = { ...same(), amount };
       break;
@@ -87,7 +99,7 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
       add = {
         account: await moneyCustomer(conn, req.account_id),
         shift,
-        amount: positiveAmount(req.amount, 'Enter the amount received.'),
+        amount: strictCorrectionAmount(req.amount, 'Enter the amount received.'),
         method: method(req.payment_method),
       };
       break;
@@ -116,8 +128,9 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
     effects.push(`Added: ${kes(add.amount)} paid by ${add.account.name} in ${methodName(add.method)} in shift #${add.shift.id}.`);
   }
   if (req.error_kind === 'wrong_method') {
-    effects.push(`Shift #${from!.id}: the drawer took ${kes(target.amount)} more in ${methodName(add!.method)} and that much less in ${methodName(target.payment_method)} for debts. The shift's result does not change.`);
+    effects.push(`Shift #${from!.id}: the debt receipt is classified as ${methodName(add!.method)} instead of ${methodName(target.payment_method)}. The combined receipt amount and the shift's result do not change.`);
   }
+  effects.push('The saved cash and M-Pesa counts do not change. If either counted total was also wrong, correct that total separately. This does not record a new payment or a refund.');
 
   const changes = new Map<number, any[]>();
   if (target) changes.set(Number(owner.id), [{ removePayment: target }]);
@@ -180,6 +193,13 @@ async function apply(trx: Knex.Transaction, planned: Plan, ctx: ApplyContext) {
 }
 
 async function undoBlocker(conn: Conn, correction: any, lines: any[]): Promise<string | null> {
+  for (const accountId of new Set(lines.map((line) => Number(line.party_id)).filter((id) => id > 0))) {
+    try {
+      await moneyCustomer(conn, accountId);
+    } catch (err: any) {
+      return `${err.message} Restore that customer's active money account before undoing this correction.`;
+    }
+  }
   for (const line of lines.filter((l) => l.action === 'add')) {
     const created = await conn('credit_payments').where({ id: line.created_record_id }).first();
     if (!created) return 'Its payment is missing.';
@@ -192,7 +212,15 @@ async function undoBlocker(conn: Conn, correction: any, lines: any[]): Promise<s
   }
   for (const line of lines.filter((l) => l.action === 'reverse')) {
     const original = await conn('credit_payments').where({ id: line.target_id }).first();
-    if (!original || Number(original.reversed_by_record_correction_id) !== Number(correction.id)) return 'The payment it reversed has changed since.';
+    if (!original || original.deleted_at || original.status !== 'reversed'
+      || Number(original.reversed_by_record_correction_id) !== Number(correction.id)) return 'The payment it reversed has changed since.';
+    const allocation = await conn('credit_payment_allocations').where({ payment_id: original.id }).whereNull('reversed_at').first('id');
+    const refund = await conn('customer_refund_allocations as a').join('customer_refunds as r', 'a.refund_id', 'r.id')
+      .where('a.payment_id', original.id).where('r.status', 'posted').first('a.id');
+    const held = Number(original.unapplied_amount);
+    if (!Number.isFinite(held) || held !== 0 || allocation || refund) {
+      return 'The reversed payment still has held money, active allocations or a posted refund. Run the receivables integrity audit before undoing this correction.';
+    }
   }
   return null;
 }

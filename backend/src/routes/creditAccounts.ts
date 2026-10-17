@@ -154,10 +154,15 @@ router.get('/:id', async (req, res) => {
         .orderBy('payment_date', 'desc')
         .orderBy('id', 'desc');
     } else if (account.type === 'customer') {
-      credits = await db('credits')
-        .where({ account_id: account.id })
-        .whereNull('deleted_at')
-        .orderBy('created_at', 'desc');
+      credits = await db('credits as c')
+        .where({ 'c.account_id': account.id })
+        .whereNull('c.deleted_at')
+        .orderBy('c.created_at', 'desc')
+        .select('c.*', db('credit_payment_allocations as a')
+          .join('credit_payments as p', 'p.id', 'a.payment_id')
+          .whereRaw('a.credit_id = c.id').whereNull('a.reversed_at')
+          .where('p.status', 'posted').whereNull('p.deleted_at')
+          .sum('a.amount_applied').as('total_paid'));
       payments = await db('credit_payments')
         .where({ account_id: account.id, status: 'posted' })
         .whereNull('deleted_at')

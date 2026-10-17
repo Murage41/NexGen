@@ -13,6 +13,7 @@ import { collectionRule } from './correctionRules/collection';
 import { openingFundsRule } from './correctionRules/openingFunds';
 import { shiftFundsRule } from './correctionRules/shiftFunds';
 import { readShiftFinancials } from './shiftFinancials';
+import { customerCorrectionState } from './correctionRules/customerState';
 
 // Corrections (docs/ROADMAP.md §3c, docs/CORRECTIONS.md). A closed record is
 // never changed. A mistake found later is fixed by a numbered Correction whose
@@ -183,6 +184,7 @@ export async function correctionReasons(conn: Conn) {
 
 function normalize(request: any): CorrectionRequest {
   const num = (v: unknown) => (v === undefined || v === null || v === '' ? null : Number(v));
+  const customerRecord = ['credit_sale', 'debt_receipt'].includes(request?.record_type);
   return {
     record_type: String(request?.record_type || ''),
     error_kind: String(request?.error_kind || ''),
@@ -191,7 +193,7 @@ function normalize(request: any): CorrectionRequest {
     account_id: num(request?.account_id),
     fuel_type: request?.fuel_type ? String(request.fuel_type).trim().toLowerCase() : null,
     litres: num(request?.litres),
-    amount: num(request?.amount),
+    amount: customerRecord ? (typeof request?.amount === 'number' ? request.amount : null) : num(request?.amount),
     ...(request?.record_type === 'collection' && request?.error_kind === 'wrong_amount' ? {
       cash_amount: typeof request.cash_amount === 'number' ? request.cash_amount : Number.NaN,
       mpesa_amount: typeof request.mpesa_amount === 'number' ? request.mpesa_amount : Number.NaN,
@@ -225,8 +227,9 @@ async function shiftImpacts(conn: Conn, lines: PlanLine[]): Promise<ShiftImpact[
     byShift.set(line.shift_id, roundMoney((byShift.get(line.shift_id) || 0) + line.shift_effect));
   }
   const impacts: ShiftImpact[] = [];
-  const collectionShifts = [...byShift.keys()].filter(id => lines.some(line => line.shift_id === id && line.record_type === 'collection'));
-  const currentFinancials = collectionShifts.length ? await readShiftFinancials(conn, collectionShifts) : null;
+  const currentShifts = [...byShift.keys()].filter(id => lines.some(line => line.shift_id === id
+    && ['collection', 'credit_sale', 'debt_receipt'].includes(line.record_type)));
+  const currentFinancials = currentShifts.length ? await readShiftFinancials(conn, currentShifts) : null;
   for (const [shiftId, change] of byShift) {
     const shift = await conn('shifts as s')
       .leftJoin('employees as e', 's.employee_id', 'e.id')
@@ -275,7 +278,7 @@ function shiftEffects(impacts: ShiftImpact[], chargeTo: string | null) {
 }
 
 export async function previewCorrection(conn: Conn, raw: any, postingDate: string): Promise<Plan> {
-  if (raw?.record_type === 'collection' && !(conn as Knex.Transaction).isTransaction) {
+  if (['collection', 'credit_sale', 'debt_receipt'].includes(raw?.record_type) && !(conn as Knex.Transaction).isTransaction) {
     return (conn as Knex).transaction(trx => previewCorrection(trx, raw, postingDate));
   }
   const request = normalize(raw);
@@ -284,6 +287,9 @@ export async function previewCorrection(conn: Conn, raw: any, postingDate: strin
   const reason = await conn('correction_reasons').where({ code: request.reason_code, active: true }).first();
   if (request.reason_code && !reason) throw httpError('Choose a reason from the list.', 400, 'INVALID_REASON');
   const rulePlan = await handler.plan(conn, request);
+  if (['credit_sale', 'debt_receipt'].includes(request.record_type)) {
+    rulePlan.state_key = await customerCorrectionState(conn, rulePlan.lines);
+  }
   const shifts = await shiftImpacts(conn, rulePlan.lines);
   const needsChoice = shifts.some((s) => s.worse && s.attendant_id);
   const effects = [

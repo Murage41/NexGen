@@ -77,14 +77,20 @@ The customer list also shows each customer's limits, flagged **Over limit** or
 While the shift is still open, an administrator can remove a debt payment
 entered by mistake with the bin icon next to it under **Debt Collections**.
 Payments are never erased: the payment is marked reversed and kept on record,
-the customer owes that amount again, and it no longer counts toward the shift's
-cash. Attendants cannot remove payments.
+the customer owes that amount again, and it no longer counts as a debt receipt
+on the shift. Check the counted money separately. Attendants cannot remove payments.
 
-After the shift closes, the shift itself never changes. Fix a mistake with
-**Move balance** on the customer: move the amount to the right
-customer, to the attendant, or to the Station, with a reason and an
-administrator's approval. See
-[Fixing a Mistake on a Closed Shift](CLOSED-SHIFT-CORRECTIONS.md).
+After the shift closes, use **Correct** beside the credit sale or debt payment
+on that shift, or **Add missing** for a genuine omitted entry. The original
+close remains intact. B1 completes the paid-credit, allocation, current-preview
+and limit checks; see the [customer-correction guide](CUSTOMER-SHIFT-CORRECTIONS.md).
+Cash/M-Pesa counts stay fixed unless corrected separately. A customer
+reassignment does not automatically charge the attendant.
+
+For a paid or partly paid credit, enter the full correct debt, rather than
+the remaining balance. Real payments remain with the customer who paid.
+Limit approval uses the resulting net exposure. The account's **Paid** figure
+shows active allocations from actual posted payments.
 
 ## Credit on Account
 

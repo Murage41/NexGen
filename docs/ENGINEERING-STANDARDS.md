@@ -101,6 +101,16 @@ cache instead of recomputing; computing at event time and never updating.
   count evidence even when its old collection row is absent; an open-shift
   cache row alone is not a count. Both independent amounts are required and
   must distinguish explicit zero from missing or invalid input.
+- **Paid-debt corrections need allocation proof.** A shift sale and its debt
+  must match; debt amount equals remaining balance plus active allocations.
+  Contributing payments must belong to the same customer and partition into
+  allocations, held credit and posted refunds. Refuse incomplete evidence
+  with an audit instruction; never infer a payment or clamp away the mismatch.
+  Replacement credit-limit checks use net resulting exposure, allowing for the
+  full original debt and released paid money. Check projected age as well as
+  amount, and record the same before/delta/after approved in preview. Customer
+  debt/payment corrections leave counted cash/M-Pesa fixed; any count mistake
+  is an independent correction. Bind approval to involved allocation history.
 
 ## 4. Code conventions
 

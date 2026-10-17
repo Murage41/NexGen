@@ -92,6 +92,22 @@ for (const [input, valid] of [
   assert.equal(collectionTotal(input), valid, `Closing correction amount ${JSON.stringify(input)} validity`);
 }
 
+// A customer sale or receipt is a positive money record; removing it uses the
+// duplicate/never-received choice rather than posting a zero-valued record.
+const customerAmount = expression(path.join(root, 'shared/ui/Corrections.tsx'), 'validCustomerCorrectionAmount')({ validCollectionTotal: collectionTotal });
+for (const [input, valid] of [
+  ['0', false], ['0.00', false], ['', false], ['0.001', false], ['-1', false], ['Infinity', false],
+  ['.01', true], ['42.50', true], ['100000000', true], ['100000000.01', false],
+] as Array<[string, boolean]>) {
+  assert.equal(customerAmount(input), valid, `Customer correction amount ${JSON.stringify(input)} validity`);
+}
+const moneyAmountChanged = expression(path.join(root, 'shared/ui/Corrections.tsx'), 'moneyAmountChanged');
+const paidSale = { customerMoney: true, kind: 'wrong_amount', target: { amount: 1000, balance: 0 } };
+assert.equal(moneyAmountChanged({ ...paidSale, amount: '1000' }), false,
+  'A paid sale still has its full sale amount; unchanged full amount must wait for an edit.');
+assert.equal(moneyAmountChanged({ ...paidSale, amount: '900' }), true,
+  'The correction compares the entered full amount with the full source sale, not its zero unpaid balance.');
+
 // A same-sum correction can keep its count effects while another financial
 // entry changes the displayed shift result. Require a fresh review before PIN
 // approval instead of approving that changed result silently.
@@ -101,4 +117,4 @@ assert.equal(previewChanged({ plan: { data: shown }, final: structuredClone(show
   'An unchanged preview may proceed to approval.');
 assert.equal(previewChanged({ plan: { data: shown }, final: { ...shown, shifts: [{ shift_id: 12, corrected: -300 }] } }), true,
   'A changed server result requires renewed review even when the combined count effects are unchanged.');
-console.log('PASS: both screens preserve selected figures and balance previews; total corrections validate explicit currency amounts and require renewed review for changed displayed results.');
+console.log('PASS: both screens preserve selected figures and balance previews; closing/customer corrections validate currency, use full amounts and require renewed review for changed displayed results.');

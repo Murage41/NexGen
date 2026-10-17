@@ -34,7 +34,7 @@ On a closed shift:
 - **Credit sales** (credit given to a credit customer).
 - **Debt payments** (a credit customer paying what they owe, into the drawer).
 - **Drawer expenses.**
-- **Cash and M-Pesa** recorded the wrong way round.
+- **Cash and M-Pesa totals**, independently through A4.
 
 A3 also provides opening cash/M-Pesa corrections and missing/mistaken custody
 movements on balance-based shifts. Historical shifts with uncaptured openings
@@ -49,8 +49,8 @@ price notes, wages paid from the drawer, meter readings, deliveries and stock.
 
 - **On a closed shift** (desktop and phone): each list (fuel on account,
   credits given, debt collections, shift expenses) has **Correct** on every
-  entry and an **Add missing** button; the sales collections have **Cash and
-  M-Pesa mixed up**. An entry already corrected shows the correction's number
+  entry and an **Add missing** button; A4's counts have **Correct cash and
+  M-Pesa totals** or **Correct closing balances**. An entry already corrected shows the correction's number
   instead.
 - **A fuel entry** can also be corrected from the customer's fuel history:
   Customer Invoices (desktop) or Invoice Customers (phone) → the customer →
@@ -115,6 +115,12 @@ recorded twice), or given but not recorded.
 - The shift: a credit counts towards what the drawer accounted for, so
   removing one makes the shift worse and adding one makes it better.
 
+B1 tightens paid-debt allocation checks and uses the resulting net exposure
+for limit approval. A 1,000 debt with 800 paid, corrected to 1,200, leaves 400
+owed; it is not treated as a fresh unpaid 1,200. The full source amount is
+prefilled, and neither counted money nor fixed pump revenue changes. See the
+[customer-correction guide](CUSTOMER-SHIFT-CORRECTIONS.md).
+
 ### Debt payments taken in a shift
 
 Mistakes: another customer paid, the wrong amount, cash and M-Pesa the wrong
@@ -130,6 +136,10 @@ not recorded.
   round changes neither.
 - A payment part of which has already been refunded to the customer cannot be
   corrected.
+- Counted cash/M-Pesa remain fixed. Correct a mistaken count separately with
+  A4; changing the receipt's method only changes its classification. B1 binds
+  approval to the involved account/shift allocation history, including changes
+  followed by undo, and shows the same current variance as reports.
 
 ### Drawer expenses
 

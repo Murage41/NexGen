@@ -34,8 +34,9 @@ exclusions and measurable result. Split any broad row further before code.
 | A1 | Approved baseline and complete M-Pesa fee removal | `c885a61` published on main with a documentation follow-up; automated/scratch UI checks pass; update #16 installation/checkpoint pending |
 | A2 | Shared current-financial view with original close retained | Published `ab50f1b`; queued after A1. [Release card](releases/A2-CURRENT-FINANCIAL-VIEWS.md), [owner guide](CURRENT-SHIFT-FIGURES.md) |
 | A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Published `8997896`; queued after A2. [Release card](releases/A3-SHIFT-FLOATS.md), [operating guide](OPENING-FUNDS-GUIDE.md). Never linked to the previous shift. |
-| A4 | Independently correct closing cash and M-Pesa totals | Developed after `8997896`; automated checks pass, queued after A3. [Release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md), [operating guide](CLOSING-TOTAL-CORRECTIONS.md) |
-| B1 → B3 | Customer credit/shift receipts; fixed issued consumption with monetary notes; unbilled fuel and draft/limit controls | Planned separate releases |
+| A4 | Independently correct closing cash and M-Pesa totals | Published `03d0653`; checks pass, queued after A3. [Release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md), [operating guide](CLOSING-TOTAL-CORRECTIONS.md) |
+| B1 | Customer credit and shift debt receipts | Developed after `03d0653`; checks pass, queued after A4. [Release card](releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md), [operating guide](CUSTOMER-SHIFT-CORRECTIONS.md) |
+| B2 → B3 | Fixed issued consumption with monetary notes; unbilled fuel and draft/limit controls | Planned separate releases; B2 is next development |
 | B4 → B7 | Expenses; employee debts/targeted repayments; office payments/refunds; drawer wage payments | Planned separate releases |
 | C1 → C2 | Actual supplier-payment cash flow; supplier-payables drift audit | Planned separate releases |
 | D1 → D5 | Fuel orders; GRNs/delivery document; supplier invoice matching; supplier price/document amendments; physical adjustments/returns | M9 and physical work split into releases; meter edits excluded |
