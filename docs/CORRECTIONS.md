@@ -7,6 +7,11 @@ training whoever handles the office.
 
 **Before a shift closes, fix it on the shift. After it closes, correct it.**
 
+In A3, a declared opening or posted money movement keeps its history even
+while open: use **Correct** on an opening or **Reverse movement**, then record
+the replacement if needed. This release is queued after A2. See the
+[opening-funds guide](OPENING-FUNDS-GUIDE.md).
+
 A closed shift keeps its original records and saved close. The database
 refuses changes to those records. In A2, the shift screen and financial reports
 show the current figures, including corrections; **Original close → View
@@ -30,6 +35,10 @@ On a closed shift:
 - **Debt payments** (a credit customer paying what they owe, into the drawer).
 - **Drawer expenses.**
 - **Cash and M-Pesa** recorded the wrong way round.
+
+A3 also provides opening cash/M-Pesa corrections and missing/mistaken custody
+movements on balance-based shifts. Historical shifts with uncaptured openings
+retain their original calculation; new opening figures are never invented.
 
 Still done the old way until later phases: office payments and attendants'
 repayments (payment reversal), moving or writing off a balance (**Move

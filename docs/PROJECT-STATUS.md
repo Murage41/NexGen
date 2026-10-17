@@ -5,7 +5,7 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-10-16.
+Last updated: 2026-10-17.
 
 ## Station PC
 
@@ -26,12 +26,13 @@ Last updated: 2026-10-16.
   totals, simpler finance and fixed consumption after invoicing; complete
   proposed sequence in `docs/IMPLEMENTATION-STAGES.md`, indexed by
   `docs/ROADMAP.md`. Manual opening floats are in `docs/SHIFT-FLOATS.md`.
-  A2's consistent current/original financial views are developed separately
-  and queued after A1; floats and the broader edit/note work are not built.
+  A2's consistent current/original financial views and A3's manual opening
+  funds are developed separately and queued after A1. Independent closing-total
+  edits and the broader note work are not built.
   The whole of old 2b is not authorised to ship. The next station update is
   **#16**, A1 only, based on the station's code (`c5c4ee8`). No new migration
   or dependency installation is required; migration remains `054`.
-- **A2 development: current financial views, queued after A1.** The owner
+- **A2 published: `ab50f1b`, current financial views, queued after A1.** The owner
   authorised A2 on 2026-10-16 and changed the delivery workflow: finish and
   test individual development commits, then install/check one at a time on
   the station. `codex/current-shift-financials` starts from A1's installation
@@ -45,6 +46,20 @@ Last updated: 2026-10-16.
   the receivables audit pass. Final real-DB fingerprint is unchanged.
   Station checks gate the next installation,
   not the next development stage. Neither A1 nor A2 installation is confirmed.
+- **A3 development: manual opening funds, queued after A2.** Authorised
+  2026-10-16, branch `codex/shift-floats`, based on `ab50f1b`. New shifts require
+  separately entered cash/M-Pesa openings and count actual closing balances.
+  Custody additions/removals and opening corrections reuse the existing
+  approval/history mechanism. Old and already-open shifts stay legacy; no
+  opening estimates, original-snapshot rewrite, meter changes or FIFO replay.
+  Migration `20261016_055_shift_floats.ts` is separate from the older unshipped
+  office-corrections 055 in the primary mixed checkout. All 40 backend suites
+  pass, including three float suites and screen-formula checks. Type checks,
+  both builds, five planted bugs, scratch migration/restore and desktop/phone
+  checks pass; final audit/fingerprint evidence is recorded in
+  `docs/releases/A3-SHIFT-FLOATS.md`. Day-to-day guide:
+  `docs/OPENING-FUNDS-GUIDE.md`. A3 requires its own backed-up station migration
+  and checkpoint after A1 and A2; no station installation is confirmed.
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date
@@ -86,7 +101,8 @@ Last updated: 2026-10-16.
 | 14 | `bcfb424` | Corrections phase 1: closed shifts read their snapshot, database guards, correcting fuel on account | 053 |
 | 15 | `c5c4ee8` | Corrections phase 2a: credit sales, debt payments, drawer expenses, cash/M-Pesa | 054 |
 | 16 (pending installation) | `c885a61` + publication record | A1: remove M-Pesa fees; staged roadmap and manual-float specification | no new migration |
-| A2 (queued after #16) | A2 release commit, directly after `7695895`; see release card | Current financial views and preserved original close | no new migration |
+| A2 (queued after #16) | `ab50f1b` | Current financial views and preserved original close | no new migration |
+| A3 (queued after A2) | Separate A3 release commit based on `ab50f1b`; see release card | Manual opening cash/M-Pesa, closing balances, custody movements and correction history | 055 |
 
 ## How the system works now (recent decisions that code must respect)
 
@@ -304,8 +320,17 @@ Last updated: 2026-10-16.
   release card records checks and the separate station checkpoint. Development
   continues in bounded, tested commits before station installation; the older
   mixed checkout and actual development database are preserved.
-- **Next development:** implement the complete A3 manual opening-float
-  workflow, then A4 independent closing cash/M-Pesa corrections.
+- **2026-10-16: A3 developed and verified.** The owner's next-stage instruction
+  delivered the complete opening-funds workflow. New closing counts include
+  opening money, with explicit custody movements and approved opening
+  corrections. Legacy calculations remain unchanged. A count must be saved
+  explicitly; a credits cache is not a count. Uncounted and cancelled shifts
+  cannot invent inferred receipts or assessed shortages in reports. Closing
+  rejects stale custody history or old receipt-only clients. Independent
+  restoration and migration checks preserved all 72 pre-existing business
+  tables/4,180 old rows on the available scratch copy; the old open shift stayed
+  legacy. Full tests and user-facing checks are detailed in the A3 release card.
+- **Next development:** A4 independent closing cash/M-Pesa corrections.
   Follow the separate B-J releases in `docs/IMPLEMENTATION-STAGES.md`. Install
   A1 and check it before A2; each later installation waits for the preceding
   station checkpoint, while dependent development waits for development checks.

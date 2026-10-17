@@ -20,17 +20,14 @@ import {
 } from '../services/receivableReporting';
 import { listShiftCorrections } from '../services/shiftCorrections';
 import { listCorrections } from '../services/corrections';
-import { readShiftFinancials } from '../services/shiftFinancials';
+import { readShiftFinancials, summarizeShiftFinancials } from '../services/shiftFinancials';
+import { sumMoney } from '../services/shiftAccountability';
 import { owedOnShifts, varianceActivity, varianceRefundsPaid } from '../services/employeeVariances';
 
 const router = Router();
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
-}
-
-function sumMoney(rows: any[], selector: (row: any) => any): number {
-  return roundMoney(rows.reduce((sum: number, row: any) => sum + Number(selector(row) || 0), 0));
 }
 
 // ─── Daily Report ─────────────────────────────────────────────────────────────
@@ -42,8 +39,10 @@ router.get('/daily', requireAdmin, async (req, res) => {
       .join('employees', 'shifts.employee_id', 'employees.id')
       .select('shifts.*', 'employees.name as employee_name', 'employees.daily_wage')
       .where('shifts.shift_date', date)
+      .whereNot('shifts.status', 'cancelled')
       .orderBy('shifts.start_time');
     const financials = await readShiftFinancials(db, shifts);
+    const financialSummary = summarizeShiftFinancials([...financials.values()]);
 
     // FIFO cost for COGS
     const fifoCosts = await getFIFOCostByFuelType(date, date);
@@ -99,7 +98,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
       const cash = current.total_cash;
       const mpesa = current.total_mpesa;
       const credits = current.total_credits;
-      const totalCollections = roundMoney(cash + mpesa + credits);
+      const totalCollections = roundMoney((current.reconciliation_basis === 'balances_v1' ? current.inferred_collections : cash + mpesa) + credits);
       const creditReceiptsCash = current.credit_receipts_cash;
       const creditReceiptsMpesa = current.credit_receipts_mpesa;
       const creditReceiptsTotal = current.total_credit_receipts;
@@ -130,6 +129,21 @@ router.get('/daily', requireAdmin, async (req, res) => {
         status: shift.status,
         notes: shift.notes,
         financial_view: 'current',
+        reconciliation_basis: current.reconciliation_basis,
+        collection_count_recorded: financial.collection_count_recorded,
+        opening_cash_amount: current.opening_cash_amount,
+        opening_mpesa_amount: current.opening_mpesa_amount,
+        opening_total: current.opening_total,
+        closing_cash: current.closing_cash,
+        closing_mpesa: current.closing_mpesa,
+        closing_total: current.closing_total,
+        funds_added_total: current.funds_added_total,
+        funds_removed_total: current.funds_removed_total,
+        drawer_business_payouts: current.drawer_business_payouts,
+        inferred_collections: current.inferred_collections,
+        expected_receipts: current.expected_receipts,
+        expected_closing: current.expected_closing,
+        funds_movements: financial.fundsMovements,
         original_financials: financial.original,
         readings,
         collections,
@@ -162,7 +176,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
         shift_accounted: current.total_accounted,
         // Debt receipts are already inside cash/M-Pesa received totals;
         // keep them separate only so old debt is not treated as new pump sales.
-        variance: current.variance,
+        variance: current.reconciliation_basis === 'balances_v1' && !financial.collection_count_recorded ? null : current.variance,
       });
     }
 
@@ -223,7 +237,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
 
     // Collection rate excludes old-debt receipts and includes invoice retail
     // as an on-account sale for current pump-sales accountability.
-    const totalCollected = totalCash + totalMpesa - totalCreditReceipts + totalCredits + totalInvoiceRetail;
+    const totalCollected = financialSummary.sales_collections + totalCredits + totalInvoiceRetail;
     const collectionRate = totalSales > 0 ? (totalCollected / totalSales) * 100 : 0;
 
     // Tank stock snapshot for the day — computed as-of report date (fixes Issue 3)
@@ -310,8 +324,7 @@ router.get('/daily', requireAdmin, async (req, res) => {
         petrol_litres: totalPetrolLitres,
         diesel_litres: totalDieselLitres,
         // Collections
-        total_cash: totalCash,
-        total_mpesa: totalMpesa,
+        ...financialSummary,
         total_credits: totalCredits,
         total_invoice_retail: totalInvoiceRetail,
         invoice_petrol_litres: totalInvoicePetrolLitres,
@@ -320,11 +333,8 @@ router.get('/daily', requireAdmin, async (req, res) => {
         total_credit_receipts: roundMoney(totalCreditReceipts),
         total_credit_receipts_cash: roundMoney(totalCreditReceiptsCash),
         total_credit_receipts_mpesa: roundMoney(totalCreditReceiptsMpesa),
-        sales_cash: roundMoney(totalCash - totalCreditReceiptsCash),
-        sales_mpesa: roundMoney(totalMpesa - totalCreditReceiptsMpesa),
-        sales_collections: roundMoney(totalCash + totalMpesa - totalCreditReceipts),
-        expected_cash_received: roundMoney(totalCash),
-        expected_mpesa_received: roundMoney(totalMpesa),
+        expected_cash_received: financialSummary.has_balance_shifts ? null : roundMoney(totalCash),
+        expected_mpesa_received: financialSummary.has_balance_shifts ? null : roundMoney(totalMpesa),
         expected_total_received: roundMoney(totalCash + totalMpesa),
         collection_rate: collectionRate,
         // Costs
@@ -402,6 +412,7 @@ async function computeMonthlyReport(month: string) {
       .join('pumps', 'pump_readings.pump_id', 'pumps.id')
       .where('shifts.shift_date', '>=', startDate)
       .where('shifts.shift_date', '<=', endDate)
+      .whereNot('shifts.status', 'cancelled')
       .select('pumps.fuel_type')
       .sum('pump_readings.litres_sold as total_litres')
       .sum('pump_readings.amount_sold as total_sales')
@@ -453,9 +464,11 @@ async function computeMonthlyReport(month: string) {
       .join('employees', 'shifts.employee_id', 'employees.id')
       .where('shifts.shift_date', '>=', startDate)
       .where('shifts.shift_date', '<=', endDate)
+      .whereNot('shifts.status', 'cancelled')
       .select('shifts.*', 'employees.daily_wage');
     const financials = await readShiftFinancials(db, allShifts);
     const financialViews = [...financials.values()];
+    const financialSummary = summarizeShiftFinancials(financialViews);
     const collections = {
       total_cash: sumMoney(financialViews, (view) => view.current.total_cash),
       total_mpesa: sumMoney(financialViews, (view) => view.current.total_mpesa),
@@ -676,8 +689,7 @@ async function computeMonthlyReport(month: string) {
       total_litres: totalLitres,
       margin_per_litre: marginPerLitre,
       // Collections
-      total_cash: Number((collections as any)?.total_cash) || 0,
-      total_mpesa: Number((collections as any)?.total_mpesa) || 0,
+      ...financialSummary,
       total_credits: Number((collections as any)?.total_credits) || 0,
       total_invoice_retail: totalInvoiceRetail,
       // Costs
@@ -781,6 +793,7 @@ async function computeStockReconciliation(date: string) {
   // Get shifts for the date
   const dayShifts = await db('shifts')
     .where('shift_date', date)
+    .whereNot('status', 'cancelled')
     .select('id');
   const shiftIds = dayShifts.map((s: any) => s.id);
 
@@ -905,13 +918,21 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     const from = (req.query.from as string) || getKenyaMonth() + '-01';
     const to = (req.query.to as string) || getKenyaDate();
 
-    const shifts = await db('shifts').whereBetween('shift_date', [from, to]);
+    const shifts = await db('shifts').whereBetween('shift_date', [from, to]).whereNot('status', 'cancelled');
     const financials = await readShiftFinancials(db, shifts);
     const financialViews = [...financials.values()];
 
-    // Current retained collections already contain shift-linked debt receipts.
-    const shiftCashReceived = sumMoney(financialViews, (view) => view.current.total_cash);
-    const shiftMpesaReceived = sumMoney(financialViews, (view) => view.current.total_mpesa);
+    const legacyViews = financialViews.filter(view => view.current.reconciliation_basis === 'legacy');
+    const balanceViews = financialViews.filter(view => view.current.reconciliation_basis === 'balances_v1');
+    const countedBalanceViews = balanceViews.filter(view => view.collection_count_recorded);
+    // Only legacy figures supply a channel receipt total. New balance counts
+    // reconstruct one combined receipt figure, excluding opening and custody.
+    const shiftCashReceived = sumMoney(legacyViews, (view) => view.current.total_cash);
+    const shiftMpesaReceived = sumMoney(legacyViews, (view) => view.current.total_mpesa);
+    const balanceCollections = sumMoney(countedBalanceViews, view => view.current.inferred_collections);
+    const movements = balanceViews.flatMap(view => view.fundsMovements);
+    const ownerFunding = sumMoney(movements.filter(row => row.source === 'owner' && row.direction === 'added'), row => row.amount);
+    const ownerDrawings = sumMoney(movements.filter(row => row.source === 'owner' && row.direction === 'removed'), row => row.amount);
 
     // Shift-linked debt receipts are already inside shift cash/M-Pesa totals.
     // Only direct back-office receivable payments are added separately.
@@ -924,6 +945,7 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     const recordedInflows = roundMoney(
       shiftCashReceived
       + shiftMpesaReceived
+      + balanceCollections
       + creditPaymentsReceived
       + invoicePaymentsReceived
       + directReceivableCash.employee_debt_repayments,
@@ -956,10 +978,12 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
     // Drawer collections are the cash/M-Pesa remaining after shift payouts.
     // Reconstruct receipts before showing those same payouts as outflows, so
     // wages/expenses are not subtracted a second time from retained cash.
-    const drawerPayroll = sumMoney(financialViews, (view) => view.drawer_payroll_paid);
-    const directShiftCash = sumMoney(financialViews, (view) => view.actual_wage_paid);
-    const drawerPayouts = roundMoney(drawerPayroll + directShiftCash + totalShiftExpenses);
-    const totalInflows = roundMoney(recordedInflows + drawerPayouts);
+    const drawerPayroll = sumMoney(legacyViews, (view) => view.drawer_payroll_paid);
+    const directShiftCash = sumMoney(legacyViews, (view) => view.actual_wage_paid);
+    const legacyExpenses = sumMoney(legacyViews, view => view.current.total_expenses);
+    const drawerPayouts = roundMoney(drawerPayroll + directShiftCash + legacyExpenses);
+    const tradingInflows = roundMoney(recordedInflows + drawerPayouts);
+    const totalInflows = roundMoney(tradingInflows + ownerFunding);
 
     // Money paid back to employees: repaid money a correction freed
     // (services/employeeVariances.ts), and refunds settled before variances
@@ -980,8 +1004,9 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
       .first();
     const customerRefunds = roundMoney(Number((customerRefundRow as any)?.total || 0));
 
-    const totalOutflows = totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses
-      + employeeRefunds + customerRefunds;
+    const tradingOutflows = roundMoney(totalFuelPurchases + totalWagesPaid + totalShiftExpenses + totalGeneralExpenses
+      + employeeRefunds + customerRefunds);
+    const totalOutflows = roundMoney(tradingOutflows + ownerDrawings);
 
     const outstandingReceivables = await getCurrentReceivableTotals(db);
 
@@ -990,15 +1015,24 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
       data: {
         period: { from, to },
         financial_view: 'current',
+        has_balance_shifts: balanceViews.length > 0,
+        uncounted_balance_shifts: balanceViews.length - countedBalanceViews.length,
+        closing_cash: sumMoney(countedBalanceViews, view => view.current.closing_cash),
+        closing_mpesa: sumMoney(countedBalanceViews, view => view.current.closing_mpesa),
+        owner_movements: { funding: ownerFunding, drawings: ownerDrawings, net: roundMoney(ownerFunding - ownerDrawings) },
+        trading_net_cash_flow: roundMoney(tradingInflows - tradingOutflows),
         inflows: {
           cash_sales: shiftCashReceived,
           mpesa_sales: shiftMpesaReceived,
           shift_cash_received: shiftCashReceived,
           shift_mpesa_received: shiftMpesaReceived,
+          balance_shift_inferred_collections: balanceCollections,
+          owner_funding: ownerFunding,
           credit_payments_received: creditPaymentsReceived,
           direct_money_credit_payments: directMoneyByMethod,
           employee_debt_repayments: directReceivableCash.employee_debt_repayments,
           drawer_payouts_already_reflected: drawerPayouts,
+          balance_drawer_payouts_included: sumMoney(countedBalanceViews, view => view.current.drawer_business_payouts),
           invoice_payments_received: invoicePaymentsReceived,
           invoice_payments_by_account: invoicePaymentsByAccount,
           total: totalInflows,
@@ -1010,6 +1044,7 @@ router.get('/cash-flow', requireAdmin, async (req, res) => {
           general_expenses: totalGeneralExpenses,
           employee_refunds: employeeRefunds,
           customer_refunds: customerRefunds,
+          owner_drawings: ownerDrawings,
           total: totalOutflows,
         },
         net_cash_flow: totalInflows - totalOutflows,
@@ -1034,6 +1069,7 @@ router.get('/stock-reconciliation-by-shift', requireAdmin, async (req, res) => {
     const shifts = await db('shifts')
       .join('employees', 'shifts.employee_id', 'employees.id')
       .where('shifts.shift_date', date)
+      .whereNot('shifts.status', 'cancelled')
       .select('shifts.id', 'shifts.status', 'shifts.start_time', 'shifts.end_time', 'employees.name as employee_name')
       .orderBy('shifts.start_time');
 

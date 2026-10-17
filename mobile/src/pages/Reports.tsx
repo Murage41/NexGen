@@ -1,3 +1,4 @@
+import { fundsSummaryRows } from '../../../shared/ui/ShiftFunds';
 import { useState } from 'react';
 import {
   BarChart3, Calendar, TrendingUp, TrendingDown, Droplets,
@@ -102,6 +103,7 @@ export default function Reports() {
         { label: 'Gross Margin', value: pct(r.total_sales > 0 ? (r.gross_profit / r.total_sales) * 100 : 0), sub: true },
         { label: 'Collection Rate', value: pct(r.collection_rate), sub: true },
         { label: '─────', value: '', divider: true },
+        ...(r.has_balance_shifts ? fundsSummaryRows(r).map((row) => ({ label: row.label, value: kes(row.amount) })) : [
         { label: 'Cash Received', value: kes(r.total_cash) },
         { label: 'M-Pesa Received', value: kes(r.total_mpesa) },
         ...(Number(r.total_credit_receipts || 0) > 0 ? [
@@ -110,6 +112,7 @@ export default function Reports() {
           { label: 'Sales M-Pesa After Debt', value: kes(r.sales_mpesa), sub: true },
           { label: 'Received Total', value: kes(r.expected_total_received), bold: true },
         ] : []),
+        ]),
         { label: 'Credits', value: kes(r.total_credits), warn: true },
         { label: 'Pump Sales Accounted', value: kes(r.sales_collections + r.total_credits + r.total_invoice_retail), bold: true },
       ];
@@ -123,8 +126,10 @@ export default function Reports() {
         { label: 'Operating Expenses', value: kes(r.total_expenses), negative: true },
         { label: 'Net Profit', value: kes(r.net_profit), bold: true, positive: r.net_profit >= 0, negative: r.net_profit < 0 },
         { label: '─────', value: '', divider: true },
+        ...(r.has_balance_shifts ? fundsSummaryRows(r).map((row) => ({ label: row.label, value: kes(row.amount) })) : [
         { label: 'Cash', value: kes(r.total_cash) },
         { label: 'M-Pesa', value: kes(r.total_mpesa) },
+        ]),
         { label: 'Credits', value: kes(r.total_credits), warn: true },
       ];
     }
@@ -201,6 +206,8 @@ export default function Reports() {
       {/* ── DAILY / MONTHLY P&L ── */}
       {!loading && report && (tab === 'daily' || tab === 'monthly') && (
         <div className="space-y-4">
+          {report.has_balance_shifts && <p className="px-4 text-xs text-gray-500">Counted balances are holdings. Opening funds and transfers do not add sales or profit. {report.collection_basis === 'mixed' ? 'Opening funds were not captured for legacy shifts.' : ''}</p>}
+          {Number(report.uncounted_balance_shifts || 0) > 0 && <p className="px-4 text-xs text-amber-700">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
           {/* P&L Card */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center gap-2">
@@ -336,7 +343,7 @@ export default function Reports() {
                       <div className="text-right">
                         <p className="text-sm font-semibold text-gray-800">{kes(s.total_sales)}</p>
                         <p className={`text-xs font-medium mt-0.5 ${s.variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {s.variance >= 0 ? '+' : ''}{kes(s.variance)}
+                          {s.variance == null ? 'Count pending' : `${s.variance >= 0 ? '+' : ''}${kes(s.variance)}`}
                         </p>
                       </div>
                     </div>
@@ -519,6 +526,7 @@ export default function Reports() {
             </p>
           </div>
 
+          {Number(report.uncounted_balance_shifts || 0) > 0 && <p className="px-4 text-xs text-amber-700">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
           {/* Inflows */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-green-100 flex items-center gap-2">
@@ -526,13 +534,15 @@ export default function Reports() {
               <span className="font-semibold text-green-700">Inflows: {kes(report.inflows?.total)}</span>
             </div>
             <div className="divide-y divide-gray-50">
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Cash Sales</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.cash_sales)}</span></div>
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">M-Pesa Sales</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.mpesa_sales)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">{report.has_balance_shifts ? 'Legacy shifts: cash received' : 'Shift Cash Received'}</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.cash_sales)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">{report.has_balance_shifts ? 'Legacy shifts: M-Pesa received' : 'Shift M-Pesa Received'}</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.mpesa_sales)}</span></div>
+              {report.has_balance_shifts && <div className="flex justify-between gap-3 px-4 py-3"><span className="text-sm text-gray-600">Balance shifts: collections inferred from counted funds</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.balance_shift_inferred_collections)}</span></div>}
+              {Number(report.inflows?.owner_funding || 0) > 0 && <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Owner funding</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows.owner_funding)}</span></div>}
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Credit Payments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.credit_payments_received)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Invoice Payments (net)</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.invoice_payments_received)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Employee Debt Repayments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.employee_debt_repayments)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Shift Payouts Added Back</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.drawer_payouts_already_reflected)}</span></div>
-              <p className="text-xs text-gray-500 px-4 py-2">Shift collections are the amounts remaining after payouts. We add payouts back here before deducting them once under outflows.</p>
+              <p className="text-xs text-gray-500 px-4 py-2">Balance shifts reconstruct collections from opening funds, closing counts and movements, including payouts once. Legacy shift payouts are added back before outflows. Station bank/safe transfers do not add inflows or outflows.</p>
             </div>
           </div>
 
@@ -547,6 +557,7 @@ export default function Reports() {
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Wages Paid</span><span className="text-sm font-semibold text-red-600">{kes(report.outflows?.wages_paid)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Shift Expenses</span><span className="text-sm font-semibold text-red-600">{kes(report.outflows?.shift_expenses)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">General Expenses</span><span className="text-sm font-semibold text-red-600">{kes(report.outflows?.general_expenses)}</span></div>
+              {Number(report.outflows?.owner_drawings || 0) > 0 && <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Owner drawings</span><span className="text-sm font-semibold text-red-600">{kes(report.outflows.owner_drawings)}</span></div>}
             </div>
           </div>
 

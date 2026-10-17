@@ -1,3 +1,4 @@
+import { FundsCollectionSummary } from '../../../shared/ui/ShiftFunds';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboard } from '../services/api';
@@ -113,10 +114,10 @@ export default function Dashboard() {
         </div>
       )}
 
-      {isAdmin && data?.today_collections?.credit_receipts > 0 && (
+      {isAdmin && data?.today_collections && (data.today_collections.has_balance_shifts || data.today_collections.credit_receipts > 0) && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
-          <p className="text-sm font-semibold text-gray-700 mb-2">Today's Received</p>
-          <div className="space-y-1 text-sm">
+          <p className="text-sm font-semibold text-gray-700 mb-2">{data.today_collections.has_balance_shifts ? 'Today’s counted funds and collections' : 'Today’s Received'}</p>
+          {data.today_collections.has_balance_shifts ? <FundsCollectionSummary data={data.today_collections} formatMoney={fmt} /> : <div className="space-y-1 text-sm">
             <div className="flex justify-between">
               <span className="text-green-700">Debt receipts included</span>
               <span className="font-medium text-green-700">{fmt(data.today_collections.credit_receipts)}</span>
@@ -133,7 +134,7 @@ export default function Dashboard() {
               <span>Received total</span>
               <span>{fmt(data.today_collections.expected_total_received)}</span>
             </div>
-          </div>
+          </div>}
         </div>
       )}
 

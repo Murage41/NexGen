@@ -143,9 +143,14 @@ export const updateDeliverySchema = createDeliverySchema;
 export const openShiftSchema = z.object({
   employee_id: z.number({ error: 'employee_id is required' }).int().positive(),
   compensation_plan_id: z.number({ error: 'compensation_plan_id is required' }).int().positive(),
+  opening_cash_amount: z.number({ error: 'Enter the opening cash float (zero is allowed).' }).finite().min(0).max(100000000).multipleOf(0.01),
+  opening_mpesa_amount: z.number({ error: 'Enter the opening M-Pesa balance (zero is allowed).' }).finite().min(0).max(100000000).multipleOf(0.01),
+  opening_note: z.string().trim().max(2000).nullish().optional(),
 });
 
 export const closeShiftSchema = z.object({
+  reconciliation_basis: z.enum(['legacy', 'balances_v1']).optional(),
+  expected_funds_revision: z.number().int().min(0).optional(),
   // This validator strips unknown keys: a recovery_decision sent by a phone on a
   // cached older bundle is dropped, since close no longer recovers debt
   // (services/employeeVariances.ts). variance_reason is no longer collected; it
@@ -200,8 +205,9 @@ export const updateReadingsSchema = z.object({
 });
 
 export const updateCollectionsSchema = z.object({
-  cash_amount: z.number().finite().min(0),
-  mpesa_amount: z.number().finite().min(0),
+  cash_amount: z.number().finite().min(0).max(100000000),
+  mpesa_amount: z.number().finite().min(0).max(100000000),
+  reconciliation_basis: z.enum(['legacy', 'balances_v1']).optional(),
   expected_revision: z.number().int().min(0).optional(),
 });
 

@@ -20,7 +20,7 @@ const litresText = (litres: unknown, fuel: unknown) => `${Number(litres || 0).to
 const methodName = (method: unknown) => (method === 'mpesa' ? 'M-Pesa' : 'cash');
 const day = (date: unknown) => (date ? ` (${String(date).slice(0, 10)})` : '');
 
-export type RecordType = 'fuel_on_account' | 'credit_sale' | 'debt_receipt' | 'drawer_expense' | 'collection';
+export type RecordType = 'fuel_on_account' | 'credit_sale' | 'debt_receipt' | 'drawer_expense' | 'collection' | 'opening_funds' | 'shift_funds';
 
 export type CorrectionApi = {
   // POST /corrections/preview, POST /corrections, POST /corrections/:id/undo,
@@ -42,6 +42,8 @@ export const RECORD_LABELS: Record<string, string> = {
   debt_receipt: 'Debt payment',
   drawer_expense: 'Drawer expense',
   collection: 'Cash and M-Pesa',
+  opening_funds: 'Opening funds',
+  shift_funds: 'Money added / removed',
 };
 
 const KINDS: Record<RecordType, Array<{ kind: string; label: string }>> = {
@@ -75,6 +77,11 @@ const KINDS: Record<RecordType, Array<{ kind: string; label: string }>> = {
     { kind: 'missing', label: 'An expense paid from the drawer was not recorded' },
   ],
   collection: [{ kind: 'wrong_split', label: 'Recorded the wrong way round' }],
+  opening_funds: [{ kind: 'wrong_amount', label: 'The opening amount was wrong' }],
+  shift_funds: [
+    { kind: 'missing', label: 'Record money added or removed' },
+    { kind: 'duplicate', label: 'Reverse this money movement' },
+  ],
 };
 
 export const errorKindLabel = (kind: string, recordType = 'fuel_on_account') =>
@@ -97,6 +104,8 @@ export function lineText(line: any) {
     case 'collection': return line.action === 'add' || line.action === 'restore'
       ? `${kes(line.amount)} into ${methodName(line.method)}`
       : `${kes(line.amount)} out of ${methodName(line.method)}`;
+    case 'opening_funds': return `${verb} opening ${methodName(line.method)} of ${kes(line.amount)}`;
+    case 'shift_funds': return `${verb} ${methodName(line.method)} ${line.category === 'removed' ? 'removal' : 'addition'} of ${kes(line.amount)}`;
     default: return `${verb} ${litresText(line.litres, line.fuel_type)}${line.party_name ? ` on ${line.party_name}` : ''}`;
   }
 }
@@ -109,6 +118,8 @@ function recordedText(recordType: RecordType, target: any, shift: any) {
     case 'debt_receipt': return `${kes(target.amount)} paid by ${target.account_name} in ${methodName(target.payment_method)}${where}.`;
     case 'drawer_expense': return `drawer expense of ${kes(target.amount)} (${target.category}${target.description ? `: ${target.description}` : ''})${where}.`;
     case 'collection': return `shift #${shift?.id}${day(shift?.shift_date)}: cash ${kes(target?.cash_amount)}, M-Pesa ${kes(target?.mpesa_amount)}.`;
+    case 'opening_funds': return `opening ${methodName(target.payment_method)} ${kes(target.amount)}${where}.`;
+    case 'shift_funds': return `${methodName(target.method)} ${target.direction === 'removed' ? 'removed' : 'added'}: ${kes(target.amount)}, reference ${target.reference}${where}.`;
     default: return `fuel entry #${target.id}, ${litresText(target.litres, target.fuel_type)}${target.account_name ? ` on ${target.account_name}` : ''}${where}, ${kes(target.retail_amount)}.`;
   }
 }
@@ -119,6 +130,8 @@ const MISSING: Record<RecordType, string> = {
   debt_receipt: 'A debt payment received in this shift but not recorded. It pays the customer\'s oldest debts first.',
   drawer_expense: 'An expense paid from this shift\'s drawer but not recorded (for example a receipt found later).',
   collection: '',
+  opening_funds: 'Correct the amount declared before this shift opened. Enter the full correct opening amount, including zero.',
+  shift_funds: 'Record an otherwise unrecorded custody movement. Do not repeat expenses, wages or customer payments already recorded. For a cash/M-Pesa transfer, record a removal and an addition with the same reference.',
 };
 
 export function CorrectionForm({
@@ -146,16 +159,18 @@ export function CorrectionForm({
   const fuel = recordType === 'fuel_on_account';
   // A record being corrected offers every mistake but "missing"; adding a
   // missing record offers only that.
-  const kinds = recordType === 'collection'
-    ? KINDS.collection
+  const kinds = recordType === 'collection' || recordType === 'opening_funds'
+    ? KINDS[recordType]
     : KINDS[recordType].filter((k) => (target ? k.kind !== 'missing' : k.kind === 'missing'));
   const single = kinds.length === 1 ? kinds[0].kind : '';
-  const [kind, setKind] = useState(target && recordType !== 'collection' ? '' : single || 'missing');
+  const [kind, setKind] = useState(single || (target ? '' : 'missing'));
   const [litres, setLitres] = useState(fuel && target ? String(Number(target.litres)) : '');
   const [fuelType, setFuelType] = useState(fuel && target ? (target.fuel_type === 'diesel' ? 'petrol' : 'diesel') : '');
   const [amount, setAmount] = useState('');
-  const [method, setMethod] = useState('');
+  const [method, setMethod] = useState(recordType === 'opening_funds' ? target?.payment_method || '' : '');
   const [category, setCategory] = useState('');
+  const [source, setSource] = useState('');
+  const [reference, setReference] = useState('');
   const [description, setDescription] = useState('');
   const [accountId, setAccountId] = useState('');
   const [shiftId, setShiftId] = useState('');
@@ -183,15 +198,16 @@ export function CorrectionForm({
     litres: fuel && ['wrong_litres', 'wrong_fuel', 'missing'].includes(kind),
     fuel: fuel && ['wrong_fuel', 'missing'].includes(kind),
     amount: !fuel && ['wrong_amount', 'missing', 'wrong_split'].includes(kind),
-    customer: recordType !== 'drawer_expense' && recordType !== 'collection' && ['wrong_customer', 'missing'].includes(kind),
-    method: (recordType === 'debt_receipt' && kind === 'missing') || recordType === 'collection',
-    category: recordType === 'drawer_expense' && ['wrong_category', 'missing'].includes(kind),
-    description: (recordType === 'credit_sale' || recordType === 'drawer_expense') && kind === 'missing',
+    customer: ['fuel_on_account', 'credit_sale', 'debt_receipt'].includes(recordType) && ['wrong_customer', 'missing'].includes(kind),
+    method: (['debt_receipt', 'shift_funds'].includes(recordType) && kind === 'missing') || recordType === 'collection' || recordType === 'opening_funds',
+    category: (recordType === 'drawer_expense' && ['wrong_category', 'missing'].includes(kind)) || (recordType === 'shift_funds' && kind === 'missing'),
+    description: ['credit_sale', 'drawer_expense', 'shift_funds'].includes(recordType) && kind === 'missing',
+    custody: recordType === 'shift_funds' && kind === 'missing',
     shift: kind === 'wrong_shift',
   };
   const request: Record<string, unknown> = { record_type: recordType, error_kind: kind };
-  if (target && recordType !== 'collection') request.target_id = target.id;
-  if (kind === 'missing' || recordType === 'collection') request.shift_id = shift?.id;
+  if (target && !['collection', 'opening_funds'].includes(recordType)) request.target_id = target.id;
+  if (kind === 'missing' || ['collection', 'opening_funds'].includes(recordType)) request.shift_id = shift?.id;
   if (needs.litres) request.litres = Number(litres);
   if (needs.fuel) request.fuel_type = fuelType;
   if (needs.amount) request.amount = Number(amount);
@@ -199,17 +215,19 @@ export function CorrectionForm({
   if (needs.method) request.payment_method = method;
   if (needs.category) request.category = category;
   if (needs.description && description.trim()) request.description = description.trim();
+  if (needs.custody) { request.source = source; request.reference = reference.trim(); }
   if (needs.shift) request.shift_id = Number(shiftId);
   if (chargeTo) request.charge_to = chargeTo;
   if (override) request.limit_override = true;
   const complete = Boolean(kind)
     && (!needs.litres || Number(litres) > 0)
     && (!needs.fuel || Boolean(fuelType))
-    && (!needs.amount || Number(amount) > 0)
+    && (!needs.amount || (amount.trim() !== '' && Number.isFinite(Number(amount)) && (recordType === 'opening_funds' ? Number(amount) >= 0 : Number(amount) > 0)))
     && (!needs.customer || Number(accountId) > 0)
     && (!needs.method || Boolean(method))
     && (!needs.category || Boolean(category.trim()))
-    && (!needs.shift || Number(shiftId) > 0);
+    && (!needs.shift || Number(shiftId) > 0)
+    && (!needs.custody || (Boolean(source) && reference.trim().length > 0 && description.trim().length >= 10));
   const key = JSON.stringify(request);
 
   useEffect(() => {
@@ -299,8 +317,8 @@ export function CorrectionForm({
             </label>
           )}
           {needs.method && (
-            <label className="block">{label(recordType === 'collection' ? 'The money was really' : 'Paid in')}
-              <select className={inputClassName} value={method} onChange={(e) => setMethod(e.target.value)}>
+            <label className="block">{label(recordType === 'collection' ? 'The money was really' : recordType === 'opening_funds' ? 'Opening funds method' : needs.custody ? 'Money method' : 'Paid in')}
+              <select className={inputClassName} value={method} disabled={recordType === 'opening_funds' && Boolean(target?.payment_method)} onChange={(e) => setMethod(e.target.value)}>
                 <option value="">Choose</option>
                 <option value="cash">Cash</option>
                 <option value="mpesa">M-Pesa</option>
@@ -308,7 +326,7 @@ export function CorrectionForm({
             </label>
           )}
           {needs.amount && (
-            <label className="block">{label(recordType === 'collection' ? 'Amount recorded the wrong way round (KES)' : 'Amount (KES)')}
+            <label className="block">{label(recordType === 'collection' ? 'Amount recorded the wrong way round (KES)' : recordType === 'opening_funds' ? 'Correct full opening amount (KES)' : 'Amount (KES)')}
               <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </label>
           )}
@@ -321,16 +339,22 @@ export function CorrectionForm({
             </label>
           )}
           {needs.category && (
-            <label className="block col-span-2">{label('Category')}
+            <label className="block col-span-2">{label(needs.custody ? 'Money movement' : 'Category')}
               <select className={inputClassName} value={category} onChange={(e) => setCategory(e.target.value)}>
                 <option value="">Choose the category</option>
-                {categories.filter((c) => c !== target?.category).map((c) => <option key={c} value={c}>{c}</option>)}
+                {needs.custody ? <><option value="added">Money added</option><option value="removed">Money removed</option></> : categories.filter((c) => c !== target?.category).map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
           )}
+          {needs.custody && <>
+            <label className="block col-span-2">{label(category === 'removed' ? 'Destination' : 'Source')}
+              <select className={inputClassName} value={source} onChange={(e) => setSource(e.target.value)}><option value="">Choose</option><option value="station_bank_safe">Station bank / safe</option><option value="owner">Owner</option><option value="other">Other</option></select>
+            </label>
+            <label className="block col-span-2">{label('Reference (required)')}<input className={inputClassName} maxLength={200} value={reference} onChange={(e) => setReference(e.target.value)} /></label>
+          </>}
           {needs.description && (
-            <label className="block col-span-2">{label('Description (optional)')}
-              <input className={inputClassName} maxLength={200} value={description} onChange={(e) => setDescription(e.target.value)} />
+            <label className="block col-span-2">{label(needs.custody ? 'Source / destination explanation (at least 10 characters)' : 'Description (optional)')}
+              <input className={inputClassName} maxLength={needs.custody ? 1000 : 200} value={description} onChange={(e) => setDescription(e.target.value)} />
             </label>
           )}
           {needs.shift && (
@@ -394,7 +418,7 @@ export function CorrectionForm({
         <button type="button" onClick={onCancel} className="px-3 py-2 rounded-lg text-gray-700">Cancel</button>
         <button type="button" onClick={() => void submit()} disabled={busy || !ready}
           className="px-3 py-2 rounded-lg text-white font-medium bg-blue-600 disabled:opacity-50">
-          {busy ? 'Posting…' : 'Post the correction'}
+          {busy ? 'Posting…' : recordType === 'shift_funds' ? target ? 'Reverse movement' : 'Record movement' : 'Post the correction'}
         </button>
       </div>
     </div>
@@ -469,9 +493,15 @@ export function OriginalCloseFigures({ figures, formatMoney }: {
   formatMoney: (amount: number) => string;
 }) {
   if (!figures) return null;
+  const balances = figures.reconciliation_basis === 'balances_v1';
   const rows = [
-    ['expected_sales', 'Expected sales'], ['expected_shift_total', 'Expected shift total'],
-    ['total_cash', 'Cash'], ['total_mpesa', 'M-Pesa'], ['total_credit_receipts', 'Debt receipts included'],
+    ['expected_sales', 'Expected sales'], ['expected_shift_total', balances ? 'Total to account for' : 'Expected shift total'],
+    ...(balances ? [
+      ['opening_cash_amount', 'Opening cash float'], ['opening_mpesa_amount', 'Opening M-Pesa balance'],
+      ['funds_added_total', 'Money added'], ['funds_removed_total', 'Money removed'],
+      ['expected_closing', 'Expected closing funds'], ['inferred_collections', 'Collections inferred from counted funds'], ['expected_receipts', 'Expected receipts'],
+    ] : []),
+    ['total_cash', balances ? 'Cash remaining' : 'Cash'], ['total_mpesa', balances ? 'M-Pesa balance at close' : 'M-Pesa'], ['total_credit_receipts', 'Debt receipts included'],
     ['total_credits', 'Credits issued'], ['total_invoice_consumption', 'Invoice fuel value'],
     ['total_expenses', 'Expenses'], ['employee_wage', 'Direct wage payment'],
     ['total_payroll_payments', 'Other payroll payments'], ['total_accounted', 'Total accounted'], ['variance', 'Over / short'],
@@ -492,11 +522,12 @@ export function OriginalCloseFigures({ figures, formatMoney }: {
 export function ShiftCorrectionsBanner({ corrections, asClosed }: { corrections: any; asClosed: number }) {
   if (!corrections?.lines?.length) return null;
   const numbers = [...new Set(corrections.lines.map((l: any) => l.number))];
+  const laterNumbers = new Set(corrections.lines.filter((line: any) => !line.shift_open).map((line: any) => line.number));
   const byNumber = numbers.map((number) => ({ number, lines: corrections.lines.filter((l: any) => l.number === number) }));
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-gray-800 space-y-1">
       <p className="font-semibold">
-        {numbers.length} correction{numbers.length === 1 ? '' : 's'} since close: result at close {result(asClosed)}; current result{' '}
+        {laterNumbers.size > 0 ? `${laterNumbers.size} correction${laterNumbers.size === 1 ? '' : 's'} since close` : 'Recorded amendments included in the original close'}: result at close {result(asClosed)}; current result{' '}
         {result(Number(corrections.current_variance ?? corrections.corrected_variance ?? asClosed))}.
       </p>
       <p className="text-xs text-gray-600">The original close is preserved. Current figures include the corrections recorded since.</p>
@@ -504,12 +535,13 @@ export function ShiftCorrectionsBanner({ corrections, asClosed }: { corrections:
         {byNumber.map(({ number, lines }: any) => {
           const change = lines.reduce((sum: number, l: any) => sum + Number(l.shift_effect || 0), 0);
           const first = lines[0];
+          const includedAtClose = lines.every((line: any) => Boolean(line.shift_open));
           return (
             <li key={number}>
               <strong>{number}</strong> ({String(first.posting_date).slice(0, 10)}{first.status === 'undone' ? ', undone' : ''}):{' '}
               {correctionTitle(first.record_type, first.error_kind)}
               {lines.map((l: any, i: number) => <span key={i}> · {lineText(l)}</span>)}
-              {' '}· {change === 0 ? 'the result does not change' : `shift ${change > 0 ? 'better' : 'worse'} by ${kes(Math.abs(change))}`}
+              {' '}· {includedAtClose ? 'included in the original close' : change === 0 ? 'the result does not change' : `shift ${change > 0 ? 'better' : 'worse'} by ${kes(Math.abs(change))}`}
               {change < 0 && first.charge_to ? ` (${first.charge_to === 'station' ? 'the station carries it' : 'the attendant carries it'})` : ''}
               {first.reason_note ? `: ${first.reason_note}` : ''}
             </li>

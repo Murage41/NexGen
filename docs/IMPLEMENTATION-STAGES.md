@@ -26,14 +26,21 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   and the owner's checkpoint remain. Original mixed work
   is preserved. The owner changed the sequence on 2026-10-16: development can
   continue before station checks; installation still proceeds one update at a time.
-- A2 is developed on `codex/current-shift-financials`, based on `7695895`.
+- A2 is published as `ab50f1b` on `codex/current-shift-financials`, based on `7695895`.
   Current and original views, reports, history exports and both clients use
   the agreed financial basis. Development evidence and installation checks
   are in [the A2 release card](releases/A2-CURRENT-FINANCIAL-VIEWS.md).
   All 37 backend suites, three type checks, both client builds, three planted
   bugs and scratch desktop/phone/audit checks pass. It is queued after A1;
   no station installation is confirmed.
-- A3 and later releases below are **not built as agreed complete releases**.
+- A3 is developed on `codex/shift-floats`, based on A2. Explicit openings,
+  actual closing balances, custody movements, opening corrections, legacy
+  compatibility and common report arithmetic are complete. All 40 backend
+  suites, five planted bugs, type checks, builds, backup/restore/migration and
+  scratch desktop/phone checks pass. See [the A3 release card](releases/A3-SHIFT-FLOATS.md)
+  and [operating guide](OPENING-FUNDS-GUIDE.md). Queue after A2; station
+  installation/checkpoint remain separate.
+- A4 and later releases below are **not built as agreed complete releases**.
   Existing helpers, screens and selected uncommitted code can be reused after
   review; that does not make a release complete or authorise all old 2b work.
 - Preserve existing local work. Start the approved release from the station's

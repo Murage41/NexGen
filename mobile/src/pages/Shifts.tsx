@@ -1,3 +1,4 @@
+import { OpeningFundsFields, validOpeningAmount } from '../../../shared/ui/ShiftFunds';
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -53,6 +54,11 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
+  const [openingCash, setOpeningCash] = useState('');
+  const [openingMpesa, setOpeningMpesa] = useState('');
+  const [openingNote, setOpeningNote] = useState('');
+  const [openingBusy, setOpeningBusy] = useState(false);
+  const openingComplete = validOpeningAmount(openingCash) && validOpeningAmount(openingMpesa);
   const [searchParams, setSearchParams] = useSearchParams();
   const fromDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('from') || '') ? searchParams.get('from')! : '';
   const toDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('to') || '') ? searchParams.get('to')! : '';
@@ -183,18 +189,22 @@ export default function Shifts() {
   }
 
   async function handleOpen() {
-    if (!selectedEmployee || !selectedPlan) return;
+    if (!selectedEmployee || !selectedPlan || !openingComplete || openingBusy || !isAdmin) return;
+    setOpeningBusy(true);
     try {
       const response = await openShift({
         employee_id: parseInt(selectedEmployee, 10),
         compensation_plan_id: Number(selectedPlan.id),
+        opening_cash_amount: Number(openingCash),
+        opening_mpesa_amount: Number(openingMpesa),
+        opening_note: openingNote.trim() || undefined,
       });
       setShowNew(false);
       setSelectedEmployee('');
       navigate(shiftPath(Number(response.data.data.id)));
     } catch (openError: any) {
       setNewShiftError(openError.response?.data?.error || 'Failed to open shift');
-    }
+    } finally { setOpeningBusy(false); }
   }
 
   async function handleExport() {
@@ -285,16 +295,16 @@ export default function Shifts() {
               <Download size={18} />
             </button>
           )}
-          <button
-            onClick={() => { setNewShiftError(''); setShowNew(true); }}
+          {isAdmin && <button
+            onClick={() => { setNewShiftError(''); setSelectedEmployee(''); setOpeningCash(''); setOpeningMpesa(''); setOpeningNote(''); setShowNew(true); }}
             className="bg-blue-600 text-white px-3 py-2 rounded-md text-sm flex items-center gap-1"
           >
             <Plus size={16} /> New
-          </button>
+          </button>}
         </div>
       )} />
 
-      {showNew && (
+      {showNew && isAdmin && (
         <div className="mobile-modal-overlay flex items-end">
           <div className="mobile-bottom-sheet rounded-t-2xl p-5">
             <h2 className="text-lg font-semibold mb-3">Open New Shift</h2>
@@ -330,6 +340,7 @@ export default function Shifts() {
                 This employee has no compensation plan for today.
               </p>
             )}
+            <OpeningFundsFields cash={openingCash} mpesa={openingMpesa} note={openingNote} onCash={setOpeningCash} onMpesa={setOpeningMpesa} onNote={setOpeningNote} />
             {newShiftError && <p className="mb-3 text-sm text-red-600">{newShiftError}</p>}
             <div className="flex gap-2">
               <button
@@ -340,10 +351,10 @@ export default function Shifts() {
               </button>
               <button
                 onClick={handleOpen}
-                disabled={!selectedEmployee || !selectedPlan}
+                disabled={!selectedEmployee || !selectedPlan || !openingComplete || openingBusy}
                 className="flex-1 py-3 rounded-md bg-blue-600 text-white font-medium disabled:opacity-50"
               >
-                Open Shift
+                {openingBusy ? 'Opening…' : 'Open Shift'}
               </button>
             </div>
           </div>

@@ -1,3 +1,4 @@
+import { ShiftFunds, FundsCloseReview, validOpeningAmount } from '../../../../shared/ui/ShiftFunds';
 import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/CreditLimitPrompt';
 import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
@@ -57,7 +58,7 @@ export default function ShiftDetail() {
   const location = useLocation();
   const [shift, setShift] = useState<any>(null);
   const [readings, setReadings] = useState<any[]>([]);
-  const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
+  const [collections, setCollections] = useState<{ cash_amount: number | string; mpesa_amount: number | string }>({ cash_amount: 0, mpesa_amount: 0 });
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [wageDeduction, setWageDeduction] = useState<any>(null);
@@ -257,7 +258,7 @@ export default function ShiftDetail() {
       }
       const serverCollections = d.collections
         ? { cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount }
-        : { cash_amount: 0, mpesa_amount: 0 };
+        : d.reconciliation_basis === 'balances_v1' ? { cash_amount: '', mpesa_amount: '' } : { cash_amount: 0, mpesa_amount: 0 };
       setCollections(draft?.collections || serverCollections);
       if (collectionConflictRevision !== null && options.resolveConflict !== 'collections') {
         setCollectionsDirty(true);
@@ -387,16 +388,22 @@ export default function ShiftDetail() {
   }
 
   async function handleSaveCollections() {
+    if (shift?.reconciliation_basis === 'balances_v1' && (!validOpeningAmount(String(collections.cash_amount)) || !validOpeningAmount(String(collections.mpesa_amount)))) {
+      setCollectionError('Enter both closing balances. Enter 0 for a counted zero balance.');
+      return;
+    }
     const revision = collectionRevision.current;
     setCollectionSync('saving');
     setCollectionError('');
     try {
       const response = await updateCollections(parseInt(id!), {
+        reconciliation_basis: shift.reconciliation_basis || 'legacy',
         cash_amount: parseFloat(String(collections.cash_amount)) || 0,
         mpesa_amount: parseFloat(String(collections.mpesa_amount)) || 0,
         expected_revision: serverCollectionRevision.current,
       });
       serverCollectionRevision.current = Number(response.data.revision ?? serverCollectionRevision.current + 1);
+      setShift((current: any) => ({ ...current, collection_count_recorded: true }));
       setCollectionConflictRevision(null);
       if (revision === collectionRevision.current) {
         clearShiftDraftSection(id!, 'collections');
@@ -607,6 +614,8 @@ export default function ShiftDetail() {
       const res = await closeShift(parseInt(id!), {
         notes,
         wage_paid: parseFloat(wagePaid) || 0,
+        reconciliation_basis: shift.reconciliation_basis || 'legacy',
+        expected_funds_revision: Number(shift.funds_revision || 0),
         reconciliation: {
           readings_reviewed: true,
           collections_reviewed: true,
@@ -718,7 +727,7 @@ export default function ShiftDetail() {
   }
 
   function updateCollection(field: 'cash_amount' | 'mpesa_amount', value: string) {
-    const next = { ...collections, [field]: parseFloat(value) || 0 };
+    const next = { ...collections, [field]: shift?.reconciliation_basis === 'balances_v1' ? value : parseFloat(value) || 0 };
     setCollections(next);
     collectionRevision.current += 1;
     writeShiftDraft(id!, { collections: next });
@@ -759,6 +768,11 @@ export default function ShiftDetail() {
   const numVal = (v: any) => { const n = parseFloat(v); return n === 0 ? '' : v; };
   const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
   const expectedSales = isOpen ? readings.reduce((s: number, r: any) => s + (parseFloat(r.amount_sold) || 0), 0) : Number(shift.expected_sales ?? 0);
+  const balanceBased = shift.reconciliation_basis === 'balances_v1';
+  const hasClosingCount = !balanceBased || (validOpeningAmount(String(collections.cash_amount)) && validOpeningAmount(String(collections.mpesa_amount)) && (Boolean(shift.collection_count_recorded) || collectionsDirty));
+  const openingTotal = balanceBased ? Number(shift.opening_total ?? (Number(shift.opening_funds?.cash_amount || 0) + Number(shift.opening_funds?.mpesa_amount || 0))) : 0;
+  const fundsAdded = balanceBased ? Number(shift.funds_added_total || 0) : 0;
+  const fundsRemoved = balanceBased ? Number(shift.funds_removed_total || 0) : 0;
   const totalCash = isOpen ? parseFloat(String(collections.cash_amount)) || 0 : Number(shift.total_cash ?? 0);
   const totalMpesa = isOpen ? parseFloat(String(collections.mpesa_amount)) || 0 : Number(shift.total_mpesa ?? 0);
   const totalCredits = isOpen ? shiftCredits.reduce((s: number, c: any) => s + Number(c.amount || 0), 0) : Number(shift.total_credits ?? 0);
@@ -780,11 +794,15 @@ export default function ShiftDetail() {
     .reduce((s: number, r: any) => s + Number(r.amount || 0), 0) : Number(shift.credit_receipts_mpesa ?? 0);
   const salesCash = isOpen ? totalCash - creditReceiptsCash : Number(shift.sales_cash ?? 0);
   const salesMpesa = isOpen ? totalMpesa - creditReceiptsMpesa : Number(shift.sales_mpesa ?? 0);
-  const salesCollections = salesCash + salesMpesa;
+  const businessPayouts = totalExpenses + directDrawerPayment + totalPayrollPayments;
+  const inferredCollections = totalCash + totalMpesa + businessPayouts + fundsRemoved - openingTotal - fundsAdded;
+  const expectedReceipts = expectedSales - totalCredits - totalInvoiceConsumption + totalCreditReceipts;
+  const expectedClosing = openingTotal + expectedReceipts + fundsAdded - businessPayouts - fundsRemoved;
+  const salesCollections = balanceBased ? inferredCollections - totalCreditReceipts : salesCash + salesMpesa;
   const drawerCash = totalCash;
   const drawerMpesa = totalMpesa;
   const drawerTotal = drawerCash + drawerMpesa;
-  const expectedShiftTotal = isOpen ? expectedSales + totalCreditReceipts : Number(shift.expected_shift_total ?? 0);
+  const expectedShiftTotal = isOpen ? expectedSales + totalCreditReceipts + openingTotal + fundsAdded : Number(shift.expected_shift_total ?? 0);
   const salesAccounted = isOpen ? salesCollections
     + totalCredits
     + totalInvoiceConsumption
@@ -796,7 +814,8 @@ export default function ShiftDetail() {
     + totalInvoiceConsumption
     + totalExpenses
     + directDrawerPayment
-    + totalPayrollPayments : Number(shift.total_accounted ?? 0);
+    + totalPayrollPayments
+    + fundsRemoved : Number(shift.total_accounted ?? 0);
   const variance = isOpen ? Math.round((totalAccounted - expectedShiftTotal) * 100) / 100 : Number(shift.variance ?? 0);
   const closeReviewComplete = closeReview.readings
     && closeReview.collections
@@ -887,7 +906,7 @@ export default function ShiftDetail() {
         </section>
       )}
 
-      {!isOpen && shift.close_reconciliation && (
+      {!isOpen && !isCancelled && shift.close_reconciliation && (
         <div className="bg-white border border-gray-200 p-4 mb-4">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -967,8 +986,12 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      <ShiftFunds shift={shift} formatMoney={formatKES} canManage={!isCancelled} onCorrect={(recordType, target) => setCorrecting({ recordType, target })}
+        reconciliation={balanceBased && !isCancelled ? { expectedClosing, inferredCollections: hasClosingCount ? inferredCollections : undefined, expectedReceipts, payouts: businessPayouts } : undefined} />
+
+      {!hasClosingCount && !isCancelled && <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 mb-4 text-sm text-blue-800">Closing count not yet recorded. Enter and sync both closing balances before reviewing the result or closing the shift.</p>}
       {/* Accountability Summary Card */}
-      <div className={`rounded-lg p-4 mb-6 ${variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+      {hasClosingCount && !isCancelled && <div className={`rounded-lg p-4 mb-6 ${variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
         <h3 className="text-xs font-semibold text-gray-500 uppercase mb-3">{isOpen ? 'Shift Accountability' : 'Current figures, including later corrections'}</h3>
         <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm mb-3">
           <div className="flex justify-between">
@@ -976,19 +999,19 @@ export default function ShiftDetail() {
             <span className="font-bold text-gray-800">{formatKES(expectedSales)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">Expected Shift Total</span>
-            <span className="font-bold text-gray-800">{formatKES(expectedShiftTotal)}</span>
+            <span className="text-gray-500">{balanceBased ? 'Expected closing funds' : 'Expected Shift Total'}</span>
+            <span className="font-bold text-gray-800">{formatKES(balanceBased ? expectedClosing : expectedShiftTotal)}</span>
           </div>
 
           <div className="flex justify-between">
-            <span className="text-gray-500">Cash Received</span>
+            <span className="text-gray-500">{balanceBased ? 'Cash remaining' : 'Cash Received'}</span>
             <span className="font-medium">{formatKES(totalCash)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">M-Pesa Received</span>
+            <span className="text-gray-500">{balanceBased ? 'M-Pesa balance at close' : 'M-Pesa Received'}</span>
             <span className="font-medium">{formatKES(totalMpesa)}</span>
           </div>
-          {totalCreditReceipts > 0 && (
+          {!balanceBased && totalCreditReceipts > 0 && (
             <div className="col-span-2 grid grid-cols-2 gap-x-8 rounded border border-green-100 bg-white/70 px-3 py-2 text-xs">
               <div className="flex justify-between text-green-700">
                 <span>Debt receipts in shift</span>
@@ -1023,8 +1046,8 @@ export default function ShiftDetail() {
             <span className="font-medium">{formatKES(totalExpenses)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">Wage ({shift.employee_name})</span>
-            <span className="font-medium">{formatKES(employeeWage)}</span>
+            <span className="text-gray-500">Wage paid ({shift.employee_name})</span>
+            <span className="font-medium">{formatKES(directDrawerPayment)}</span>
           </div>
           {totalPayrollPayments > 0 && (
             <div className="flex justify-between">
@@ -1035,8 +1058,8 @@ export default function ShiftDetail() {
         </div>
         <div className="border-t pt-2 flex justify-between items-center">
           <div className="flex justify-between flex-1 mr-8">
-            <span className="font-semibold text-gray-700">Shift Accounted</span>
-            <span className="font-bold text-gray-800">{formatKES(totalAccounted)}</span>
+            <span className="font-semibold text-gray-700">{balanceBased ? 'Counted closing funds' : 'Shift Accounted'}</span>
+            <span className="font-bold text-gray-800">{formatKES(balanceBased ? drawerTotal : totalAccounted)}</span>
           </div>
           <div className="text-right">
             <span className="text-xs text-gray-500 uppercase mr-2">Variance</span>
@@ -1047,7 +1070,7 @@ export default function ShiftDetail() {
             {variance > 0 && <p className="text-xs text-green-500">Surplus</p>}
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Tank Stock Movement */}
       {tankSummary.length > 0 && (
@@ -1277,7 +1300,7 @@ export default function ShiftDetail() {
       {isClosed && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold text-gray-700">Sales Collections</h2>
+          <h2 className="text-lg font-semibold text-gray-700">{balanceBased ? 'Closing balances' : 'Sales Collections'}</h2>
           {isClosed && (
             <button onClick={() => setCorrecting({ recordType: 'collection', target: collections })} className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50">
               Cash and M-Pesa mixed up
@@ -1311,25 +1334,25 @@ export default function ShiftDetail() {
         )}
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Cash Received (KES)</label>
-            <input type="number" step="0.01" value={numVal(collections.cash_amount)} disabled={!isOpen}
+            <label className="block text-sm text-gray-600 mb-1">{balanceBased ? 'Cash remaining (KES)' : 'Cash Received (KES)'}</label>
+            <input type="number" step="0.01" value={balanceBased ? collections.cash_amount : numVal(collections.cash_amount)} disabled={!isOpen}
               onChange={e => updateCollection('cash_amount', e.target.value)}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">M-Pesa Received (KES)</label>
-            <input type="number" step="0.01" value={numVal(collections.mpesa_amount)} disabled={!isOpen}
+            <label className="block text-sm text-gray-600 mb-1">{balanceBased ? 'M-Pesa balance at close (KES)' : 'M-Pesa Received (KES)'}</label>
+            <input type="number" step="0.01" value={balanceBased ? collections.mpesa_amount : numVal(collections.mpesa_amount)} disabled={!isOpen}
               onChange={e => updateCollection('mpesa_amount', e.target.value)}
               onFocus={selectOnFocus} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Cash + M-Pesa Received</label>
+            <label className="block text-sm text-gray-600 mb-1">{balanceBased ? 'Total closing funds' : 'Cash + M-Pesa Received'}</label>
             <div className="w-full border border-gray-200 rounded-lg p-2 bg-gray-50 font-bold text-lg">
-              {formatKES(drawerTotal)}
+              {hasClosingCount ? formatKES(drawerTotal) : 'Count not yet recorded'}
             </div>
-            {totalCreditReceipts > 0 && (
+            {!balanceBased && totalCreditReceipts > 0 && (
               <div className="mt-2 space-y-1 text-xs text-gray-500">
                 <div className="flex justify-between">
                   <span>Debt receipts in shift</span>
@@ -1754,7 +1777,7 @@ export default function ShiftDetail() {
       {correcting && (
         <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
-            <h2 className="text-lg font-bold">{correcting.target ? 'Correct' : 'Add missing'}: {RECORD_LABELS[correcting.recordType]}</h2>
+            <h2 className="text-lg font-bold">{correcting.recordType === 'shift_funds' ? correcting.target ? 'Reverse money movement' : 'Money added / removed' : `${correcting.target ? 'Correct' : 'Add missing'}: ${RECORD_LABELS[correcting.recordType]}`}</h2>
             <CorrectionForm
               api={correctionApi}
               approval={desktopApproval}
@@ -1777,7 +1800,7 @@ export default function ShiftDetail() {
             className="w-full border border-gray-300 rounded-lg p-2 mb-3"
             placeholder="Any notes about this shift..." />
           <button onClick={openCloseReview}
-            className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">
+            disabled={balanceBased && !shift.collection_count_recorded} className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50">
             <Lock size={16} /> Close & Lock Shift
           </button>
         </div>
@@ -1849,6 +1872,7 @@ export default function ShiftDetail() {
             )}
 
 
+            {balanceBased && <FundsCloseReview opening={openingTotal} added={fundsAdded} removed={fundsRemoved} payouts={businessPayouts} expectedClosing={expectedClosing} countedClosing={drawerTotal} formatMoney={formatKES} />}
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
               <div className="space-y-2 text-sm">
@@ -1858,7 +1882,7 @@ export default function ShiftDetail() {
                 </label>
                 <label className="flex items-start gap-2">
                   <input type="checkbox" checked={closeReview.collections} onChange={(event) => setCloseReview({ ...closeReview, collections: event.target.checked })} className="mt-0.5" />
-                  <span>Cash and M-Pesa totals match the counted cash and payment records.</span>
+                  <span>{balanceBased ? 'Cash remaining and M-Pesa balance match the counted funds and account balance.' : 'Cash and M-Pesa totals match the counted cash and payment records.'}</span>
                 </label>
                 <label className="flex items-start gap-2">
                   <input type="checkbox" checked={closeReview.entries} onChange={(event) => setCloseReview({ ...closeReview, entries: event.target.checked })} className="mt-0.5" />

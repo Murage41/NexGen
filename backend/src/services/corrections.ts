@@ -10,6 +10,8 @@ import { creditSaleRule } from './correctionRules/creditSale';
 import { debtReceiptRule } from './correctionRules/debtReceipt';
 import { drawerExpenseRule } from './correctionRules/drawerExpense';
 import { collectionRule } from './correctionRules/collection';
+import { openingFundsRule } from './correctionRules/openingFunds';
+import { shiftFundsRule } from './correctionRules/shiftFunds';
 
 // Corrections (docs/ROADMAP.md §3c, docs/CORRECTIONS.md). A closed record is
 // never changed. A mistake found later is fixed by a numbered Correction whose
@@ -41,6 +43,8 @@ export type CorrectionRequest = {
   payment_method?: 'cash' | 'mpesa' | null;
   category?: string | null;
   description?: string | null;
+  source?: string | null;
+  reference?: string | null;
   // Credit past the customer's limits, approved with the correction.
   limit_override?: boolean;
   charge_to?: 'attendant' | 'station' | null;
@@ -99,6 +103,8 @@ export type RulePlan = {
   // A customer would go past their credit limits: the admin approves it with
   // the correction (request.limit_override).
   needs_override?: boolean;
+  // Rules with mutable source history bind approval to the exact state read.
+  state_key?: string;
 };
 
 export type ShiftImpact = {
@@ -153,6 +159,8 @@ const RULES: Record<string, CorrectionRule> = {
   debt_receipt: debtReceiptRule,
   drawer_expense: drawerExpenseRule,
   collection: collectionRule,
+  opening_funds: openingFundsRule,
+  shift_funds: shiftFundsRule,
 };
 
 export const httpError = (message: string, http: number, code: string) => Object.assign(new Error(message), { http, code });
@@ -184,6 +192,8 @@ function normalize(request: any): CorrectionRequest {
     payment_method: request?.payment_method === 'cash' || request?.payment_method === 'mpesa' ? request.payment_method : null,
     category: request?.category ? String(request.category).trim() : null,
     description: request?.description ? String(request.description).trim() : null,
+    source: request?.source ? String(request.source).trim() : null,
+    reference: request?.reference ? String(request.reference).trim() : null,
     limit_override: request?.limit_override === true,
     charge_to: request?.charge_to === 'attendant' || request?.charge_to === 'station' ? request.charge_to : null,
     reason_code: String(request?.reason_code || ''),
@@ -214,7 +224,8 @@ async function shiftImpacts(conn: Conn, lines: PlanLine[]): Promise<ShiftImpact[
       .leftJoin('shift_close_reconciliations as r', 'r.shift_id', 's.id')
       .where('s.id', shiftId)
       .first('s.id', 's.shift_date', 's.employee_id', 'e.name as employee_name', 'r.variance');
-    const earlier: any = await conn('correction_lines').where({ shift_id: shiftId }).sum({ total: 'shift_effect' }).first();
+    // Amendments made before close are already captured by that close.
+    const earlier: any = await conn('correction_lines').where({ shift_id: shiftId, shift_open: false }).sum({ total: 'shift_effect' }).first();
     const asClosed = roundMoney(Number(shift?.variance || 0));
     const before = roundMoney(asClosed + Number(earlier?.total || 0));
     const shortage = shift?.employee_id ? await shiftShortage(conn, Number(shift.employee_id), shiftId) : 0;
@@ -273,6 +284,7 @@ export async function previewCorrection(conn: Conn, raw: any, postingDate: strin
     posting_date: postingDate,
     lines: rulePlan.lines.map(({ party_name, invoice_number, ...line }) => line),
     documents: rulePlan.documents,
+    state_key: rulePlan.state_key,
     shifts: shifts.map((s) => ({ shift_id: s.shift_id, change: s.change })),
   };
   return {
@@ -582,7 +594,7 @@ export async function shiftCorrections(conn: Conn, shiftId: number, asClosedVari
     .orderBy('l.seq')
     .select('l.*', 'c.number', 'c.kind', 'c.status', 'c.posting_date', 'c.reason_note', 'c.error_kind', 'a.name as party_name');
   for (const line of lines as any[]) delete line.fee_delta;
-  const change = roundMoney(lines.reduce((sum: number, l: any) => sum + Number(l.shift_effect || 0), 0));
+  const change = roundMoney(lines.reduce((sum: number, l: any) => sum + (l.shift_open ? 0 : Number(l.shift_effect || 0)), 0));
   return {
     lines,
     change,

@@ -1,3 +1,4 @@
+import { ShiftFunds, validOpeningAmount } from '../../../shared/ui/ShiftFunds';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, reverseShiftCreditReceipt, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories, createOperationKey, attendantApproval } from '../services/api';
@@ -42,8 +43,9 @@ export default function ShiftRecord() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const [shiftStatus, setShiftStatus] = useState<string>('open');
+  const [shiftFunds, setShiftFunds] = useState<any>({ reconciliation_basis: 'legacy' });
   const [readings, setReadings] = useState<any[]>([]);
-  const [collections, setCollections] = useState({ cash_amount: 0, mpesa_amount: 0 });
+  const [collections, setCollections] = useState<{ cash_amount: number | string; mpesa_amount: number | string }>({ cash_amount: 0, mpesa_amount: 0 });
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
   const [creditReceipts, setCreditReceipts] = useState<any[]>([]);
   const [invoiceConsumption, setInvoiceConsumption] = useState<any[]>([]);
@@ -166,6 +168,7 @@ export default function ShiftRecord() {
       const res = await getShift(parseInt(id!));
       const d = res.data.data;
       setShiftStatus(d.status || 'open');
+      setShiftFunds(d);
       if (options.resolveConflict === 'readings' || readingConflictRevision === null) {
         serverReadingRevision.current = Number(d.readings_revision || 0);
       }
@@ -207,7 +210,7 @@ export default function ShiftRecord() {
       }
       const serverCollections = d.collections
         ? { cash_amount: d.collections.cash_amount, mpesa_amount: d.collections.mpesa_amount }
-        : { cash_amount: 0, mpesa_amount: 0 };
+        : d.reconciliation_basis === 'balances_v1' ? { cash_amount: '', mpesa_amount: '' } : { cash_amount: 0, mpesa_amount: 0 };
       setCollections(draft?.collections || serverCollections);
       if (collectionConflictRevision !== null && options.resolveConflict !== 'collections') {
         setCollectionsDirty(true);
@@ -327,16 +330,22 @@ export default function ShiftRecord() {
   }
 
   async function saveCollections() {
+    if (shiftFunds?.reconciliation_basis === 'balances_v1' && (!validOpeningAmount(String(collections.cash_amount)) || !validOpeningAmount(String(collections.mpesa_amount)))) {
+      setCollectionError('Enter both closing balances. Enter 0 for a counted zero balance.');
+      return;
+    }
     const revision = collectionRevision.current;
     setCollectionSync('saving');
     setCollectionError('');
     try {
       const response = await updateCollections(parseInt(id!), {
+        reconciliation_basis: shiftFunds.reconciliation_basis || 'legacy',
         cash_amount: parseFloat(String(collections.cash_amount)) || 0,
         mpesa_amount: parseFloat(String(collections.mpesa_amount)) || 0,
         expected_revision: serverCollectionRevision.current,
       });
       serverCollectionRevision.current = Number(response.data.revision ?? serverCollectionRevision.current + 1);
+      setShiftFunds((current: any) => ({ ...current, collection_count_recorded: true }));
       setCollectionConflictRevision(null);
       if (revision === collectionRevision.current) {
         clearShiftDraftSection(id!, 'collections');
@@ -613,7 +622,7 @@ export default function ShiftRecord() {
   }
 
   function updateCollection(field: 'cash_amount' | 'mpesa_amount', value: string) {
-    const next = { ...collections, [field]: parseFloat(value) || 0 };
+    const next = { ...collections, [field]: shiftFunds?.reconciliation_basis === 'balances_v1' ? value : parseFloat(value) || 0 };
     setCollections(next);
     collectionRevision.current += 1;
     writeShiftDraft(id!, { collections: next });
@@ -651,13 +660,15 @@ export default function ShiftRecord() {
 
   const tabs = [
     { key: 'readings', label: 'Readings' },
-    { key: 'collections', label: 'Sales Money' },
+    { key: 'collections', label: shiftFunds.reconciliation_basis === 'balances_v1' ? 'Closing funds' : 'Sales Money' },
     { key: 'credits', label: 'Credits' },
     { key: 'expenses', label: 'Money Out' },
   ] as const;
 
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
+  const balanceBased = shiftFunds.reconciliation_basis === 'balances_v1';
+  const hasClosingCount = !balanceBased || (validOpeningAmount(String(collections.cash_amount)) && validOpeningAmount(String(collections.mpesa_amount)));
   const creditReceiptsCash = creditReceipts
     .filter((r: any) => (r.payment_method || 'cash') !== 'mpesa')
     .reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
@@ -797,29 +808,30 @@ export default function ShiftRecord() {
       {/* Collections Tab (Cash & M-Pesa) */}
       {tab === 'collections' && (
         <div className="space-y-3">
+          <ShiftFunds shift={shiftFunds} formatMoney={(amount) => `KES ${amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
           <div className="bg-white rounded-xl p-4 shadow-sm space-y-3">
             <div>
-              <label className="text-sm text-gray-600 mb-1 block">Cash Received (KES)</label>
-              <input type="number" step="0.01" value={numVal(collections.cash_amount)}
+              <label className="text-sm text-gray-600 mb-1 block">{balanceBased ? 'Cash remaining (KES)' : 'Cash Received (KES)'}</label>
+              <input type="number" step="0.01" value={balanceBased ? collections.cash_amount : numVal(collections.cash_amount)}
                 onChange={e => updateCollection('cash_amount', e.target.value)}
                 onFocus={selectOnFocus} placeholder="0.00"
                 className="w-full border border-gray-300 rounded-lg p-3 text-base" />
             </div>
             <div>
-              <label className="text-sm text-gray-600 mb-1 block">M-Pesa Received (KES)</label>
-              <input type="number" step="0.01" value={numVal(collections.mpesa_amount)}
+              <label className="text-sm text-gray-600 mb-1 block">{balanceBased ? 'M-Pesa balance at close (KES)' : 'M-Pesa Received (KES)'}</label>
+              <input type="number" step="0.01" value={balanceBased ? collections.mpesa_amount : numVal(collections.mpesa_amount)}
                 onChange={e => updateCollection('mpesa_amount', e.target.value)}
                 onFocus={selectOnFocus} placeholder="0.00"
                 className="w-full border border-gray-300 rounded-lg p-3 text-base" />
             </div>
             <div className="pt-2 border-t">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Cash + M-Pesa Received</span>
+                <span className="text-gray-500">{balanceBased ? 'Total closing funds' : 'Cash + M-Pesa Received'}</span>
                 <span className="font-bold text-lg">
-                  KES {drawerTotal.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                  {hasClosingCount ? `KES ${drawerTotal.toLocaleString('en-KE', { minimumFractionDigits: 2 })}` : 'Count not yet recorded'}
                 </span>
               </div>
-              {totalCreditReceipts > 0 && (
+              {!balanceBased && totalCreditReceipts > 0 && (
                 <div className="mt-2 rounded-lg bg-green-50 p-2 space-y-1 text-xs">
                   <div className="flex justify-between text-green-700">
                     <span>Debt receipts in shift</span>
@@ -911,7 +923,7 @@ export default function ShiftRecord() {
               <p className="text-sm font-medium text-gray-700 flex items-center gap-1">
                 <Banknote size={15} /> Debt Payments Received
               </p>
-              {totalCreditReceipts > 0 && (
+              {!balanceBased && totalCreditReceipts > 0 && (
                 <span className="text-sm font-bold text-green-700">
                   KES {totalCreditReceipts.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
                 </span>

@@ -1,6 +1,6 @@
 import type { Knex } from 'knex';
-import { computeShiftAccountability, roundMoney, sumMoney } from './shiftAccountability';
-import { snapshotFigures } from './shiftSnapshot';
+import { computeShiftAccountability, roundMoney, shiftReconciliationBasis, sumMoney } from './shiftAccountability';
+import { effectiveOpeningFromLines, snapshotFigures } from './shiftSnapshot';
 
 type Conn = Knex | Knex.Transaction;
 
@@ -9,11 +9,14 @@ export type ShiftFinancialView = {
   original: ReturnType<typeof snapshotFigures> | null;
   original_snapshot: any | null;
   collections: any | null;
+  collection_count_recorded: boolean;
   shiftCredits: any[];
   creditReceipts: any[];
   invoiceConsumption: any[];
   expenses: any[];
   payrollPayments: any[];
+  fundsMovements: any[];
+  fundsMovementHistory: any[];
   reconciliation_wage: number;
   actual_wage_paid: number;
   wage_deduction: number;
@@ -25,6 +28,46 @@ export type ShiftFinancialView = {
 const active = (row: any) => !row.deleted_at;
 const activeFuel = (row: any) => active(row) && (!row.entry_status || row.entry_status === 'active');
 const posted = (row: any) => active(row) && row.status === 'posted';
+
+// A balance count is custody evidence, not a channel-by-channel receipt list.
+// Aggregate those holdings under explicit names instead of calling them sales.
+export function summarizeShiftFinancials(views: ShiftFinancialView[]) {
+  const balances = views.filter(view => view.current.reconciliation_basis === 'balances_v1');
+  const countedBalances = balances.filter(view => view.collection_count_recorded);
+  const countedViews = views.filter(view => view.current.reconciliation_basis === 'legacy' || view.collection_count_recorded);
+  const hasBalances = balances.length > 0;
+  const amount = (key: keyof ShiftFinancialView['current']) => sumMoney(views, view => view.current[key]);
+  const countedAmount = (key: keyof ShiftFinancialView['current']) => sumMoney(countedViews, view => view.current[key]);
+  return {
+    collection_basis: hasBalances ? balances.length === views.length ? 'balances_v1' : 'mixed' : 'legacy',
+    has_balance_shifts: hasBalances,
+    balance_shift_count: balances.length,
+    legacy_shift_count: views.length - balances.length,
+    uncounted_balance_shifts: balances.length - countedBalances.length,
+    total_cash: hasBalances ? null : amount('total_cash'),
+    total_mpesa: hasBalances ? null : amount('total_mpesa'),
+    closing_cash: countedAmount('total_cash'),
+    closing_mpesa: countedAmount('total_mpesa'),
+    closing_total: countedAmount('closing_total'),
+    opening_cash_amount: hasBalances ? sumMoney(balances, view => view.current.opening_cash_amount) : null,
+    opening_mpesa_amount: hasBalances ? sumMoney(balances, view => view.current.opening_mpesa_amount) : null,
+    opening_total: hasBalances ? sumMoney(balances, view => view.current.opening_total) : null,
+    funds_added_total: amount('funds_added_total'),
+    funds_removed_total: amount('funds_removed_total'),
+    drawer_business_payouts: hasBalances ? sumMoney(views, view => view.current.reconciliation_basis === 'balances_v1'
+      ? view.current.drawer_business_payouts
+      : roundMoney(view.current.total_expenses + view.actual_wage_paid + view.drawer_payroll_paid)) : amount('drawer_business_payouts'),
+    expected_closing: amount('expected_closing'),
+    inferred_collections: hasBalances ? sumMoney(countedViews, view => view.current.reconciliation_basis === 'balances_v1'
+      ? view.current.inferred_collections
+      : roundMoney(view.current.drawer_total + view.current.total_expenses + view.actual_wage_paid + view.drawer_payroll_paid)) : countedAmount('inferred_collections'),
+    balance_inferred_collections: sumMoney(countedBalances, view => view.current.inferred_collections),
+    expected_receipts: amount('expected_receipts'),
+    sales_cash: hasBalances ? null : amount('sales_cash'),
+    sales_mpesa: hasBalances ? null : amount('sales_mpesa'),
+    sales_collections: countedAmount('sales_collections'),
+  };
+}
 
 function byShift(rows: any[]) {
   const grouped = new Map<number, any[]>();
@@ -58,7 +101,7 @@ export async function readShiftFinancials(
   const tables = [
     'shift_close_reconciliations', 'shift_collections', 'shift_credits',
     'credit_payments', 'invoice_consumption', 'shift_expenses',
-    'payroll_payments', 'wage_deductions', 'pump_readings', 'correction_lines',
+    'payroll_payments', 'wage_deductions', 'pump_readings', 'correction_lines', 'shift_funds_movements',
   ];
   const availability = new Map(await Promise.all(tables.map(async table => [table, await conn.schema.hasTable(table)] as const)));
   const hasEmployees = await conn.schema.hasTable('employees');
@@ -93,6 +136,9 @@ export async function readShiftFinancials(
       const deduction = deductions[deductions.length - 1];
       const wageDeduction = roundMoney(Number(deduction?.deduction_amount || 0));
       const correctionLines = get('correction_lines', id);
+      const fundsMovements = get('shift_funds_movements', id).filter(row => active(row) && !row.reversed_by_record_correction_id);
+      const basis = shiftReconciliationBasis(shift);
+      const opening = effectiveOpeningFromLines(shift, correctionLines);
       let cash = Number(original?.total_cash ?? stored?.cash_amount ?? 0);
       let mpesa = Number(original?.total_mpesa ?? stored?.mpesa_amount ?? 0);
       for (const line of correctionLines) {
@@ -129,10 +175,13 @@ export async function readShiftFinancials(
         readings, collections,
         shiftCredits: [{ amount: creditAmount }], creditReceipts, invoiceConsumption,
         expenses, employee_wage: reconciliationWage, payrollPayments,
+        reconciliation_basis: basis, ...opening, actual_wage_paid: actualWage, fundsMovements,
       });
       result.set(id, {
         current, original, original_snapshot: snapshot, collections,
-        shiftCredits, creditReceipts, invoiceConsumption, expenses, payrollPayments,
+        collection_count_recorded: Boolean(stored) && (basis === 'legacy' || Number(shift.collections_revision || 0) > 0),
+        shiftCredits, creditReceipts, invoiceConsumption, expenses, payrollPayments, fundsMovements,
+        fundsMovementHistory: get('shift_funds_movements', id),
         reconciliation_wage: roundMoney(reconciliationWage),
         actual_wage_paid: roundMoney(actualWage), wage_deduction: wageDeduction,
         drawer_payroll_paid: sumMoney(payrollPayments.filter(row => ['cash', 'mpesa'].includes(row.payment_method)), row => row.amount),

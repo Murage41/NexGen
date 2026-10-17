@@ -1,3 +1,4 @@
+import { FundsCollectionSummary } from '../../../../shared/ui/ShiftFunds';
 import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
 import { useState, Fragment } from 'react';
 import {
@@ -290,6 +291,7 @@ export default function Reports() {
                     <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Collections</h2>
                   </div>
                   <div className="py-2">
+                    {dailyData.has_balance_shifts ? <div className="px-4"><FundsCollectionSummary data={dailyData} formatMoney={kes} /></div> : <>
                     <PnLRow label="Cash Received" value={dailyData.total_cash} />
                     <PnLRow label="M-Pesa Received" value={dailyData.total_mpesa} />
                     {dailyData.total_credit_receipts > 0 && (
@@ -300,6 +302,7 @@ export default function Reports() {
                         <PnLRow label="Received Total" value={dailyData.expected_total_received} bold />
                       </>
                     )}
+                    </>}
                     <PnLRow label="Credits (on account)" value={dailyData.total_credits} color="text-amber-600" />
                     <PnLRow label="Pump Sales Accounted"
                       value={dailyData.sales_collections + dailyData.total_credits + dailyData.total_invoice_retail}
@@ -355,7 +358,7 @@ export default function Reports() {
                             )}
                           </td>
                           <td className={`p-3 text-right font-medium ${s.variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {s.variance >= 0
+                            {s.variance == null ? <span className="text-gray-500">Count pending</span> : s.variance >= 0
                               ? <span className="flex items-center justify-end gap-1"><TrendingUp size={12} />{kes(s.variance)}</span>
                               : <span className="flex items-center justify-end gap-1"><TrendingDown size={12} />{kes(s.variance)}</span>
                             }
@@ -711,12 +714,14 @@ export default function Reports() {
                     <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Collections</h2>
                   </div>
                   <div className="py-2">
+                    {monthlyData.has_balance_shifts ? <div className="px-4"><FundsCollectionSummary data={monthlyData} formatMoney={kes} /></div> : <>
                     <PnLRow label="Cash" value={monthlyData.total_cash} />
                     <PnLRow label="M-Pesa" value={monthlyData.total_mpesa} />
+                    </>}
                     <PnLRow label="Money Credits (on account)" value={monthlyData.total_credits} color="text-amber-600" />
                     <PnLRow label="Invoice Consumption at Retail" value={monthlyData.total_invoice_retail} color="text-amber-600" />
                     <PnLRow label="Total"
-                      value={(monthlyData.total_cash || 0) + (monthlyData.total_mpesa || 0) + (monthlyData.total_credits || 0) + (monthlyData.total_invoice_retail || 0)}
+                      value={(monthlyData.has_balance_shifts ? Number(monthlyData.sales_collections || 0) : (monthlyData.total_cash || 0) + (monthlyData.total_mpesa || 0)) + (monthlyData.total_credits || 0) + (monthlyData.total_invoice_retail || 0)}
                       bold border />
                   </div>
                 </div>
@@ -1068,13 +1073,16 @@ export default function Reports() {
                     <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wide">Cash Inflows</h2>
                   </div>
                   <div className="py-2">
-                    <PnLRow label="Shift Cash Received" value={cfData.inflows.shift_cash_received ?? cfData.inflows.cash_sales} color="text-green-600" />
-                    <PnLRow label="Shift M-Pesa Received" value={cfData.inflows.shift_mpesa_received ?? cfData.inflows.mpesa_sales} color="text-green-600" />
+                    <PnLRow label={cfData.has_balance_shifts ? 'Legacy shifts: cash received' : 'Shift Cash Received'} value={cfData.inflows.shift_cash_received ?? cfData.inflows.cash_sales} color="text-green-600" />
+                    <PnLRow label={cfData.has_balance_shifts ? 'Legacy shifts: M-Pesa received' : 'Shift M-Pesa Received'} value={cfData.inflows.shift_mpesa_received ?? cfData.inflows.mpesa_sales} color="text-green-600" />
+                    {cfData.has_balance_shifts && <PnLRow label="Balance shifts: collections inferred from counted funds" value={cfData.inflows.balance_shift_inferred_collections} color="text-green-600" />}
+                    {Number(cfData.inflows.owner_funding || 0) > 0 && <PnLRow label="Owner funding" value={cfData.inflows.owner_funding} color="text-green-600" />}
                     <PnLRow label="Direct Money-Credit Payments" value={cfData.inflows.credit_payments_received} color="text-green-600" />
                     <PnLRow label="Invoice Payments (net)" value={cfData.inflows.invoice_payments_received} color="text-green-600" />
                     <PnLRow label="Direct Employee Debt Repayments" value={cfData.inflows.employee_debt_repayments || 0} color="text-green-600" />
                     <PnLRow label="Shift Payouts Added Back" value={cfData.inflows.drawer_payouts_already_reflected || 0} color="text-green-600" />
-                    <p className="text-xs text-gray-500 py-2">Shift collections are cash and M-Pesa remaining after payouts. Those payouts are added back here so they are deducted only once under outflows.</p>
+                    <p className="text-xs text-gray-500 py-2">Balance shifts reconstruct collections from opening funds, closing counts and money movements, including payouts once. Legacy shift payouts are added back here before outflows. Station bank/safe transfers do not add inflows or outflows.</p>
+                    {Number(cfData.uncounted_balance_shifts || 0) > 0 && <p className="text-xs text-amber-700 px-4 py-2">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
                     <PnLRow label="Total Inflows" value={cfData.inflows.total} bold border color="text-green-700" />
                   </div>
                 </div>
@@ -1095,6 +1103,7 @@ export default function Reports() {
                     {Number(cfData.outflows.customer_refunds || 0) > 0 && (
                       <PnLRow label="Refunds to Customers" value={cfData.outflows.customer_refunds} color="text-red-600" />
                     )}
+                    {Number(cfData.outflows.owner_drawings || 0) > 0 && <PnLRow label="Owner drawings" value={cfData.outflows.owner_drawings} color="text-red-600" />}
                     <PnLRow label="Total Outflows" value={cfData.outflows.total} bold border color="text-red-700" />
                   </div>
                 </div>

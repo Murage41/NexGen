@@ -25,7 +25,7 @@ for (const [file, totalName] of [
   const wage = expression(absolute, 'directDrawerPayment');
   const total = expression(absolute, totalName);
   const saved = {isOpen: false, enteredWagePaid: 0, shift: {wage_paid: 800, employee_wage: 800}};
-  const amounts = {drawerTotal: 83650, totalCredits: 5040, totalInvoiceConsumption: 39413.14, totalExpenses: 0, totalPayrollPayments: 0, enteredWagePaid: 0, isOpen: true, shift: saved.shift};
+  const amounts = {drawerTotal: 83650, totalCredits: 5040, totalInvoiceConsumption: 39413.14, totalExpenses: 0, totalPayrollPayments: 0, fundsRemoved: 0, enteredWagePaid: 0, isOpen: true, shift: saved.shift};
   assert.equal(Math.round((total({...amounts, directDrawerPayment: wage(saved)}) - 129260) * 100) / 100, -356.86);
   assert.equal(wage({...saved, shift: {wage_paid: 0, employee_wage: 800}}), 0, 'Explicit zero paid must remain zero.');
   assert.equal(wage({...saved, shift: {actual_wage_paid: 600, wage_paid: 800, employee_wage: 800}}), 600,
@@ -45,5 +45,36 @@ for (const [file, totalName] of [
     assert.equal(displayed({...amounts, employeeWage: 800, shift: { total_accounted: 128000 }}), 128000,
       'Closed phone display uses the selected server financial view.');
   }
+
+  // Execute the screen's open-shift preview, using independent known amounts
+  // from SHIFT-FLOATS.md. A float or bank movement changes custody, never sales.
+  const expectedTotal = expression(absolute, 'expectedShiftTotal');
+  const payouts = expression(absolute, 'businessPayouts');
+  const receipts = expression(absolute, 'expectedReceipts');
+  const expectedClosing = expression(absolute, 'expectedClosing');
+  const inferred = expression(absolute, 'inferredCollections');
+  const examples = [
+    { name: 'balanced closing count', sales: 10000, debt: 500, credits: 1000, invoice: 2000, expense: 400, wage: 600, cash: 6000, mpesa: 5500, opening: 5000, added: 0, removed: 0, expected: 11500, variance: 0, collections: 7500 },
+    { name: 'counted shortage', sales: 10000, debt: 500, credits: 1000, invoice: 2000, expense: 400, wage: 600, cash: 5700, mpesa: 5500, opening: 5000, added: 0, removed: 0, expected: 11500, variance: -300, collections: 7200 },
+    { name: 'M-Pesa removed to bank', sales: 10000, debt: 500, credits: 1000, invoice: 2000, expense: 400, wage: 600, cash: 6000, mpesa: 3000, opening: 5000, added: 0, removed: 2500, expected: 9000, variance: 0, collections: 7500 },
+    { name: 'cash float topped up', sales: 10000, debt: 500, credits: 1000, invoice: 2000, expense: 400, wage: 600, cash: 7000, mpesa: 5500, opening: 5000, added: 1000, removed: 0, expected: 12500, variance: 0, collections: 7500 },
+    { name: 'opening money spent without sales', sales: 0, debt: 0, credits: 0, invoice: 0, expense: 1000, wage: 0, cash: 2000, mpesa: 2000, opening: 5000, added: 0, removed: 0, expected: 4000, variance: 0, collections: 0 },
+  ];
+  for (const example of examples) {
+    const values: Record<string, any> = {
+      isOpen: true, shift: {}, expected: example.sales, expectedSales: example.sales,
+      openingTotal: example.opening, fundsAdded: example.added, fundsRemoved: example.removed,
+      totalCash: example.cash, totalMpesa: example.mpesa, drawerTotal: example.cash + example.mpesa,
+      totalCreditReceipts: example.debt, totalCredits: example.credits, totalInvoiceConsumption: example.invoice,
+      totalExpenses: example.expense, directDrawerPayment: example.wage, totalPayrollPayments: 0,
+    };
+    values.businessPayouts = payouts(values);
+    values.expectedReceipts = receipts(values);
+    const target = expectedClosing(values);
+    assert.equal(target, example.expected, `${file}: ${example.name} expected closing`);
+    assert.equal(inferred(values), example.collections, `${file}: ${example.name} inferred collections`);
+    assert.equal(Math.round((total(values) - expectedTotal(values)) * 100) / 100, example.variance,
+      `${file}: ${example.name} combined variance`);
+  }
 }
-console.log('PASS: both screens use selected closed financial totals and retain saved wages, explicit zero and editable open-shift cash.');
+console.log('PASS: both screens preserve selected closed figures and actual wages; balance previews handle opening funds, shortage, top-up, removal and spending without sales.');

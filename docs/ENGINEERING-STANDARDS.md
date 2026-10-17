@@ -125,6 +125,17 @@ cache instead of recomputing; computing at event time and never updating.
   sales/wage basis to its saved close; actual wage cash is a separate figure.
   Fixed meter revenue and posting-dated invoice revenue events keep their own
   meanings. Missing historical inputs are not invented or backfilled on GET.
+- **Opening funds use a versioned basis.** Only new shifts use `balances_v1`;
+  older and already-open shifts stay legacy. Original opening declarations
+  never change; effective openings include their correction lines. Freeze
+  effective openings and movements at close and do not apply pre-close changes
+  twice. Use `collections_revision > 0` plus a saved collections row as evidence
+  of an explicit balance count: credit entries can create a cache with no count.
+  Require the balance contract and current custody-history revision at close.
+  Opening money and internal transfers are not receipts, revenue or expenses.
+  Inferred collections are combined evidence; channel receipts are unavailable
+  from custody counts alone. Exclude cancelled/uncounted money from inferred
+  receipt totals and keep legacy reconciliation distinct from actual payouts.
 - **A correction rule** (`services/correctionRules/`) never writes a closed
   record's facts: it reverses (soft delete or status, plus a
   `reversed_by_record_correction_id` link) and adds (a new row with a

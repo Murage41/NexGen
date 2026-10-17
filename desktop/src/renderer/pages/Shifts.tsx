@@ -1,3 +1,4 @@
+import { OpeningFundsFields, validOpeningAmount } from '../../../../shared/ui/ShiftFunds';
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -56,6 +57,11 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
+  const [openingCash, setOpeningCash] = useState('');
+  const [openingMpesa, setOpeningMpesa] = useState('');
+  const [openingNote, setOpeningNote] = useState('');
+  const [openingBusy, setOpeningBusy] = useState(false);
+  const openingComplete = validOpeningAmount(openingCash) && validOpeningAmount(openingMpesa);
   const [searchParams, setSearchParams] = useSearchParams();
   const fromDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('from') || '') ? searchParams.get('from')! : '';
   const toDate = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('to') || '') ? searchParams.get('to')! : '';
@@ -186,18 +192,22 @@ export default function Shifts() {
   }
 
   async function handleOpenShift() {
-    if (!selectedEmployee || !selectedPlan) return;
+    if (!selectedEmployee || !selectedPlan || !openingComplete || openingBusy) return;
+    setOpeningBusy(true);
     try {
       const response = await openShift({
         employee_id: parseInt(selectedEmployee, 10),
         compensation_plan_id: Number(selectedPlan.id),
+        opening_cash_amount: Number(openingCash),
+        opening_mpesa_amount: Number(openingMpesa),
+        opening_note: openingNote.trim() || undefined,
       });
       setShowNew(false);
       setSelectedEmployee('');
       navigate(shiftPath(Number(response.data.data.id)));
     } catch (openError: any) {
       setNewShiftError(openError.response?.data?.error || 'Failed to open shift');
-    }
+    } finally { setOpeningBusy(false); }
   }
 
   async function handleExport() {
@@ -285,7 +295,7 @@ export default function Shifts() {
             <Download size={17} /> {exporting ? 'Exporting...' : 'Export CSV'}
           </button>
           <button
-            onClick={() => { setNewShiftError(''); setShowNew(true); }}
+            onClick={() => { setNewShiftError(''); setSelectedEmployee(''); setOpeningCash(''); setOpeningMpesa(''); setOpeningNote(''); setShowNew(true); }}
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
           >
             <Plus size={18} /> Open New Shift
@@ -295,7 +305,7 @@ export default function Shifts() {
 
       {showNew && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold mb-4">Open New Shift</h2>
             <label className="block text-sm font-medium text-gray-700 mb-1">Select Employee</label>
             <select
@@ -333,6 +343,7 @@ export default function Shifts() {
             {employees.length === 0 && (
               <p className="text-sm text-red-500 mb-4">No employees found. Add employees first.</p>
             )}
+            <OpeningFundsFields cash={openingCash} mpesa={openingMpesa} note={openingNote} onCash={setOpeningCash} onMpesa={setOpeningMpesa} onNote={setOpeningNote} />
             {newShiftError && <p className="text-sm text-red-600 mb-4">{newShiftError}</p>}
             <div className="flex gap-2 justify-end">
               <button
@@ -343,10 +354,10 @@ export default function Shifts() {
               </button>
               <button
                 onClick={handleOpenShift}
-                disabled={!selectedEmployee || !selectedPlan}
+                disabled={!selectedEmployee || !selectedPlan || !openingComplete || openingBusy}
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
               >
-                Open Shift
+                {openingBusy ? 'Opening…' : 'Open Shift'}
               </button>
             </div>
           </div>

@@ -1,3 +1,4 @@
+import { ShiftFunds, FundsCloseReview } from '../../../shared/ui/ShiftFunds';
 import { ShiftCorrectionList, describeShiftBalance } from '../../../shared/ui/ShiftCorrection';
 import { BalanceMoveList } from '../../../shared/ui/BalanceMove';
 import { CorrectionForm, OriginalCloseFigures, RECORD_LABELS, ShiftCorrectionsBanner, type RecordType } from '../../../shared/ui/Corrections';
@@ -109,6 +110,8 @@ export default function ShiftDetail() {
       const res = await closeShift(parseInt(id!), {
         notes: closeNotes || undefined,
         wage_paid: parseFloat(wagePaid) || 0,
+        reconciliation_basis: shift.reconciliation_basis || 'legacy',
+        expected_funds_revision: Number(shift.funds_revision || 0),
         reconciliation: {
           readings_reviewed: true,
           collections_reviewed: true,
@@ -215,6 +218,11 @@ export default function ShiftDetail() {
   const corrections: any[] = shift.corrections || [];
   const isCancelled = shift.status === 'cancelled';
   const expected = shift.expected_sales || 0;
+  const balanceBased = shift.reconciliation_basis === 'balances_v1';
+  const hasClosingCount = !balanceBased || Boolean(shift.collection_count_recorded);
+  const openingTotal = balanceBased ? Number(shift.opening_total ?? (Number(shift.opening_funds?.cash_amount || 0) + Number(shift.opening_funds?.mpesa_amount || 0))) : 0;
+  const fundsAdded = balanceBased ? Number(shift.funds_added_total || 0) : 0;
+  const fundsRemoved = balanceBased ? Number(shift.funds_removed_total || 0) : 0;
   const totalCash = shift.total_cash || 0;
   const totalMpesa = shift.total_mpesa || 0;
   const totalCredits = shift.total_credits || 0;
@@ -247,7 +255,7 @@ export default function ShiftDetail() {
   const drawerCash = Number(shift.drawer_cash ?? totalCash);
   const drawerMpesa = Number(shift.drawer_mpesa ?? totalMpesa);
   const drawerTotal = Number(shift.drawer_total ?? (drawerCash + drawerMpesa));
-  const expectedShiftTotal = Number(shift.expected_shift_total ?? (expected + totalCreditReceipts));
+  const expectedShiftTotal = Number(shift.expected_shift_total ?? (expected + totalCreditReceipts + openingTotal + fundsAdded));
   const totalAccounted = Number(
     shift.total_accounted
       ?? (drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage + totalPayrollPayments),
@@ -258,7 +266,12 @@ export default function ShiftDetail() {
     + totalInvoiceConsumption
     + totalExpenses
     + directDrawerPayment
-    + totalPayrollPayments;
+    + totalPayrollPayments
+    + fundsRemoved;
+  const businessPayouts = totalExpenses + directDrawerPayment + totalPayrollPayments;
+  const inferredCollections = drawerTotal + businessPayouts + fundsRemoved - openingTotal - fundsAdded;
+  const expectedReceipts = expected - totalCredits - totalInvoiceConsumption + totalCreditReceipts;
+  const expectedClosing = openingTotal + expectedReceipts + fundsAdded - businessPayouts - fundsRemoved;
   const closeVariance = Math.round((closeTotalAccounted - expectedShiftTotal) * 100) / 100;
   const closeReviewComplete = closeReview.readings
     && closeReview.collections
@@ -344,7 +357,7 @@ export default function ShiftDetail() {
         </section>
       )}
 
-      {!isOpen && shift.close_reconciliation && (
+      {!isOpen && !isCancelled && shift.close_reconciliation && (
         <div className="bg-white border border-gray-200 p-4 mb-3">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -425,8 +438,11 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      <ShiftFunds shift={shift} formatMoney={fmt} canManage={isAdmin && !isCancelled} onCorrect={(recordType, target) => setCorrecting({ recordType, target })}
+        reconciliation={balanceBased && !blind && !isCancelled ? { expectedClosing, inferredCollections: hasClosingCount ? inferredCollections : undefined, expectedReceipts, payouts: businessPayouts } : undefined} />
+
       {/* Accountability Card */}
-      <div className={`rounded-xl p-4 mb-4 ${blind ? 'bg-white shadow-sm' : variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+      {!isCancelled && <div className={`rounded-xl p-4 mb-4 ${blind || !hasClosingCount ? 'bg-white shadow-sm' : variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
         <p className="text-[10px] text-gray-500 uppercase font-semibold mb-2">{blind ? 'Recorded so far' : isOpen ? 'Accountability' : 'Current figures, including later corrections'}</p>
 
         {!blind && (
@@ -436,22 +452,22 @@ export default function ShiftDetail() {
               <span className="font-bold">{fmt(expected)}</span>
             </div>
             <div className="flex justify-between text-sm mb-1">
-              <span className="text-gray-500">Expected Shift Total</span>
-              <span className="font-bold">{fmt(expectedShiftTotal)}</span>
+              <span className="text-gray-500">{balanceBased ? 'Expected closing funds' : 'Expected Shift Total'}</span>
+              <span className="font-bold">{fmt(balanceBased ? expectedClosing : expectedShiftTotal)}</span>
             </div>
           </>
         )}
 
         <div className={`${blind ? '' : 'border-t border-gray-200 pt-1 mt-1 '}space-y-0.5 text-sm`}>
           <div className="flex justify-between">
-            <span className="text-gray-400">Cash Received</span>
-            <span>{fmt(totalCash)}</span>
+            <span className="text-gray-400">{balanceBased ? 'Cash remaining' : 'Cash Received'}</span>
+            <span>{hasClosingCount ? fmt(totalCash) : '—'}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-400">M-Pesa Received</span>
-            <span>{fmt(totalMpesa)}</span>
+            <span className="text-gray-400">{balanceBased ? 'M-Pesa balance at close' : 'M-Pesa Received'}</span>
+            <span>{hasClosingCount ? fmt(totalMpesa) : '—'}</span>
           </div>
-          {totalCreditReceipts > 0 && (
+          {!balanceBased && totalCreditReceipts > 0 && (
             <div className="rounded-lg border border-green-100 bg-white/70 p-2 text-xs space-y-1">
               <div className="flex justify-between text-green-700">
                 <span>Debt receipts in shift</span>
@@ -480,8 +496,8 @@ export default function ShiftDetail() {
             <span>{fmt(totalExpenses)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-400">Wage</span>
-            <span>{fmt(employeeWage)}</span>
+            <span className="text-gray-400">Wage paid from shift</span>
+            <span>{fmt(directDrawerPayment)}</span>
           </div>
           {totalPayrollPayments > 0 && (
             <div className="flex justify-between">
@@ -491,15 +507,15 @@ export default function ShiftDetail() {
           )}
         </div>
 
-        {blind ? (
+        {blind || !hasClosingCount ? (
           <p className="border-t border-gray-200 pt-2 mt-2 text-xs text-gray-500">
-            The shift's result is worked out when an administrator closes it.
+            {!hasClosingCount ? 'Closing count not yet recorded. Enter and sync both closing balances in Record Shift before closing.' : 'The shift’s result is worked out when an administrator closes it.'}
           </p>
         ) : (
           <>
             <div className="border-t border-gray-200 pt-1 mt-1 flex justify-between text-sm">
-              <span className="font-semibold text-gray-700">Shift Accounted</span>
-              <span className="font-bold">{fmt(totalAccounted)}</span>
+              <span className="font-semibold text-gray-700">{balanceBased ? 'Counted closing funds' : 'Shift Accounted'}</span>
+              <span className="font-bold">{fmt(balanceBased ? drawerTotal : totalAccounted)}</span>
             </div>
 
             <div className="border-t border-gray-300 pt-2 mt-2 flex justify-between items-center">
@@ -516,7 +532,7 @@ export default function ShiftDetail() {
             )}
           </>
         )}
-      </div>
+      </div>}
 
       {/* Tank Stock Movement */}
       {tankSummary.length > 0 && (
@@ -607,19 +623,19 @@ export default function ShiftDetail() {
       </div>
 
       {/* Collections */}
-      {!isOpen && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
+      {!isOpen && !isCancelled && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
         <div className="flex items-center justify-between mb-2">
-          <p className="font-semibold text-gray-700">Sales Collections</p>
+          <p className="font-semibold text-gray-700">{balanceBased ? 'Closing balances' : 'Sales Collections'}</p>
           {canCorrect && shift.collections && (
             <button onClick={() => setCorrecting({ recordType: 'collection', target: shift.collections })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">Cash/M-Pesa mixed up</button>
           )}
         </div>
         {shift.collections ? (
           <div className="space-y-1 text-sm">
-            <div className="flex justify-between"><span className="text-gray-500">Cash Received</span><span>{fmt(shift.collections.cash_amount)}</span></div>
-            <div className="flex justify-between"><span className="text-gray-500">M-Pesa Received</span><span>{fmt(shift.collections.mpesa_amount)}</span></div>
-            {totalCreditReceipts > 0 && (
+            <div className="flex justify-between"><span className="text-gray-500">{balanceBased ? 'Cash remaining' : 'Cash Received'}</span><span>{fmt(shift.collections.cash_amount)}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">{balanceBased ? 'M-Pesa balance at close' : 'M-Pesa Received'}</span><span>{fmt(shift.collections.mpesa_amount)}</span></div>
+            {!balanceBased && totalCreditReceipts > 0 && (
               <>
                 <div className="flex justify-between text-xs text-green-700">
                   <span>Debt receipts in shift</span><span>{fmt(totalCreditReceipts)}</span>
@@ -784,7 +800,7 @@ export default function ShiftDetail() {
         <div className="fixed inset-0 bg-black/45 z-50 flex items-end sm:items-center justify-center">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <p className="font-bold">{correcting.target ? 'Correct' : 'Add missing'}: {RECORD_LABELS[correcting.recordType]}</p>
+              <p className="font-bold">{correcting.recordType === 'shift_funds' ? correcting.target ? 'Reverse money movement' : 'Money added / removed' : `${correcting.target ? 'Correct' : 'Add missing'}: ${RECORD_LABELS[correcting.recordType]}`}</p>
               <button onClick={() => setCorrecting(null)} className="p-1 text-gray-400"><X size={18} /></button>
             </div>
             <CorrectionForm
@@ -815,7 +831,7 @@ export default function ShiftDetail() {
             <Edit3 size={18} /> Record Readings & Collections
           </button>
           {isAdmin && (
-            <button onClick={openCloseReview}
+            <button onClick={openCloseReview} disabled={!hasClosingCount}
               className="w-full bg-red-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-2">
               <Lock size={18} /> Close & Lock Shift
             </button>
@@ -893,21 +909,22 @@ export default function ShiftDetail() {
               </div>
             )}
 
+            {balanceBased && <FundsCloseReview opening={openingTotal} added={fundsAdded} removed={fundsRemoved} payouts={businessPayouts} expectedClosing={expectedClosing} countedClosing={drawerTotal} formatMoney={fmt} />}
             {/* Summary in modal */}
-            <div className="bg-gray-50 rounded-lg p-3 mb-4 text-sm space-y-1">
+            {!balanceBased && <div className="bg-gray-50 rounded-lg p-3 mb-4 text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-gray-500">Expected Sales</span>
                 <span className="font-semibold">{fmt(expected)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Expected Shift Total</span>
-                <span className="font-semibold">{fmt(expectedShiftTotal)}</span>
+                <span className="text-gray-500">{balanceBased ? 'Expected closing funds' : 'Expected Shift Total'}</span>
+                <span className="font-semibold">{fmt(balanceBased ? expectedClosing : expectedShiftTotal)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Shift Accounted</span>
+                <span className="text-gray-500">{balanceBased ? 'Counted closing funds' : 'Shift Accounted'}</span>
                 <span className="font-semibold">{fmt(closeTotalAccounted)}</span>
               </div>
-              {totalCreditReceipts > 0 && (
+              {!balanceBased && totalCreditReceipts > 0 && (
                 <div className="flex justify-between text-xs text-green-700">
                   <span>Debt receipts included</span>
                   <span>{fmt(totalCreditReceipts)}</span>
@@ -917,7 +934,7 @@ export default function ShiftDetail() {
                 <span>Variance</span>
                 <span>{closeVariance >= 0 ? '+' : ''}{fmt(closeVariance)}</span>
               </div>
-            </div>
+            </div>}
 
             <div className="mb-4">
               <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
@@ -928,7 +945,7 @@ export default function ShiftDetail() {
                 </label>
                 <label className="flex items-start gap-2">
                   <input type="checkbox" checked={closeReview.collections} onChange={(event) => setCloseReview({ ...closeReview, collections: event.target.checked })} className="mt-0.5" />
-                  <span>Cash and M-Pesa totals match the counted cash and payment records.</span>
+                  <span>{balanceBased ? 'Cash remaining and M-Pesa balance match the counted funds and account balance.' : 'Cash and M-Pesa totals match the counted cash and payment records.'}</span>
                 </label>
                 <label className="flex items-start gap-2">
                   <input type="checkbox" checked={closeReview.entries} onChange={(event) => setCloseReview({ ...closeReview, entries: event.target.checked })} className="mt-0.5" />

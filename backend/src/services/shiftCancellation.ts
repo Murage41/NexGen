@@ -21,6 +21,11 @@ export async function previewShiftCancellation(
   if (shift.status !== 'open') {
     throw httpError('Only an open shift can be cancelled.', 409, 'SHIFT_NOT_OPEN');
   }
+  if (shift.reconciliation_basis === 'balances_v1') {
+    const funds = await database('shift_funds_movements').where({ shift_id: shiftId }).whereNull('deleted_at').first('id');
+    if (funds) throw httpError('This shift has money added or removed. Review and reverse mistaken movements before cancelling; close a shift with genuine movements.',
+      409, 'SHIFT_HAS_FUNDS_MOVEMENTS');
+  }
 
   const [creditEntries, creditPayments, invoiceConsumption, expenses, payrollPayments, debtAllocations] = await Promise.all([
     database('shift_credits').where({ shift_id: shiftId }).whereNull('deleted_at').count('* as count').first(),

@@ -54,7 +54,7 @@ import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency'
 import { decorateShiftStaleness, getStaleShiftHours } from '../services/shiftOperations';
 import { computeShiftAccountability } from '../services/shiftAccountability';
 import { readShiftFinancials } from '../services/shiftFinancials';
-import { asRecordedConsumption, asRecordedReceipts, asRecordedRows, snapshotFigures } from '../services/shiftSnapshot';
+import { asRecordedConsumption, asRecordedReceipts, asRecordedRows, snapshotFigures, snapshotFinancialFields } from '../services/shiftSnapshot';
 import { shiftCorrections } from '../services/corrections';
 import { listBalanceMoves } from '../services/balanceMoves';
 import { getRetailPriceAsOf } from '../services/invoiceAccounting';
@@ -77,7 +77,27 @@ const BLIND_CLOSE_FIELDS = [
   'sales_variance',
   'total_accounted',
   'variance',
+  'expected_closing',
+  'expected_receipts',
+  'inferred_collections',
 ] as const;
+
+function requireBalanceContract(shift: any, submitted: unknown) {
+  if (shift.reconciliation_basis === 'balances_v1' && submitted !== 'balances_v1') {
+    throw Object.assign(new Error('This shift records actual closing balances including its opening float. Reload or update the app before saving.'),
+      { httpStatus: 409, code: 'SHIFT_BALANCE_CLIENT_REQUIRED' });
+  }
+  if (submitted === 'balances_v1' && shift.reconciliation_basis !== 'balances_v1') {
+    throw Object.assign(new Error('This older shift uses received totals. Reload the shift before saving.'),
+      { httpStatus: 409, code: 'SHIFT_BASIS_MISMATCH' });
+  }
+}
+
+async function fundsRevision(conn: any, shiftId: number) {
+  const row = await conn('correction_lines').where({ shift_id: shiftId })
+    .whereIn('record_type', ['opening_funds', 'shift_funds']).max({ revision: 'id' }).first();
+  return Number(row?.revision || 0);
+}
 
 function collectionView(row: any) {
   if (!row) return row;
@@ -157,14 +177,19 @@ router.get('/export.csv', requireAdmin, async (req, res) => {
     const headers = [
       'Shift ID', 'Shift Date', 'Employee', 'Status', 'Started At', 'Ended At',
       'Compensation Plan ID', 'Wage Paid', 'Review Status', 'Review Notes', 'Reviewed At',
-      'Original Expected Sales', 'Original Expected Shift Total', 'Original Cash Received', 'Original M-Pesa Received',
+      'Original Expected Sales', 'Original Expected Shift Total', 'Original Cash Received / Closing Balance', 'Original M-Pesa Received / Closing Balance',
       'Original Debt Receipts', 'Original Credits Issued', 'Original Invoice Consumption', 'Original Expenses',
       'Original Direct Wage Payment', 'Original Payroll Payments', 'Original Total Accounted', 'Original Variance',
       'Variance Type', 'Variance Reason', 'Approved At', 'Cancellation Reason',
       'Original Close Available', 'Current Expected Sales', 'Current Expected Shift Total',
-      'Current Cash Received', 'Current M-Pesa Received', 'Current Debt Receipts',
+      'Current Cash Received / Closing Balance', 'Current M-Pesa Received / Closing Balance', 'Current Debt Receipts',
       'Current Credits Issued', 'Current Invoice Consumption', 'Current Expenses',
       'Current Direct Wage Payment', 'Current Payroll Payments', 'Current Total Accounted', 'Current Variance',
+      'Reconciliation Basis', 'Original Reconciliation Basis', 'Original Opening Cash', 'Original Opening M-Pesa',
+      'Original Opening Total', 'Original Money Added', 'Original Money Removed', 'Original Expected Closing',
+      'Original Collections Inferred From Counted Funds', 'Original Expected Receipts',
+      'Current Opening Cash', 'Current Opening M-Pesa', 'Current Opening Total', 'Current Money Added',
+      'Current Money Removed', 'Current Expected Closing', 'Current Collections Inferred From Counted Funds', 'Current Expected Receipts', 'Closing Count Recorded',
     ];
     const body = rows.map((row: any) => [
       row.id, row.shift_date, row.employee_name, row.status, row.start_time, row.end_time,
@@ -177,6 +202,11 @@ router.get('/export.csv', requireAdmin, async (req, res) => {
       row.current_cash_received, row.current_mpesa_received, row.current_credit_receipts,
       row.current_credits_issued, row.current_invoice_consumption, row.current_expenses,
       row.current_direct_wage_payment, row.current_payroll_payments, row.current_total_accounted, row.current_variance,
+      row.reconciliation_basis, row.original_reconciliation_basis, row.original_opening_cash_amount, row.original_opening_mpesa_amount,
+      row.original_opening_total, row.original_funds_added_total, row.original_funds_removed_total, row.original_expected_closing,
+      row.original_inferred_collections, row.original_expected_receipts,
+      row.current_opening_cash_amount, row.current_opening_mpesa_amount, row.current_opening_total, row.current_funds_added_total,
+      row.current_funds_removed_total, row.current_expected_closing, row.current_inferred_collections, row.current_expected_receipts, row.collection_count_recorded,
     ].map(csvCell).join(','));
     const range = options.from || options.to
       ? `${options.from || 'first'}-to-${options.to || 'latest'}`
@@ -415,9 +445,13 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       // the shift drawer.
       const employee_wage = shift.status === 'closed'
         ? (shift.wage_paid ?? shift.employee_wage ?? 0)
+        : shift.reconciliation_basis === 'balances_v1' ? 0
         : compensationPlan?.pay_schedule === 'daily'
           ? grossEarningPreview
           : 0;
+      const financials = shift.status === 'closed' || shift.reconciliation_basis === 'balances_v1'
+        ? (await readShiftFinancials(trx, [shift])).get(Number(shift.id))
+        : null;
       const accountability = computeShiftAccountability({
         readings,
         collections,
@@ -427,11 +461,18 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         expenses,
         employee_wage,
         payrollPayments,
+        reconciliation_basis: shift.reconciliation_basis,
+        opening_cash_amount: financials?.current.opening_cash_amount,
+        opening_mpesa_amount: financials?.current.opening_mpesa_amount,
+        fundsMovements: financials?.fundsMovements || [],
+        actual_wage_paid: employee_wage,
       });
       const closedFinancials = shift.status === 'closed'
-        ? (await readShiftFinancials(trx, [shift])).get(Number(shift.id))
+        ? financials
         : null;
-      const figures = originalView && closeReconciliation
+      const figures = shift.status === 'cancelled' && shift.reconciliation_basis === 'balances_v1'
+        ? { ...accountability, ...Object.fromEntries([...BLIND_CLOSE_FIELDS, 'sales_cash', 'sales_mpesa', 'sales_collections'].map(key => [key, null])) }
+        : originalView && closeReconciliation
         ? { ...accountability, ...snapshotFigures(closeReconciliation) }
         : closedFinancials?.current || accountability;
       if (closedFinancials && !originalView) collections = closedFinancials.collections;
@@ -450,6 +491,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
           posting_date: line.posting_date,
           error_kind: line.error_kind,
           record_type: line.record_type,
+          shift_open: line.shift_open,
           action: line.action,
           method: line.method,
           category: line.category,
@@ -499,10 +541,18 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
           readings,
           collections: collections || null,
           close_reconciliation: closeReconciliation || null,
-          financial_view: shift.status === 'closed' ? (originalView ? 'original' : 'current') : 'live',
+          financial_view: shift.status === 'cancelled' ? 'cancelled' : shift.status === 'closed' ? (originalView ? 'original' : 'current') : 'live',
           original_financials: closedFinancials?.original || null,
           current_financials: closedFinancials?.current || null,
           actual_wage_paid: closedFinancials?.actual_wage_paid ?? null,
+          opening_funds: financials?.current.reconciliation_basis === 'balances_v1' ? {
+            cash_amount: originalView ? closedFinancials?.original?.opening_cash_amount : financials.current.opening_cash_amount,
+            mpesa_amount: originalView ? closedFinancials?.original?.opening_mpesa_amount : financials.current.opening_mpesa_amount,
+          } : null,
+          collection_count_recorded: financials?.collection_count_recorded ?? Boolean(collections),
+          // This is the complete movement history; deleted_at marks a reversal.
+          funds_movements: financials?.fundsMovementHistory || [],
+          funds_revision: shift.reconciliation_basis === 'balances_v1' ? await fundsRevision(trx, Number(shift.id)) : 0,
           corrections,
           // Corrections (services/corrections.ts) made to this shift since close.
           record_corrections: recordCorrections,
@@ -545,9 +595,9 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
 });
 
 // POST open a new shift
-router.post('/', requireAdmin, validate(openShiftSchema), async (req, res) => {
+router.post('/', requireAdmin, validate(openShiftSchema), async (req: any, res) => {
   try {
-    const { employee_id, compensation_plan_id } = req.body;
+    const { employee_id, compensation_plan_id, opening_cash_amount, opening_mpesa_amount, opening_note } = req.body;
     const today = getKenyaDate();
     const resolvedDate = today;
 
@@ -555,7 +605,10 @@ router.post('/', requireAdmin, validate(openShiftSchema), async (req, res) => {
     // SQLite transaction so a near-simultaneous second POST cannot win the
     // race and produce two open shifts. SQLite serializes transactions, so
     // the second one sees the first's inserted row when it reaches the check.
-    const shift = await db.transaction(async (trx) => {
+    const result = await runIdempotent(db, {
+      scope: `shift-open:${Number(req.employee?.id) || 'desktop'}`,
+      key: normalizeIdempotencyKey(req.get('Idempotency-Key')), payload: req.body,
+    }, async (trx) => {
       const openShift = await trx('shifts').where({ status: 'open' }).first();
       if (openShift) {
         const err: any = new Error('There is already an open shift. Close it first.');
@@ -602,6 +655,12 @@ router.post('/', requireAdmin, validate(openShiftSchema), async (req, res) => {
         shift_date: resolvedDate,
         status: 'open',
         compensation_plan_id: compensationPlan.id,
+        reconciliation_basis: 'balances_v1',
+        opening_cash_amount,
+        opening_mpesa_amount,
+        opening_note: opening_note || null,
+        opening_recorded_at: new Date().toISOString(),
+        opening_recorded_by_employee_id: Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
       });
 
       // Auto-populate opening readings from last closed shift (or pump's initial readings)
@@ -630,14 +689,16 @@ router.post('/', requireAdmin, validate(openShiftSchema), async (req, res) => {
         });
       }
 
-      return trx('shifts')
+      const shift = await trx('shifts')
         .join('employees', 'shifts.employee_id', 'employees.id')
         .select('shifts.*', 'employees.name as employee_name')
         .where('shifts.id', id)
         .first();
+      return { status: 201, body: { success: true, data: shift } };
     });
 
-    res.status(201).json({ success: true, data: shift });
+    if (result.replayed) res.set('Idempotency-Replayed', 'true');
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     if (Number(err.httpStatus) >= 400 && Number(err.httpStatus) < 500) {
       return res.status(Number(err.httpStatus)).json({ success: false, error: err.message });
@@ -998,8 +1059,9 @@ router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, validate(upd
     const expectedRevision = req.body.expected_revision;
     const shiftState = await db('shifts')
       .where({ id: req.params.id })
-      .select('collections_revision')
+      .select('collections_revision', 'reconciliation_basis')
       .first();
+    requireBalanceContract(shiftState, req.body.reconciliation_basis);
     const currentRevision = Number(shiftState?.collections_revision || 0);
     if (expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
       const stale = staleShiftWrite('collections', currentRevision);
@@ -1012,6 +1074,8 @@ router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, validate(upd
     }
 
     const result = await db.transaction(async (trx) => {
+      const basisState = await trx('shifts').where({ id: req.params.id }).first();
+      requireBalanceContract(basisState, req.body.reconciliation_basis);
       const changed = await trx('shifts')
         .where({
           id: req.params.id,
@@ -1728,6 +1792,7 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
     if (!shift) return res.status(404).json({ success: false, error: 'Shift not found' });
 
     // Phase 4: guard against double-close (already-closed shift)
+    requireBalanceContract(shift, req.body.reconciliation_basis);
     if (shift.status !== 'open') {
       return res.status(400).json({ success: false, error: `Shift is already ${shift.status}.` });
     }
@@ -1746,6 +1811,12 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
     await db.transaction(async (trx) => {
       const currentShift = await trx('shifts').where({ id: shift.id }).first();
       if (currentShift?.status !== 'open') throw Object.assign(new Error('Shift is no longer open.'), { httpStatus: 409 });
+      requireBalanceContract(currentShift, req.body.reconciliation_basis);
+      if (currentShift.reconciliation_basis === 'balances_v1'
+        && req.body.expected_funds_revision !== await fundsRevision(trx, Number(shift.id))) {
+        throw Object.assign(new Error('Opening funds or money movements changed. Reload and review this shift before closing.'),
+          { httpStatus: 409, code: 'STALE_SHIFT_FUNDS' });
+      }
       // Calculate variance
       const readings = await trx('pump_readings')
         .join('pumps', 'pump_readings.pump_id', 'pumps.id')
@@ -1753,6 +1824,10 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         .where('pumps.active', true);
 
       const collections = await trx('shift_collections').where({ shift_id: shift.id }).first();
+      if (currentShift.reconciliation_basis === 'balances_v1' && (!collections || Number(currentShift.collections_revision || 0) === 0)) {
+        throw Object.assign(new Error('Record and save the actual cash remaining and M-Pesa balance before closing. Enter zero explicitly if nothing remains.'),
+          { httpStatus: 409, code: 'SHIFT_CLOSING_COUNT_REQUIRED' });
+      }
       const expenses = await trx('shift_expenses').where({ shift_id: shift.id }).whereNull('deleted_at');
       const shiftCredits = await trx('shift_credits').where({ shift_id: shift.id }).whereNull('deleted_at');
       const creditReceipts = await trx('credit_payments')
@@ -1803,6 +1878,9 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         err.httpStatus = 400;
         throw err;
       }
+      const financials = currentShift.reconciliation_basis === 'balances_v1'
+        ? (await readShiftFinancials(trx, [currentShift])).get(Number(shift.id))
+        : null;
       const accountability = computeShiftAccountability({
         readings,
         collections,
@@ -1812,6 +1890,11 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
         expenses,
         employee_wage,
         payrollPayments,
+        reconciliation_basis: currentShift.reconciliation_basis,
+        opening_cash_amount: financials?.current.opening_cash_amount,
+        opening_mpesa_amount: financials?.current.opening_mpesa_amount,
+        fundsMovements: financials?.fundsMovements || [],
+        actual_wage_paid: employee_wage,
       });
       const { variance } = accountability;
       // No written reason is required for a variance: closing a shift is routine
@@ -1888,6 +1971,7 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
 
       await trx('shift_close_reconciliations').insert({
         shift_id: shift.id,
+        ...snapshotFinancialFields(accountability),
         readings_reviewed: reconciliation.readings_reviewed,
         collections_reviewed: reconciliation.collections_reviewed,
         entries_reviewed: reconciliation.entries_reviewed,
@@ -1964,7 +2048,7 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
     res.json({ success: true, ...(warnings.length > 0 ? { warnings } : {}) });
   } catch (err: any) {
     console.error('[shifts:close] ERROR', err.message, err.stack);
-    res.status(err.httpStatus || 500).json({ success: false, error: err.message });
+    res.status(err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
   }
 });
 

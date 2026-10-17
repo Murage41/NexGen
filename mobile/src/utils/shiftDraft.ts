@@ -1,6 +1,6 @@
 export type ShiftDraft = {
   readings?: Record<string, { raw_l_input: string; raw_a_input: string }>;
-  collections?: { cash_amount: number; mpesa_amount: number };
+  collections?: { cash_amount: number | string; mpesa_amount: number | string };
   updated_at: string;
 };
 

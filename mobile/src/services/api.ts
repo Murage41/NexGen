@@ -96,7 +96,7 @@ export const exportShifts = (params?: any) => api.get('/shifts/export.csv', { pa
 export const getCurrentShift = () => api.get('/shifts/current');
 export const getShift = (id: number) => api.get(`/shifts/${id}`);
 export const getShiftNeighbors = (id: number, params?: any) => api.get(`/shifts/${id}/neighbors`, { params });
-export const openShift = (data: { employee_id: number; compensation_plan_id: number }) => api.post('/shifts', data);
+export const openShift = (data: { employee_id: number; compensation_plan_id: number; opening_cash_amount: number; opening_mpesa_amount: number; opening_note?: string }) => api.post('/shifts', data);
 export const updateReadings = (shiftId: number, readings: any[], confirm_anomaly?: boolean, confirm_large_sale?: boolean, expected_revision?: number) =>
   api.put(`/shifts/${shiftId}/readings`, {
     readings,
@@ -112,6 +112,8 @@ export const closeShift = (shiftId: number, data: {
   deduct_amount?: number | null;
   recovery_decision?: any;
   wage_paid: number;
+  reconciliation_basis: 'legacy' | 'balances_v1';
+  expected_funds_revision: number;
   reconciliation: { readings_reviewed: true; collections_reviewed: true; entries_reviewed: true };
 }) => api.put(`/shifts/${shiftId}/close`, data);
 export const previewShiftCancellation = (shiftId: number) =>

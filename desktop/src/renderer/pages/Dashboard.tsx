@@ -1,3 +1,4 @@
+import { FundsCollectionSummary } from '../../../../shared/ui/ShiftFunds';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboard } from '../services/api';
@@ -224,7 +225,7 @@ export default function Dashboard() {
           {data.today_collections && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <p className="text-xs text-gray-500 font-medium mb-2">Today's Collections</p>
-              <div className="space-y-1 text-sm">
+              {data.today_collections.has_balance_shifts ? <FundsCollectionSummary data={data.today_collections} formatMoney={formatKES} /> : <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-500">Cash</span>
                   <span className="font-medium">{formatKES(data.today_collections.cash)}</span>
@@ -263,7 +264,7 @@ export default function Dashboard() {
                     <span className="font-medium text-purple-600">{formatKES(data.today_collections.invoice_retail)}</span>
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
           )}
         </div>

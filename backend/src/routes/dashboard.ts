@@ -4,7 +4,7 @@ import { getFIFOCostByFuelType } from '../services/stockCalculator';
 import { detectDriftSummary } from '../services/driftDetector';
 import { getKenyaDate } from '../utils/timezone';
 import { getTotalPayrollCashOutflow } from '../services/payrollAccounting';
-import { readShiftFinancials } from '../services/shiftFinancials';
+import { readShiftFinancials, summarizeShiftFinancials } from '../services/shiftFinancials';
 import { sumMoney } from '../services/shiftAccountability';
 import { getCurrentReceivableTotals } from '../services/receivableReporting';
 import { totalOwedByAttendants } from '../services/employeeVariances';
@@ -44,8 +44,9 @@ router.get('/', async (req: any, res) => {
 
     // ── Today's shifts ──
     const todayShifts = await db('shifts')
-      .where('shift_date', today);
+      .where('shift_date', today).whereNot('status', 'cancelled');
     const todayFinancials = [...(await readShiftFinancials(db, todayShifts)).values()];
+    const todayFinancialSummary = summarizeShiftFinancials(todayFinancials);
     const shiftIds = todayShifts.map((s: any) => s.id);
     // Closed-only subset: COGS (FIFO batch_consumption) is only ever computed at shift
     // close, so any profit/margin figure must be based on closed-shift sales too, or an
@@ -129,14 +130,15 @@ router.get('/', async (req: any, res) => {
 
     // Today's variance must match shift detail. Shift-linked debt receipts
     // are included inside entered cash/M-Pesa totals, not added on top.
-    const todayExpectedTotal = sumMoney(todayFinancials, (view) => view.current.expected_shift_total);
-    const todayTotalAccounted = sumMoney(todayFinancials, (view) => view.current.total_accounted);
-    const todayVariance = sumMoney(todayFinancials, (view) => view.current.variance);
+    const countedTodayFinancials = todayFinancials.filter(view => view.current.reconciliation_basis === 'legacy' || view.collection_count_recorded);
+    const todayExpectedTotal = sumMoney(countedTodayFinancials, (view) => view.current.expected_shift_total);
+    const todayTotalAccounted = sumMoney(countedTodayFinancials, (view) => view.current.total_accounted);
+    const todayVariance = sumMoney(countedTodayFinancials, (view) => view.current.variance);
 
     // ── Month-to-date figures ──
     const mtdShifts = await db('shifts')
       .where('shift_date', '>=', monthStart)
-      .where('shift_date', '<=', today);
+      .where('shift_date', '<=', today).whereNot('status', 'cancelled');
     const mtdFinancials = [...(await readShiftFinancials(db, mtdShifts)).values()];
     const mtdShiftIds = mtdShifts.map((s: any) => s.id);
     const mtdClosedShiftIds = mtdShifts.filter((s: any) => s.status === 'closed').map((s: any) => s.id);
@@ -272,6 +274,7 @@ router.get('/', async (req: any, res) => {
         .where('pumps.tank_id', tank.id)
         .where('shifts.shift_date', '>=', monthStart)
         .where('shifts.shift_date', '<=', today)
+        .whereNot('shifts.status', 'cancelled')
         .sum('pump_readings.litres_sold as total')
         .first();
       const totalSales = Number((salesResult as any)?.total || 0);
@@ -347,6 +350,7 @@ router.get('/', async (req: any, res) => {
       const dateStr = new Date(todayMs - i * 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
       const dayShifts = await db('shifts')
         .where('shift_date', dateStr)
+        .whereNot('status', 'cancelled')
         .select('id');
       const dayShiftIds = dayShifts.map((s: any) => s.id);
 
@@ -391,17 +395,16 @@ router.get('/', async (req: any, res) => {
       today_wages: todayWages,
       today_wages_paid: todayWagesPaid,
       today_collections: {
-        cash: todayCash,
-        mpesa: todayMpesa,
+        ...todayFinancialSummary,
+        cash: todayFinancialSummary.total_cash,
+        mpesa: todayFinancialSummary.total_mpesa,
         credits: todayCreditsOnAccount,
         invoice_retail: todayInvoiceRetail,
         credit_receipts: todayCreditReceipts,
         credit_receipts_cash: todayCreditReceiptsCash,
         credit_receipts_mpesa: todayCreditReceiptsMpesa,
-        sales_cash: todayCash - todayCreditReceiptsCash,
-        sales_mpesa: todayMpesa - todayCreditReceiptsMpesa,
-        expected_cash: todayCash,
-        expected_mpesa: todayMpesa,
+        expected_cash: todayFinancialSummary.has_balance_shifts ? null : todayCash,
+        expected_mpesa: todayFinancialSummary.has_balance_shifts ? null : todayMpesa,
         expected_total_received: todayCash + todayMpesa,
       },
       // Month-to-date

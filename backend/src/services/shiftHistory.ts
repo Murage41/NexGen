@@ -308,22 +308,43 @@ export async function exportShiftHistory(
   return {
     rows: rows.map((row: any) => {
       const financial = financials.get(Number(row.id));
-      const current = financial?.current;
+      const current = row.status === 'cancelled' ? null : financial?.current;
+      const original = financial?.original;
+      const uncounted = current?.reconciliation_basis === 'balances_v1' && !financial?.collection_count_recorded;
       return {
         ...row,
         original_close_available: Boolean(financial?.original),
         current_expected_sales: current?.expected_sales ?? null,
         current_expected_shift_total: current?.expected_shift_total ?? null,
-        current_cash_received: current?.total_cash ?? null,
-        current_mpesa_received: current?.total_mpesa ?? null,
+        current_cash_received: uncounted ? null : current?.total_cash ?? null,
+        current_mpesa_received: uncounted ? null : current?.total_mpesa ?? null,
         current_credit_receipts: current?.total_credit_receipts ?? null,
         current_credits_issued: current?.total_credits ?? null,
         current_invoice_consumption: current?.total_invoice_consumption ?? null,
         current_expenses: current?.total_expenses ?? null,
         current_direct_wage_payment: current?.employee_wage ?? null,
         current_payroll_payments: current?.total_payroll_payments ?? null,
-        current_total_accounted: current?.total_accounted ?? null,
-        current_variance: current?.variance ?? null,
+        current_total_accounted: uncounted ? null : current?.total_accounted ?? null,
+        current_variance: uncounted ? null : current?.variance ?? null,
+        collection_count_recorded: Boolean(financial?.collection_count_recorded),
+        reconciliation_basis: financial?.current.reconciliation_basis ?? 'legacy',
+        original_reconciliation_basis: original?.reconciliation_basis ?? null,
+        original_opening_cash_amount: original?.opening_cash_amount ?? null,
+        original_opening_mpesa_amount: original?.opening_mpesa_amount ?? null,
+        original_opening_total: original?.opening_total ?? null,
+        original_funds_added_total: original?.funds_added_total ?? null,
+        original_funds_removed_total: original?.funds_removed_total ?? null,
+        original_expected_closing: original?.expected_closing ?? null,
+        original_inferred_collections: original?.inferred_collections ?? null,
+        original_expected_receipts: original?.expected_receipts ?? null,
+        current_opening_cash_amount: current?.opening_cash_amount ?? null,
+        current_opening_mpesa_amount: current?.opening_mpesa_amount ?? null,
+        current_opening_total: current?.opening_total ?? null,
+        current_funds_added_total: current?.funds_added_total ?? null,
+        current_funds_removed_total: current?.funds_removed_total ?? null,
+        current_expected_closing: current?.expected_closing ?? null,
+        current_inferred_collections: uncounted ? null : current?.inferred_collections ?? null,
+        current_expected_receipts: current?.expected_receipts ?? null,
       };
     }),
     total,

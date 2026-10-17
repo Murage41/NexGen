@@ -2,8 +2,11 @@
 
 Specification prepared 2026-10-15. The owner requested manual opening cash and
 M-Pesa fields before a shift opens, with no link to the previous shift.
-This document specifies stage A3 in `IMPLEMENTATION-STAGES.md`; it is not
-implemented yet. Existing pump-opening readings continue their existing chain.
+This document specifies stage A3 in `IMPLEMENTATION-STAGES.md`. A3 is developed
+and tested on `codex/shift-floats`, queued after A1 and A2; no station installation
+is confirmed. See [the release card](releases/A3-SHIFT-FLOATS.md) for evidence and
+[the operating guide](OPENING-FUNDS-GUIDE.md) for day-to-day steps.
+Existing pump-opening readings continue their existing chain.
 
 ## 1. Operating decision
 

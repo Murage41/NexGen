@@ -43,5 +43,7 @@ Only administrators make corrections. Attendants can read their own closed
 shifts; the open shift remains blind. Existing correction and undo steps are
 in [Corrections](CORRECTIONS.md).
 
-Opening floats and independent corrections to cash/M-Pesa totals follow as
-separate A3 and A4 releases. A2 retains the existing correction forms.
+Opening floats are developed separately in A3; see the
+[opening-funds guide](OPENING-FUNDS-GUIDE.md) for the meaning of new closing
+balances and inferred collections. Independent closing-total corrections
+follow in A4. A2 itself retains the existing correction forms.
