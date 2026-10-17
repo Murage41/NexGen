@@ -628,7 +628,7 @@ export default function ShiftDetail() {
         <div className="flex items-center justify-between mb-2">
           <p className="font-semibold text-gray-700">{balanceBased ? 'Closing balances' : 'Sales Collections'}</p>
           {canCorrect && shift.collections && (
-            <button onClick={() => setCorrecting({ recordType: 'collection', target: shift.collections })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">Cash/M-Pesa mixed up</button>
+            <button onClick={() => setCorrecting({ recordType: 'collection', target: shift.collections })} className="text-xs rounded-lg border border-gray-300 px-2 py-1 text-gray-700">{balanceBased ? 'Correct closing balances' : 'Correct cash and M-Pesa totals'}</button>
           )}
         </div>
         {shift.collections ? (
@@ -800,14 +800,14 @@ export default function ShiftDetail() {
         <div className="fixed inset-0 bg-black/45 z-50 flex items-end sm:items-center justify-center">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <p className="font-bold">{correcting.recordType === 'shift_funds' ? correcting.target ? 'Reverse money movement' : 'Money added / removed' : `${correcting.target ? 'Correct' : 'Add missing'}: ${RECORD_LABELS[correcting.recordType]}`}</p>
+              <p className="font-bold">{correcting.recordType === 'collection' ? balanceBased ? 'Correct closing balances' : 'Correct cash and M-Pesa totals' : correcting.recordType === 'shift_funds' ? correcting.target ? 'Reverse money movement' : 'Money added / removed' : `${correcting.target ? 'Correct' : 'Add missing'}: ${RECORD_LABELS[correcting.recordType]}`}</p>
               <button onClick={() => setCorrecting(null)} className="p-1 text-gray-400"><X size={18} /></button>
             </div>
             <CorrectionForm
               api={correctionApi}
               recordType={correcting.recordType}
               target={correcting.target ? { ...correcting.target, shift_date: shift.shift_date } : null}
-              shift={{ id: Number(shift.id), shift_date: shift.shift_date }}
+              shift={{ id: Number(shift.id), shift_date: shift.shift_date, reconciliation_basis: shift.reconciliation_basis }}
               onDone={async () => { setCorrecting(null); await loadShift(); }}
               onCancel={() => setCorrecting(null)}
             />

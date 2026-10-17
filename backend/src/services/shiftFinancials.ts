@@ -179,7 +179,7 @@ export async function readShiftFinancials(
       });
       result.set(id, {
         current, original, original_snapshot: snapshot, collections,
-        collection_count_recorded: Boolean(stored) && (basis === 'legacy' || Number(shift.collections_revision || 0) > 0),
+        collection_count_recorded: Boolean(snapshot) || (Boolean(stored) && (basis === 'legacy' || Number(shift.collections_revision || 0) > 0)),
         shiftCredits, creditReceipts, invoiceConsumption, expenses, payrollPayments, fundsMovements,
         fundsMovementHistory: get('shift_funds_movements', id),
         reconciliation_wage: roundMoney(reconciliationWage),

@@ -56,8 +56,8 @@ export default function Corrections() {
       </div>
       <p className="text-sm text-gray-600 mb-4">
         Before a shift closes, fix mistakes on the shift. After it closes, correct them: the shift keeps what it closed with,
-        and each correction is recorded here with what it changed. Start a correction from the record: a fuel entry in the
-        customer's fuel history, or the fuel on account list of a closed shift.
+        and each correction is recorded here with what it changed. Start a correction from the relevant record or
+        a closed shift's cash and M-Pesa totals.
       </p>
       <div className="flex items-end gap-3 mb-4 text-sm">
         <label className="block"><span className="text-xs text-gray-500">From</span>

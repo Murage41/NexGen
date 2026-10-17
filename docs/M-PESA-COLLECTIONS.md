@@ -11,7 +11,9 @@ The fee settings and fee/net display have been removed. Old saved fee fields
 remain historical storage and are not used in current calculations or reports.
 Original close snapshots and previously recorded correction history remain.
 
-This release keeps the station's existing cash/M-Pesa split correction. The
-separate planned release for independently changing the two totals is not
-included in A1 or A3; it follows separately in A4. Opening shift floats are
-developed in A3, queued for installation after A1 and A2.
+A4 adds independently corrected cash and M-Pesa totals, including zero and
+changes to their combined total. Both full current figures are prefilled;
+leave one unchanged when correcting only the other. See the
+[correction guide](CLOSING-TOTAL-CORRECTIONS.md). It follows A3's opening funds
+and closing balances, with each release installed and checked separately.
+Earlier split-only corrections remain readable; no M-Pesa fee is introduced.

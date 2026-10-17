@@ -27,8 +27,8 @@ Last updated: 2026-10-17.
   proposed sequence in `docs/IMPLEMENTATION-STAGES.md`, indexed by
   `docs/ROADMAP.md`. Manual opening floats are in `docs/SHIFT-FLOATS.md`.
   A2's consistent current/original financial views and A3's manual opening
-  funds are developed separately and queued after A1. Independent closing-total
-  edits and the broader note work are not built.
+  funds and A4's independent closing totals are developed separately and queued
+  after A1. The broader debt, expense and monetary-note releases remain pending.
   The whole of old 2b is not authorised to ship. The next station update is
   **#16**, A1 only, based on the station's code (`c5c4ee8`). No new migration
   or dependency installation is required; migration remains `054`.
@@ -46,7 +46,7 @@ Last updated: 2026-10-17.
   the receivables audit pass. Final real-DB fingerprint is unchanged.
   Station checks gate the next installation,
   not the next development stage. Neither A1 nor A2 installation is confirmed.
-- **A3 development: manual opening funds, queued after A2.** Authorised
+- **A3 published: `8997896`, manual opening funds, queued after A2.** Authorised
   2026-10-16, branch `codex/shift-floats`, based on `ab50f1b`. New shifts require
   separately entered cash/M-Pesa openings and count actual closing balances.
   Custody additions/removals and opening corrections reuse the existing
@@ -60,6 +60,21 @@ Last updated: 2026-10-17.
   `docs/releases/A3-SHIFT-FLOATS.md`. Day-to-day guide:
   `docs/OPENING-FUNDS-GUIDE.md`. A3 requires its own backed-up station migration
   and checkpoint after A1 and A2; no station installation is confirmed.
+- **A4 development: independent closing totals, queued after A3.** Authorised
+  2026-10-17 by the owner's continuation, branch `codex/closing-total-corrections`,
+  based on `8997896`. Both full current cash/M-Pesa totals are prefilled and
+  independently correctable, including zero and changed combined totals.
+  Existing approval, responsibility, idempotency, history and undo apply.
+  Saved source counts/original closes, later openings, stock/FIFO, metered
+  sales, customer debts and earned wages remain unchanged. Snapshot-only
+  closed counts remain reportable; missing evidence is refused. All 41 backend
+  suites, three type checks, both builds and three planted bugs pass.
+  Scratch desktop/phone corrections and undo pass; 28 protected selections /
+  3,232 source rows match their before hashes, integrity audits have zero
+  issues and the final real-DB fingerprint is unchanged. Isolated servers stopped.
+  Release card: `docs/releases/A4-CLOSING-TOTAL-CORRECTIONS.md`; operating
+  guide: `docs/CLOSING-TOTAL-CORRECTIONS.md`. No new migration. Queue A1 → A2 →
+  A3 → A4; no station installation is confirmed. Next development stage is B1.
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date
@@ -102,7 +117,8 @@ Last updated: 2026-10-17.
 | 15 | `c5c4ee8` | Corrections phase 2a: credit sales, debt payments, drawer expenses, cash/M-Pesa | 054 |
 | 16 (pending installation) | `c885a61` + publication record | A1: remove M-Pesa fees; staged roadmap and manual-float specification | no new migration |
 | A2 (queued after #16) | `ab50f1b` | Current financial views and preserved original close | no new migration |
-| A3 (queued after A2) | Separate A3 release commit based on `ab50f1b`; see release card | Manual opening cash/M-Pesa, closing balances, custody movements and correction history | 055 |
+| A3 (queued after A2) | `8997896` | Manual opening cash/M-Pesa, closing balances, custody movements and correction history | 055 |
+| A4 (queued after A3) | Separate A4 release commit based on `8997896`; see release card | Independent current cash/M-Pesa total corrections with approval/history/undo | no new migration |
 
 ## How the system works now (recent decisions that code must respect)
 
@@ -115,7 +131,9 @@ Last updated: 2026-10-17.
   balance, void and standalone debit-note actions remain in the station/A1
   code. The older unshipped 2b proposal to replace these actions is not part
   of A1. Independent totals and later financial changes follow the separate
-  stage plan. Meter readings stay fixed. See `docs/CORRECTIONS.md`.
+  stage plan. Queued A4 replaces the split-only form with both independent
+  full totals, preserving earlier history. Meter readings stay fixed.
+  See `docs/CORRECTIONS.md`.
 - **Attendant shortages:** an employee owes the shortages of their short shifts
   and pays them in money (cash, M-Pesa, bank). No write-offs, no paybacks, and
   surpluses never offset shortages (they are the station's). Pay is never
@@ -330,7 +348,14 @@ Last updated: 2026-10-17.
   restoration and migration checks preserved all 72 pre-existing business
   tables/4,180 old rows on the available scratch copy; the old open shift stayed
   legacy. Full tests and user-facing checks are detailed in the A3 release card.
-- **Next development:** A4 independent closing cash/M-Pesa corrections.
+- **2026-10-17: A4 developed and verified.** The existing correction mechanism
+  handles independent cash/M-Pesa counts with strict full-amount validation,
+  a preview based on shared current figures and approval bound to that shift's
+  financial history. Both clients show the corrected result before approval;
+  a changed result requires fresh review. Historical source/snapshot differences
+  and missing source rows have fixed-value tests. The A4 card records automated
+  and scratch checks; station installation remains separate.
+- **Next development:** B1 customer credit and shift debt-receipt corrections.
   Follow the separate B-J releases in `docs/IMPLEMENTATION-STAGES.md`. Install
   A1 and check it before A2; each later installation waits for the preceding
   station checkpoint, while dependent development waits for development checks.

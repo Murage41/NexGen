@@ -93,6 +93,14 @@ cache instead of recomputing; computing at event time and never updating.
 - **Double-submit safety:** money mutations that can be retried (shift close,
   payments, moves, payroll) go through `services/idempotency.ts`
   (`runIdempotent`).
+- **Full-total corrections start from the shared current view.** Use saved
+  close evidence plus signed correction history, rather than a divergent
+  source/cache row. Preview the result from the same current variance reports
+  show. Bind approval to that financial state and its history, so an edit
+  followed by undo still invalidates an older approval. A saved close is valid
+  count evidence even when its old collection row is absent; an open-shift
+  cache row alone is not a count. Both independent amounts are required and
+  must distinguish explicit zero from missing or invalid input.
 
 ## 4. Code conventions
 

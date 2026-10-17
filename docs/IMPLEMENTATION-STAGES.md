@@ -33,14 +33,21 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   All 37 backend suites, three type checks, both client builds, three planted
   bugs and scratch desktop/phone/audit checks pass. It is queued after A1;
   no station installation is confirmed.
-- A3 is developed on `codex/shift-floats`, based on A2. Explicit openings,
+- A3 is published as `8997896` on `codex/shift-floats`, based on A2. Explicit openings,
   actual closing balances, custody movements, opening corrections, legacy
   compatibility and common report arithmetic are complete. All 40 backend
   suites, five planted bugs, type checks, builds, backup/restore/migration and
   scratch desktop/phone checks pass. See [the A3 release card](releases/A3-SHIFT-FLOATS.md)
   and [operating guide](OPENING-FUNDS-GUIDE.md). Queue after A2; station
   installation/checkpoint remain separate.
-- A4 and later releases below are **not built as agreed complete releases**.
+- A4 is developed on `codex/closing-total-corrections`, based on `8997896`.
+  Both full current cash/M-Pesa totals can be corrected independently, including
+  zero and changed combined totals, through existing approval/history/undo.
+  All 41 backend suites, three type checks, both builds and three planted bugs
+  pass. See [the A4 release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md)
+  and [operating guide](CLOSING-TOTAL-CORRECTIONS.md). Queue after A3; no new
+  migration. Station installation/checkpoints remain separate.
+- B1 and later releases below are **not built as agreed complete releases**.
   Existing helpers, screens and selected uncommitted code can be reused after
   review; that does not make a release complete or authorise all old 2b work.
 - Preserve existing local work. Start the approved release from the station's

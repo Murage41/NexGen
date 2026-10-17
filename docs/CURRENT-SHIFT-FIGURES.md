@@ -45,5 +45,6 @@ in [Corrections](CORRECTIONS.md).
 
 Opening floats are developed separately in A3; see the
 [opening-funds guide](OPENING-FUNDS-GUIDE.md) for the meaning of new closing
-balances and inferred collections. Independent closing-total corrections
-follow in A4. A2 itself retains the existing correction forms.
+balances and inferred collections. A4 adds
+[independent cash/M-Pesa total corrections](CLOSING-TOTAL-CORRECTIONS.md)
+using those same current figures. A2 itself retains the existing correction forms.

@@ -142,12 +142,18 @@ twice), or paid but not recorded (for example a receipt found later).
   shift.
 - Wages are never a drawer expense; they are paid through Payroll.
 
-### Cash and M-Pesa the wrong way round
+### Cash and M-Pesa totals
 
-Say what the money really was and how much was recorded the wrong way round.
-The amount moves from one to the other without a fee calculation. The combined
-gross total and shift result do not change. See `docs/M-PESA-COLLECTIONS.md`.
-It can never move more than the shift shows.
+A4 adds **Correct closing balances** for balance-based shifts and **Correct
+cash and M-Pesa totals** for older shifts. Both current figures are filled in;
+enter the full correct amounts, changing one or both. Zero is valid, and the
+combined total can change. Review the resulting variance and responsibility,
+give a reason and approve. Original close and the saved count remain intact.
+See the [operating guide](CLOSING-TOTAL-CORRECTIONS.md).
+
+Earlier split-only corrections keep their history. This new form corrects
+recorded totals; actual custody movements use **Money added / removed**.
+Install A4 separately after A1, A2 and A3 and check each update.
 
 ## What happens elsewhere
 

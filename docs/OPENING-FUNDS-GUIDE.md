@@ -67,5 +67,6 @@ Owner funding and drawings appear separately from trading cash flow.
 
 **Original close → View original figures** retains the saved opening funds,
 movements and close result. Current figures include later corrections. A3
-never alters another shift's opening, pump readings or stock. Independent
-closing cash/M-Pesa total corrections follow separately in A4.
+never alters another shift's opening, pump readings or stock. A4 adds the
+separate [closing cash/M-Pesa correction form](CLOSING-TOTAL-CORRECTIONS.md),
+with both full current totals prefilled and independent changes allowed.

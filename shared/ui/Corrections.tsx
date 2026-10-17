@@ -6,11 +6,11 @@ import { ApproverFields, useApprover, type ApprovalApi } from './ApproverConfirm
 // shift; after, correct it here. The shift keeps what it closed with; the
 // correction is recorded next to it with what it changed.
 //
-// The flow: what was wrong → the right value (only that field) → the effects in
+// The flow: what was wrong → the right value → the effects in
 // plain words (and, if a shift gets worse, who carries it) → a reason → the
 // admin approves exactly what was shown (desktop: name and PIN; phone: the
-// signed-in admin). Records: fuel on account (phase 1); a shift's credit
-// sales, debt payments, drawer expenses and cash/M-Pesa split (phase 2a).
+// signed-in admin). Opening declarations and custody movements also use this
+// flow. Closing cash and M-Pesa are corrected as independent full totals.
 
 const kes = (value: unknown) =>
   `KES ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,6 +19,12 @@ const errorText = (e: any, fallback: string) => e?.response?.data?.error || e?.m
 const litresText = (litres: unknown, fuel: unknown) => `${Number(litres || 0).toFixed(2)} L of ${fuel}`;
 const methodName = (method: unknown) => (method === 'mpesa' ? 'M-Pesa' : 'cash');
 const day = (date: unknown) => (date ? ` (${String(date).slice(0, 10)})` : '');
+const validCollectionTotal = (value: string) => {
+  const text = value.trim();
+  const number = Number(text);
+  return /^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)
+    && Number.isFinite(number) && number >= 0 && number <= 100000000;
+};
 
 export type RecordType = 'fuel_on_account' | 'credit_sale' | 'debt_receipt' | 'drawer_expense' | 'collection' | 'opening_funds' | 'shift_funds';
 
@@ -76,7 +82,7 @@ const KINDS: Record<RecordType, Array<{ kind: string; label: string }>> = {
     { kind: 'duplicate', label: 'It was never paid, or was recorded twice' },
     { kind: 'missing', label: 'An expense paid from the drawer was not recorded' },
   ],
-  collection: [{ kind: 'wrong_split', label: 'Recorded the wrong way round' }],
+  collection: [{ kind: 'wrong_amount', label: 'The recorded cash or M-Pesa total was wrong' }],
   opening_funds: [{ kind: 'wrong_amount', label: 'The opening amount was wrong' }],
   shift_funds: [
     { kind: 'missing', label: 'Record money added or removed' },
@@ -85,7 +91,8 @@ const KINDS: Record<RecordType, Array<{ kind: string; label: string }>> = {
 };
 
 export const errorKindLabel = (kind: string, recordType = 'fuel_on_account') =>
-  kind === 'undo' ? 'Undo' : KINDS[recordType as RecordType]?.find((k) => k.kind === kind)?.label || kind;
+  kind === 'undo' ? 'Undo' : recordType === 'collection' && kind === 'wrong_split'
+    ? 'Recorded the wrong way round' : KINDS[recordType as RecordType]?.find((k) => k.kind === kind)?.label || kind;
 // "Credit sale: the amount was wrong".
 export const correctionTitle = (recordType: string, kind: string) => {
   if (kind === 'undo') return 'Undo';
@@ -101,9 +108,11 @@ export function lineText(line: any) {
     case 'credit_sale': return `${verb} credit sale of ${kes(line.amount)}${party}`;
     case 'debt_receipt': return `${verb} ${kes(line.amount)} paid${party} in ${methodName(line.method)}`;
     case 'drawer_expense': return `${verb} expense of ${kes(line.amount)}${line.category ? ` (${line.category})` : ''}`;
-    case 'collection': return line.action === 'add' || line.action === 'restore'
-      ? `${kes(line.amount)} into ${methodName(line.method)}`
-      : `${kes(line.amount)} out of ${methodName(line.method)}`;
+    case 'collection': return line.category === 'closing_total'
+      ? `${verb} recorded ${methodName(line.method)} total of ${kes(line.amount)}`
+      : line.action === 'add' || line.action === 'restore'
+        ? `${kes(line.amount)} into ${methodName(line.method)}`
+        : `${kes(line.amount)} out of ${methodName(line.method)}`;
     case 'opening_funds': return `${verb} opening ${methodName(line.method)} of ${kes(line.amount)}`;
     case 'shift_funds': return `${verb} ${methodName(line.method)} ${line.category === 'removed' ? 'removal' : 'addition'} of ${kes(line.amount)}`;
     default: return `${verb} ${litresText(line.litres, line.fuel_type)}${line.party_name ? ` on ${line.party_name}` : ''}`;
@@ -150,13 +159,15 @@ export function CorrectionForm({
   // The record being corrected (for cash and M-Pesa: the shift's collections),
   // or none: something missing from the shift.
   target?: any | null;
-  shift?: { id: number; shift_date?: string | null } | null;
+  shift?: { id: number; shift_date?: string | null; reconciliation_basis?: string | null } | null;
   onDone: (correction: any) => Promise<void> | void;
   onCancel: () => void;
   inputClassName?: string;
 }) {
   const approver = useApprover(approval);
   const fuel = recordType === 'fuel_on_account';
+  const collection = recordType === 'collection';
+  const balanceBased = shift?.reconciliation_basis === 'balances_v1';
   // A record being corrected offers every mistake but "missing"; adding a
   // missing record offers only that.
   const kinds = recordType === 'collection' || recordType === 'opening_funds'
@@ -167,6 +178,8 @@ export function CorrectionForm({
   const [litres, setLitres] = useState(fuel && target ? String(Number(target.litres)) : '');
   const [fuelType, setFuelType] = useState(fuel && target ? (target.fuel_type === 'diesel' ? 'petrol' : 'diesel') : '');
   const [amount, setAmount] = useState('');
+  const [cashAmount, setCashAmount] = useState(collection && target?.cash_amount != null ? String(target.cash_amount) : '');
+  const [mpesaAmount, setMpesaAmount] = useState(collection && target?.mpesa_amount != null ? String(target.mpesa_amount) : '');
   const [method, setMethod] = useState(recordType === 'opening_funds' ? target?.payment_method || '' : '');
   const [category, setCategory] = useState('');
   const [source, setSource] = useState('');
@@ -197,9 +210,10 @@ export function CorrectionForm({
   const needs = {
     litres: fuel && ['wrong_litres', 'wrong_fuel', 'missing'].includes(kind),
     fuel: fuel && ['wrong_fuel', 'missing'].includes(kind),
-    amount: !fuel && ['wrong_amount', 'missing', 'wrong_split'].includes(kind),
+    amount: !fuel && !collection && ['wrong_amount', 'missing'].includes(kind),
+    collectionTotals: collection,
     customer: ['fuel_on_account', 'credit_sale', 'debt_receipt'].includes(recordType) && ['wrong_customer', 'missing'].includes(kind),
-    method: (['debt_receipt', 'shift_funds'].includes(recordType) && kind === 'missing') || recordType === 'collection' || recordType === 'opening_funds',
+    method: (['debt_receipt', 'shift_funds'].includes(recordType) && kind === 'missing') || recordType === 'opening_funds',
     category: (recordType === 'drawer_expense' && ['wrong_category', 'missing'].includes(kind)) || (recordType === 'shift_funds' && kind === 'missing'),
     description: ['credit_sale', 'drawer_expense', 'shift_funds'].includes(recordType) && kind === 'missing',
     custody: recordType === 'shift_funds' && kind === 'missing',
@@ -211,6 +225,7 @@ export function CorrectionForm({
   if (needs.litres) request.litres = Number(litres);
   if (needs.fuel) request.fuel_type = fuelType;
   if (needs.amount) request.amount = Number(amount);
+  if (needs.collectionTotals) { request.cash_amount = Number(cashAmount); request.mpesa_amount = Number(mpesaAmount); }
   if (needs.customer) request.account_id = Number(accountId);
   if (needs.method) request.payment_method = method;
   if (needs.category) request.category = category;
@@ -219,10 +234,14 @@ export function CorrectionForm({
   if (needs.shift) request.shift_id = Number(shiftId);
   if (chargeTo) request.charge_to = chargeTo;
   if (override) request.limit_override = true;
+  const totalsChanged = !collection || Number(cashAmount) !== Number(target?.cash_amount)
+    || Number(mpesaAmount) !== Number(target?.mpesa_amount);
   const complete = Boolean(kind)
+    && totalsChanged
     && (!needs.litres || Number(litres) > 0)
     && (!needs.fuel || Boolean(fuelType))
     && (!needs.amount || (amount.trim() !== '' && Number.isFinite(Number(amount)) && (recordType === 'opening_funds' ? Number(amount) >= 0 : Number(amount) > 0)))
+    && (!needs.collectionTotals || (validCollectionTotal(cashAmount) && validCollectionTotal(mpesaAmount)))
     && (!needs.customer || Number(accountId) > 0)
     && (!needs.method || Boolean(method))
     && (!needs.category || Boolean(category.trim()))
@@ -240,14 +259,15 @@ export function CorrectionForm({
         .catch((e) => { if (live) setPlan({ error: errorText(e, 'This correction is not possible.') }); });
     }, 300);
     return () => { live = false; clearTimeout(timer); };
-  }, [key]);
+  }, [key, complete]);
 
   const needsChoice = Boolean(plan?.data?.needs_choice);
   const needsOverride = Boolean(plan?.data?.needs_override);
-  const ready = Boolean(plan?.data) && (!needsChoice || Boolean(chargeTo)) && (!needsOverride || override)
+  const ready = complete && Boolean(plan?.data) && (!needsChoice || Boolean(chargeTo)) && (!needsOverride || override)
     && Boolean(reasonCode) && reasonNote.trim().length >= 10 && approver.ready;
 
   async function submit() {
+    if (!ready || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -255,7 +275,9 @@ export function CorrectionForm({
       // once more and stop if anything changed since it was shown.
       const body = { ...request, reason_code: reasonCode, reason_note: reasonNote.trim() };
       const final = (await api.preview(body)).data.data;
-      if (JSON.stringify(final.effects) !== JSON.stringify(plan?.data?.effects)) {
+      const previewChanged = JSON.stringify(final.effects) !== JSON.stringify(plan?.data?.effects)
+        || JSON.stringify(final.shifts) !== JSON.stringify(plan?.data?.shifts);
+      if (previewChanged) {
         setPlan({ data: final });
         setError('Something changed since this was shown. Check the effects again, then post.');
         return;
@@ -303,6 +325,17 @@ export function CorrectionForm({
 
       {kind && kind !== 'duplicate' && kind !== 'wrong_method' && (
         <div className="grid grid-cols-2 gap-2">
+          {needs.collectionTotals && <>
+            <p className="col-span-2 text-xs text-gray-600">Enter both correct full totals. To change one, leave the other at its current amount. Zero is valid; these amounts do not have to add up to the previous total.</p>
+            <label className="block">{label(balanceBased ? 'Cash remaining (KES)' : 'Correct full cash received total (KES)')}
+              <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0" max="100000000" required value={cashAmount} onChange={(e) => setCashAmount(e.target.value)} />
+            </label>
+            <label className="block">{label(balanceBased ? 'M-Pesa balance at close (KES)' : 'Correct full M-Pesa received total (KES)')}
+              <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0" max="100000000" required value={mpesaAmount} onChange={(e) => setMpesaAmount(e.target.value)} />
+            </label>
+            {(!validCollectionTotal(cashAmount) || !validCollectionTotal(mpesaAmount)) && <p className="col-span-2 text-xs text-gray-600">Both totals are required: 0 to 100,000,000 KES, with at most two decimal places.</p>}
+            {!totalsChanged && <p className="col-span-2 text-xs text-gray-500">Change at least one total to see the correction preview.</p>}
+          </>}
           {needs.fuel && (
             <label className="block">{label('Fuel taken')}
               <select className={inputClassName} value={fuelType} onChange={(e) => setFuelType(e.target.value)}>
@@ -317,7 +350,7 @@ export function CorrectionForm({
             </label>
           )}
           {needs.method && (
-            <label className="block">{label(recordType === 'collection' ? 'The money was really' : recordType === 'opening_funds' ? 'Opening funds method' : needs.custody ? 'Money method' : 'Paid in')}
+            <label className="block">{label(recordType === 'opening_funds' ? 'Opening funds method' : needs.custody ? 'Money method' : 'Paid in')}
               <select className={inputClassName} value={method} disabled={recordType === 'opening_funds' && Boolean(target?.payment_method)} onChange={(e) => setMethod(e.target.value)}>
                 <option value="">Choose</option>
                 <option value="cash">Cash</option>
@@ -326,7 +359,7 @@ export function CorrectionForm({
             </label>
           )}
           {needs.amount && (
-            <label className="block">{label(recordType === 'collection' ? 'Amount recorded the wrong way round (KES)' : recordType === 'opening_funds' ? 'Correct full opening amount (KES)' : 'Amount (KES)')}
+            <label className="block">{label(recordType === 'opening_funds' ? 'Correct full opening amount (KES)' : 'Amount (KES)')}
               <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </label>
           )}
@@ -372,6 +405,9 @@ export function CorrectionForm({
           <ul className="list-disc pl-4 space-y-0.5">
             {plan.data.effects.map((effect: string, i: number) => <li key={i}>{effect}</li>)}
           </ul>
+          {collection && (plan.data.shifts || []).map((impact: any) => (
+            <p key={impact.shift_id} className="font-semibold mt-2">Shift #{impact.shift_id} result after correction: {result(Number(impact.corrected))}.</p>
+          ))}
         </div>
       )}
 

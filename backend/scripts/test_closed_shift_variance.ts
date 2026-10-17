@@ -14,7 +14,10 @@ function expression(file: string, variable: string) {
   }
   visit(source);
   assert.ok(found, `Missing screen expression ${variable}`);
-  return (values: Record<string, any>) => Function(...Object.keys(values), `return (${found});`)(...Object.values(values));
+  const executable = ts.transpileModule(`function evaluate() { return (${found}); }`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None },
+  }).outputText;
+  return (values: Record<string, any>) => Function(...Object.keys(values), `${executable}\nreturn evaluate();`)(...Object.values(values));
 }
 const root = path.resolve(__dirname, '../..');
 for (const [file, totalName] of [
@@ -77,4 +80,25 @@ for (const [file, totalName] of [
       `${file}: ${example.name} combined variance`);
   }
 }
-console.log('PASS: both screens preserve selected closed figures and actual wages; balance previews handle opening funds, shortage, top-up, removal and spending without sales.');
+
+// Full-total corrections must retain an explicit zero while refusing an empty
+// or invalid currency amount before the form requests an approvable preview.
+const collectionTotal = expression(path.join(root, 'shared/ui/Corrections.tsx'), 'validCollectionTotal')({});
+for (const [input, valid] of [
+  ['0', true], ['0.00', true], ['.50', true], ['99999999.99', true], ['100000000', true],
+  ['', false], ['   ', false], ['-0.01', false], ['0.001', false], ['100000000.01', false],
+  ['Infinity', false], ['NaN', false],
+] as Array<[string, boolean]>) {
+  assert.equal(collectionTotal(input), valid, `Closing correction amount ${JSON.stringify(input)} validity`);
+}
+
+// A same-sum correction can keep its count effects while another financial
+// entry changes the displayed shift result. Require a fresh review before PIN
+// approval instead of approving that changed result silently.
+const previewChanged = expression(path.join(root, 'shared/ui/Corrections.tsx'), 'previewChanged');
+const shown = { effects: ['The combined closing count changes by KES 0.00.'], shifts: [{ shift_id: 12, corrected: 0 }] };
+assert.equal(previewChanged({ plan: { data: shown }, final: structuredClone(shown) }), false,
+  'An unchanged preview may proceed to approval.');
+assert.equal(previewChanged({ plan: { data: shown }, final: { ...shown, shifts: [{ shift_id: 12, corrected: -300 }] } }), true,
+  'A changed server result requires renewed review even when the combined count effects are unchanged.');
+console.log('PASS: both screens preserve selected figures and balance previews; total corrections validate explicit currency amounts and require renewed review for changed displayed results.');

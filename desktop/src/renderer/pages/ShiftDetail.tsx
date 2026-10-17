@@ -1303,7 +1303,7 @@ export default function ShiftDetail() {
           <h2 className="text-lg font-semibold text-gray-700">{balanceBased ? 'Closing balances' : 'Sales Collections'}</h2>
           {isClosed && (
             <button onClick={() => setCorrecting({ recordType: 'collection', target: collections })} className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50">
-              Cash and M-Pesa mixed up
+              {balanceBased ? 'Correct closing balances' : 'Correct cash and M-Pesa totals'}
             </button>
           )}
           {isOpen && (
@@ -1777,13 +1777,13 @@ export default function ShiftDetail() {
       {correcting && (
         <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
-            <h2 className="text-lg font-bold">{correcting.recordType === 'shift_funds' ? correcting.target ? 'Reverse money movement' : 'Money added / removed' : `${correcting.target ? 'Correct' : 'Add missing'}: ${RECORD_LABELS[correcting.recordType]}`}</h2>
+            <h2 className="text-lg font-bold">{correcting.recordType === 'collection' ? balanceBased ? 'Correct closing balances' : 'Correct cash and M-Pesa totals' : correcting.recordType === 'shift_funds' ? correcting.target ? 'Reverse money movement' : 'Money added / removed' : `${correcting.target ? 'Correct' : 'Add missing'}: ${RECORD_LABELS[correcting.recordType]}`}</h2>
             <CorrectionForm
               api={correctionApi}
               approval={desktopApproval}
               recordType={correcting.recordType}
               target={correcting.target ? { ...correcting.target, shift_date: shift.shift_date } : null}
-              shift={{ id: Number(shift.id), shift_date: shift.shift_date }}
+              shift={{ id: Number(shift.id), shift_date: shift.shift_date, reconciliation_basis: shift.reconciliation_basis }}
               onDone={async () => { setCorrecting(null); await loadShift(); }}
               onCancel={() => setCorrecting(null)}
             />

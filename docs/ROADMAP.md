@@ -32,9 +32,9 @@ exclusions and measurable result. Split any broad row further before code.
 | Order | Separate releases | Current state |
 |---|---|---|
 | A1 | Approved baseline and complete M-Pesa fee removal | `c885a61` published on main with a documentation follow-up; automated/scratch UI checks pass; update #16 installation/checkpoint pending |
-| A2 | Shared current-financial view with original close retained | Developed; queued after A1. [Release card](releases/A2-CURRENT-FINANCIAL-VIEWS.md), [owner guide](CURRENT-SHIFT-FIGURES.md) |
-| A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Developed; queued after A2. [Release card](releases/A3-SHIFT-FLOATS.md), [operating guide](OPENING-FUNDS-GUIDE.md). Never linked to the previous shift. |
-| A4 | Independently correct closing cash and M-Pesa totals | Planned complete release; selected local code reusable |
+| A2 | Shared current-financial view with original close retained | Published `ab50f1b`; queued after A1. [Release card](releases/A2-CURRENT-FINANCIAL-VIEWS.md), [owner guide](CURRENT-SHIFT-FIGURES.md) |
+| A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Published `8997896`; queued after A2. [Release card](releases/A3-SHIFT-FLOATS.md), [operating guide](OPENING-FUNDS-GUIDE.md). Never linked to the previous shift. |
+| A4 | Independently correct closing cash and M-Pesa totals | Developed after `8997896`; automated checks pass, queued after A3. [Release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md), [operating guide](CLOSING-TOTAL-CORRECTIONS.md) |
 | B1 → B3 | Customer credit/shift receipts; fixed issued consumption with monetary notes; unbilled fuel and draft/limit controls | Planned separate releases |
 | B4 → B7 | Expenses; employee debts/targeted repayments; office payments/refunds; drawer wage payments | Planned separate releases |
 | C1 → C2 | Actual supplier-payment cash flow; supplier-payables drift audit | Planned separate releases |

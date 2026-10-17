@@ -12,6 +12,7 @@ import { drawerExpenseRule } from './correctionRules/drawerExpense';
 import { collectionRule } from './correctionRules/collection';
 import { openingFundsRule } from './correctionRules/openingFunds';
 import { shiftFundsRule } from './correctionRules/shiftFunds';
+import { readShiftFinancials } from './shiftFinancials';
 
 // Corrections (docs/ROADMAP.md §3c, docs/CORRECTIONS.md). A closed record is
 // never changed. A mistake found later is fixed by a numbered Correction whose
@@ -40,6 +41,8 @@ export type CorrectionRequest = {
   fuel_type?: string | null;
   litres?: number | null;
   amount?: number | null;
+  cash_amount?: number | null;
+  mpesa_amount?: number | null;
   payment_method?: 'cash' | 'mpesa' | null;
   category?: string | null;
   description?: string | null;
@@ -189,6 +192,10 @@ function normalize(request: any): CorrectionRequest {
     fuel_type: request?.fuel_type ? String(request.fuel_type).trim().toLowerCase() : null,
     litres: num(request?.litres),
     amount: num(request?.amount),
+    ...(request?.record_type === 'collection' && request?.error_kind === 'wrong_amount' ? {
+      cash_amount: typeof request.cash_amount === 'number' ? request.cash_amount : Number.NaN,
+      mpesa_amount: typeof request.mpesa_amount === 'number' ? request.mpesa_amount : Number.NaN,
+    } : {}),
     payment_method: request?.payment_method === 'cash' || request?.payment_method === 'mpesa' ? request.payment_method : null,
     category: request?.category ? String(request.category).trim() : null,
     description: request?.description ? String(request.description).trim() : null,
@@ -218,6 +225,8 @@ async function shiftImpacts(conn: Conn, lines: PlanLine[]): Promise<ShiftImpact[
     byShift.set(line.shift_id, roundMoney((byShift.get(line.shift_id) || 0) + line.shift_effect));
   }
   const impacts: ShiftImpact[] = [];
+  const collectionShifts = [...byShift.keys()].filter(id => lines.some(line => line.shift_id === id && line.record_type === 'collection'));
+  const currentFinancials = collectionShifts.length ? await readShiftFinancials(conn, collectionShifts) : null;
   for (const [shiftId, change] of byShift) {
     const shift = await conn('shifts as s')
       .leftJoin('employees as e', 's.employee_id', 'e.id')
@@ -227,7 +236,7 @@ async function shiftImpacts(conn: Conn, lines: PlanLine[]): Promise<ShiftImpact[
     // Amendments made before close are already captured by that close.
     const earlier: any = await conn('correction_lines').where({ shift_id: shiftId, shift_open: false }).sum({ total: 'shift_effect' }).first();
     const asClosed = roundMoney(Number(shift?.variance || 0));
-    const before = roundMoney(asClosed + Number(earlier?.total || 0));
+    const before = roundMoney(currentFinancials?.get(shiftId)?.current.variance ?? asClosed + Number(earlier?.total || 0));
     const shortage = shift?.employee_id ? await shiftShortage(conn, Number(shift.employee_id), shiftId) : 0;
     impacts.push({
       shift_id: shiftId,
@@ -235,7 +244,7 @@ async function shiftImpacts(conn: Conn, lines: PlanLine[]): Promise<ShiftImpact[
       attendant_id: shift?.employee_id ? Number(shift.employee_id) : null,
       attendant_name: shift?.employee_name || null,
       as_closed: asClosed,
-      earlier: roundMoney(Number(earlier?.total || 0)),
+      earlier: roundMoney(before - asClosed),
       change,
       corrected: roundMoney(before + change),
       worse: change < 0,
@@ -266,6 +275,9 @@ function shiftEffects(impacts: ShiftImpact[], chargeTo: string | null) {
 }
 
 export async function previewCorrection(conn: Conn, raw: any, postingDate: string): Promise<Plan> {
+  if (raw?.record_type === 'collection' && !(conn as Knex.Transaction).isTransaction) {
+    return (conn as Knex).transaction(trx => previewCorrection(trx, raw, postingDate));
+  }
   const request = normalize(raw);
   const handler = rule(request.record_type);
   if (!handler.errorKinds.includes(request.error_kind)) throw httpError('Choose what was wrong.', 400, 'INVALID_ERROR_KIND');
