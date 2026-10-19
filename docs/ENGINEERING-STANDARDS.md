@@ -241,6 +241,13 @@ pushed commits.
    `git status --short` clean.
 2. Give the owner **one command block per pending update, in order**, each
    ending with its own short check. Never one combined jump.
+   **Explicit exception, owner decision 2026-10-19:** completed A1-A4/B1
+   may be installed together as update #16, pinned to the published B1 code
+   (`c3b3e14`) plus accompanying rollout documentation. Preserve the separate
+   development commits. Back up before migration 055, migrate/check integrity,
+   build mobile once and verify startup immediately; the owner validates
+   genuine operations from 2026-10-20. This does not authorise bundling future
+   unfinished stages. See `releases/A1-B1-COMBINED-STATION-UPDATE.md`.
 3. Each block, in this order: `npm run dev:stop` **first**, then
    `git fetch origin` (first block), `git merge --ff-only <commit>`,
    `npm run backup:database -w backend` (always when a migration is included),

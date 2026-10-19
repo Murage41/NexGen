@@ -5,10 +5,25 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-10-18.
+Last updated: 2026-10-19.
 
 ## Station PC
 
+- **Current installation decision, 2026-10-19:** the owner authorised one
+  combined update #16 containing all completed A1, A2, A3, A4 and B1 work,
+  instead of installing/checking each stage separately. Published code target
+  is `c3b3e14932f8ccbcfaf8b86b3f95e06532109758`; any accompanying rollout
+  documentation commit contains the same application code. Keep the individual
+  development commits; no squash or unfinished B2/old 2b work is included.
+  Stop the backend, fast-forward to the supplied pinned commit, verify a
+  pre-migration backup, apply the one pending migration 055, check integrity,
+  build mobile once and restart/check health. No dependency installation,
+  desktop installer or backend build is needed in the existing station mode.
+  The owner will validate genuine operations from 2026-10-20. Immediate
+  migration/health/access checks still happen at installation. Installation
+  remains unconfirmed. This decision supersedes older separate-installation
+  wording in the stage evidence and release cards below. Deployment card:
+  `docs/releases/A1-B1-COMBINED-STATION-UPDATE.md`.
 - **Running `c5c4ee8`** (the owner reported update #15, Corrections phase
   2a, applied on 2026-10-05). Latest migration there: `054`. Before it,
   update #14 (`bcfb424`) was confirmed with all checks passed on 2026-09-30.
@@ -31,8 +46,9 @@ Last updated: 2026-10-18.
   after A1. B1 completes customer credit/shift receipts; the expense, employee
   debt, office-payment and monetary-note releases remain pending.
   The whole of old 2b is not authorised to ship. The next station update is
-  **#16**, A1 only, based on the station's code (`c5c4ee8`). No new migration
-  or dependency installation is required; migration remains `054`.
+  **#16**, now the combined A1-B1 release described above, based on the
+  station's code (`c5c4ee8`). The combined update needs migration `055`;
+  dependencies are unchanged.
 - **A2 published: `ab50f1b`, current financial views, queued after A1.** The owner
   authorised A2 on 2026-10-16 and changed the delivery workflow: finish and
   test individual development commits, then install/check one at a time on
@@ -76,7 +92,7 @@ Last updated: 2026-10-18.
   Release card: `docs/releases/A4-CLOSING-TOTAL-CORRECTIONS.md`; operating
   guide: `docs/CLOSING-TOTAL-CORRECTIONS.md`. No new migration. Queue A1 → A2 →
   A3 → A4; no station installation is confirmed.
-- **B1 development: customer credit and shift debt receipts, queued after A4.**
+- **B1 published: `c3b3e14`, customer credit and shift debt receipts.**
   Authorised 2026-10-17, branch `codex/customer-shift-corrections`, based on
   published `03d0653`. Existing Correct/Add missing forms now require valid
   positive full amounts and preview the shared current shift result. Debt/sale
@@ -95,8 +111,9 @@ Last updated: 2026-10-18.
   original debt/payment source facts match their before evidence; audits have
   zero issues and the real DB fingerprint is unchanged. No new migration.
   See `docs/releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md` and
-  `docs/CUSTOMER-SHIFT-CORRECTIONS.md`. Install/check A1 → A2 → A3 → A4 → B1
-  separately. Station remains `c5c4ee8`/054; next development is B2.
+  `docs/CUSTOMER-SHIFT-CORRECTIONS.md`. Install A1-A4/B1 together under the
+  owner's 2026-10-19 decision above. Station remains `c5c4ee8`/054 until
+  installation is confirmed; next development is B2.
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date
@@ -109,7 +126,7 @@ Last updated: 2026-10-18.
 - `npm install` on the station reports 12 known vulnerabilities (1 low, 6
   moderate, 5 high) in dependencies; review them with the Tier 5 audit.
 - The station has its own database. It is changed only by fast-forwarding to
-  pushed commits, one command block per update, as in
+  pushed commits, one command block per authorised station update, as in
   `docs/ENGINEERING-STANDARDS.md` §7.
 - Station PC: Windows 10, repository at `E:\NexGen`. The owner types commands
   in **Command Prompt** there. Logs: `E:\NexGen\logs\nexgen-station-stack.log`.

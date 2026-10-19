@@ -35,7 +35,7 @@ exclusions and measurable result. Split any broad row further before code.
 | A2 | Shared current-financial view with original close retained | Published `ab50f1b`; queued after A1. [Release card](releases/A2-CURRENT-FINANCIAL-VIEWS.md), [owner guide](CURRENT-SHIFT-FIGURES.md) |
 | A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Published `8997896`; queued after A2. [Release card](releases/A3-SHIFT-FLOATS.md), [operating guide](OPENING-FUNDS-GUIDE.md). Never linked to the previous shift. |
 | A4 | Independently correct closing cash and M-Pesa totals | Published `03d0653`; checks pass, queued after A3. [Release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md), [operating guide](CLOSING-TOTAL-CORRECTIONS.md) |
-| B1 | Customer credit and shift debt receipts | Developed after `03d0653`; checks pass, queued after A4. [Release card](releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md), [operating guide](CUSTOMER-SHIFT-CORRECTIONS.md) |
+| B1 | Customer credit and shift debt receipts | Published `c3b3e14`; checks pass, included with A1-A4 in the authorised combined update #16. [Release card](releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md), [operating guide](CUSTOMER-SHIFT-CORRECTIONS.md) |
 | B2 → B3 | Fixed issued consumption with monetary notes; unbilled fuel and draft/limit controls | Planned separate releases; B2 is next development |
 | B4 → B7 | Expenses; employee debts/targeted repayments; office payments/refunds; drawer wage payments | Planned separate releases |
 | C1 → C2 | Actual supplier-payment cash flow; supplier-payables drift audit | Planned separate releases |
@@ -50,8 +50,11 @@ exclusions and measurable result. Split any broad row further before code.
 Each release needs numeric examples, permissions/conflict checks, appropriate
 automated and desktop/phone checks, unchanged-record evidence and a user-guide
 update before dependent development. The owner permits development to continue
-before station installation (2026-10-16). Queue individual commits; install and
-check one update before the next installation. A3 must be a
+before station installation (2026-10-16). On 2026-10-19 the owner authorised
+one combined station update for completed A1-A4/B1, retaining their separate
+development commits; genuine operations will be checked from 2026-10-20.
+See [the combined deployment card](releases/A1-B1-COMBINED-STATION-UPDATE.md).
+Future stages remain separate unless explicitly agreed. A3 must be a
 complete working float workflow before activation: no opening capture with
 old closing/report arithmetic. Original closes remain preserved throughout.
 

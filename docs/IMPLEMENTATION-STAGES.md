@@ -9,6 +9,14 @@ Current station: `c5c4ee8`, migration `054`. The next station update is #16;
 assign its exact contents and commit only when that release is ready.
 Later release IDs below are planning labels, not station update numbers.
 
+**Installation decision, 2026-10-19:** the owner now authorises one combined
+station update for completed A1-A4/B1, through published code `c3b3e14` and
+its rollout documentation. This overrides the original individual station
+checkpoints below, not the bounded development/test requirements. Back up,
+migrate/check integrity, build mobile and check startup once; genuine operating
+validation begins 2026-10-20. B2 and later remain pending. See
+[the combined deployment card](releases/A1-B1-COMBINED-STATION-UPDATE.md).
+
 Read with [ROADMAP.md](ROADMAP.md), [PROJECT-STATUS.md](PROJECT-STATUS.md),
 [ENGINEERING-STANDARDS.md](ENGINEERING-STANDARDS.md) and
 [SIMPLIFIED-FINANCE-AND-SHIFT-CORRECTIONS.md](SIMPLIFIED-FINANCE-AND-SHIFT-CORRECTIONS.md).
@@ -47,7 +55,7 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   pass. See [the A4 release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md)
   and [operating guide](CLOSING-TOTAL-CORRECTIONS.md). Queue after A3; no new
   migration. Station installation/checkpoints remain separate.
-- B1 is developed on `codex/customer-shift-corrections`, based on `03d0653`.
+- B1 is published as `c3b3e14` on `codex/customer-shift-corrections`, based on `03d0653`.
   Credit-sale and shift debt-receipt corrections validate exact allocations,
   use net/projected age exposure, bind approval to current account/shift
   history and keep counted funds separate. All 42 backend suites, three type
@@ -63,8 +71,9 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   unrelated files, or quietly include that whole change set.
 - One row is one development release/commit. Finish its development evidence
   before dependent development. Queue station installation separately: install
-  and check one update before the next installation. A group letter is never
-  a bundled update containing all of that group's rows.
+  and check one update before the next installation unless the owner explicitly
+  approves a combined deployment of completed releases, as for A1-A4/B1 above.
+  A group letter alone never authorises bundling unfinished rows.
 - Keep pump readings fixed in finance work. Do not reopen/reclose a shift or
   replay FIFO to change money, debts, billing allocation or expenses.
 - Keep original close snapshots, issued documents and historical allocation
@@ -296,8 +305,8 @@ single change; nor may J6 silently absorb every screen in both applications.
 | Supplier drift and remaining Tier 5 | C2 and bounded J releases; advances alone do not fix supplier-payables drift. |
 | Accepted future scope | eTIMS remains with the fiscal system; statutory payroll, full ledger unification and multi-station architecture need separate decisions. |
 
-The owner instructed us to proceed and then explicitly allowed development
-before station installation on 2026-10-16. Do not reorder silently or bundle
-future stages. Complete and test each development release, then install the
-queued commits one at a time with their own station checks. Commit/push and
-station installation follow the repository rules.
+The owner instructed us to proceed, allowed development before station
+installation on 2026-10-16 and approved a combined installation of completed
+A1-A4/B1 on 2026-10-19. Keep future development releases bounded and tested;
+do not include unfinished work in that installation. Commit/push and station
+installation follow the repository rules and explicit deployment decision.
