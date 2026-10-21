@@ -244,6 +244,8 @@ async function run() {
   try {
     await createSchema(db);
     const { accountId, invoiceId } = await seedDraft(db);
+    const migration = await import('../migrations/20261020_056_issued_invoice_money_notes');
+    await migration.up(db);
 
     const issued = await issueReservedCustomerInvoice(db, {
       invoiceId,
@@ -272,26 +274,26 @@ async function run() {
     assert.equal(paymentResult.payment.received_into, 'mpesa');
     assert.equal(money(paymentResult.outstanding_balance), 850);
 
-    // Notes are fuel, litres and a price per litre (services/invoiceAdjustments.ts).
+    // Issued fuel stays fixed; monetary notes correct only the amount due.
     const approver = { id: 1, name: 'Test Admin' };
     const note = (fields: Record<string, unknown>) => postInvoiceAdjustment(db, {
-      invoiceId, noteDate: '2026-07-31', approver, reason: 'Verified correction for this invoice', ...fields,
+      invoiceId, noteDate: '2026-07-31', approver, correction: 'amount', reason: 'Verified correction for this invoice', ...fields,
     } as any);
     // Price: agreed 165, invoiced 185 on 10 L.
-    const credit = await note({ noteType: 'credit_note', correction: 'price', fuelType: 'petrol', litres: 10, unitPrice: 20 });
+    const credit = await note({ noteType: 'credit_note', amount: 200 });
     assert.equal(credit.note.note_number, 'CN-20260731-001');
     assert.equal(money(credit.invoice.balance), 650);
-    await expectCode(() => note({ noteType: 'credit_note', correction: 'price', fuelType: 'petrol', litres: 10, unitPrice: 186 }), 'CREDIT_PRICE_EXCEEDS_INVOICE');
+    await expectCode(() => note({ noteType: 'credit_note', amount: 1860 }), 'CREDIT_NOTE_EXCEEDS_BILLED');
     // Litres: 6 L not taken, at the invoice price (1,110): more than the 650
     // unpaid, so 460 is the customer's credit.
-    const quantityCredit = await note({ noteType: 'credit_note', correction: 'litres', fuelType: 'petrol', litres: 6 });
+    const quantityCredit = await note({ noteType: 'credit_note', amount: 1110 });
     assert.equal(money(quantityCredit.note.amount), 1110);
     assert.deepEqual([money(quantityCredit.note.applied_amount), money(quantityCredit.note.unapplied_amount)], [650, 460]);
     assert.equal(money(quantityCredit.invoice.balance), 0);
-    await expectCode(() => note({ noteType: 'credit_note', correction: 'litres', fuelType: 'petrol', litres: 5 }), 'CREDIT_LITRES_EXCEED_INVOICE');
+    await expectCode(() => note({ noteType: 'credit_note', amount: 925 }), 'CREDIT_NOTE_EXCEEDS_BILLED');
 
     // A debit note is a bill of its own; the customer's credit pays it.
-    const debit = await note({ noteType: 'debit_note', correction: 'litres', fuelType: 'petrol', litres: 0.5 });
+    const debit = await note({ noteType: 'debit_note', amount: 92.5 });
     const debitBill = debit.debit_note;
     assert.equal(debitBill.invoice_number, 'DN-20260731-001');
     assert.equal(money(debitBill.total_amount), 92.5);
@@ -351,14 +353,22 @@ async function run() {
       }),
       'VOID_REASON_REQUIRED',
     );
-    const voided = await voidIssuedCustomerInvoice(db, {
+    await expectCode(() => voidIssuedCustomerInvoice(db, {
       invoiceId,
       voidDate: '2026-08-01',
       reason: 'Invoice cancelled and will be reissued',
+    }), 'ISSUED_INVOICE_SOURCE_FIXED');
+    const sourceBeforeCredit = await db('invoice_consumption').first();
+    const lineBeforeCredit = await db('invoice_lines').where({ invoice_id: invoiceId }).first();
+    const cancellation = await postInvoiceAdjustment(db, {
+      invoiceId, noteDate: '2026-08-01', approver,
+      noteType: 'credit_note', correction: 'amount', amount: 1850,
+      reason: 'Invoice amount cancelled after review',
     });
-    assert.equal(voided.status, 'void');
-    assert.equal(money(voided.balance), 0);
-    assert.equal((await db('invoice_consumption').first()).invoice_line_id, null);
+    assert.equal(cancellation.invoice.status, 'paid');
+    assert.equal(money(cancellation.invoice.balance), 0);
+    assert.deepEqual(await db('invoice_consumption').first(), sourceBeforeCredit, 'full monetary credit must retain original fuel linkage and facts');
+    assert.deepEqual(await db('invoice_lines').where({ invoice_id: invoiceId }).first(), lineBeforeCredit);
     assert.equal(money((await db('credit_accounts').where({ id: accountId }).first()).balance), 0);
 
     const eventTotals = await db('invoice_accounting_events')
@@ -370,16 +380,16 @@ async function run() {
       .first();
     assert.equal(money(eventTotals?.receivable), 0, 'Accounting events did not net receivables to zero');
     assert.equal(money(eventTotals?.cash), 0, 'Payment and reversal did not net cash to zero');
-    assert.equal(money(eventTotals?.revenueAdjustment), 0, 'Issue, notes, and void did not net revenue adjustment to zero');
+    assert.equal(money(eventTotals?.revenueAdjustment), -1900, 'full credit offsets the original fuel revenue plus the invoice price adjustment');
     const audit = await auditReceivableIntegrity(db);
     assert.equal(audit.ok, true, JSON.stringify(audit.issues));
 
     const sequenceRows = await db('invoice_document_sequences').orderBy(['document_type', 'business_date']);
-    assert.equal(sequenceRows.length, 3);
+    assert.equal(sequenceRows.length, 4);
     console.log('PASS invoice terms, issue accounting, and atomic document numbers');
     console.log('PASS credit/debit notes and immutable note reversals');
     console.log('PASS payment reversal preserves allocations and reverses cash/receivables');
-    console.log('PASS invoice void releases consumption and nets accounting events');
+    console.log('PASS issued fuel void refused; full monetary credit retains source and settles the amount due');
   } finally {
     await db.destroy();
   }

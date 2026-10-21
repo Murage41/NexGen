@@ -190,16 +190,13 @@ export const issueCustomerInvoice = (id: number) => api.post(`/customer-invoices
 export const refreshCustomerInvoiceDraft = (id: number) => api.post(`/customer-invoices/${id}/refresh`);
 export const voidCustomerInvoice = (id: number, data: { reason: string }) => api.post(`/customer-invoices/${id}/void`, data);
 export const deleteCustomerInvoiceDraft = (id: number) => api.delete(`/customer-invoices/${id}`);
-export const createCustomerInvoiceAdjustment = (id: number, data: any) =>
-  api.post(`/customer-invoices/${id}/adjustments`, data);
+export const createCustomerInvoiceAdjustment = (id: number, data: any, operationKey?: string) =>
+  api.post(`/customer-invoices/${id}/adjustments`, data, operationConfig(operationKey));
 export const reverseCustomerInvoiceAdjustment = (noteId: number, data: Record<string, unknown>) =>
   api.post(`/customer-invoices/adjustments/${noteId}/reverse`, data);
-// A debit note for a shift, for a customer with no invoice to correct.
-export const createStandaloneDebitNote = (data: Record<string, unknown>) =>
-  api.post('/customer-invoices/debit-notes', data);
-// Who a note on a shift would put the litres on, at the shift's pump price.
-export const getNoteAttendant = (params: Record<string, unknown>) =>
-  api.get('/customer-invoices/note-attendant', { params });
+// A separate monetary debit-note bill for a customer with no invoice to correct.
+export const createStandaloneDebitNote = (data: Record<string, unknown>, operationKey?: string) =>
+  api.post('/customer-invoices/debit-notes', data, operationConfig(operationKey));
 export const getInvoiceAccountingEvents = (params?: any) =>
   api.get('/customer-invoices/accounting-events', { params });
 

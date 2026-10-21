@@ -430,7 +430,10 @@ export default function InvoiceCustomerDetail() {
                   <p className="text-xs text-gray-400">{fmt(row.retail_amount)}</p>
                 </div>
               </div>
-              {row.shift_status === 'closed' && !['reversed', 'deleted'].includes(row.billing_status) && (
+              {row.issued_source_locked && (
+                <p className="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-500">Issued consumption is fixed. An admin can adjust the invoice amount with a credit or debit note on the station PC.</p>
+              )}
+              {row.shift_status === 'closed' && !row.issued_source_locked && !['reversed', 'deleted'].includes(row.billing_status) && (
                 <button onClick={() => setCorrecting(row)} className="mt-3 w-full border-t border-gray-100 pt-2 text-center text-xs font-medium text-blue-700">
                   Correct this entry
                 </button>

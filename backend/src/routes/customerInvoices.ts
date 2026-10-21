@@ -21,7 +21,8 @@ import {
   postStandaloneDebitNote,
   reverseInvoiceAdjustment,
 } from '../services/invoiceAdjustments';
-import { approvalBindings, resolveApprover } from '../services/approval';
+import { activeAdmin, approvalBindings, approvalSubjectError, resolveApprover } from '../services/approval';
+import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 import { getVarianceStatement } from '../services/employeeVariances';
 import {
   issueReservedCustomerInvoice,
@@ -213,59 +214,55 @@ router.get('/accounting-events', async (req, res) => {
 
 router.post('/adjustments/:noteId/reverse', requireAdmin, async (req: any, res) => {
   try {
+    await noteSession(req);
     const noteId = Number(req.params.noteId);
     const sessionEmployeeId = Number(req.employee?.id) > 0 ? Number(req.employee.id) : null;
-    await resolveApprover(sessionEmployeeId, req.body?.approval_token, approvalBindings.invoice_note_reversal({ note_id: noteId }), db);
-    const result = await reverseInvoiceAdjustment(db, {
-      noteId,
-      // Dated the day it is made, like every correction.
-      reversalDate: getKenyaDate(),
-      reason: req.body.reason,
-      actorId: req.employee?.id,
+    const result = await runIdempotent(db, {
+      scope: `invoice-note-reversal:${noteId}`, key: normalizeIdempotencyKey(req.get('Idempotency-Key')),
+      payload: { note_id: noteId, reason: req.body?.reason },
+    }, async (trx) => {
+      await resolveApprover(sessionEmployeeId, req.body?.approval_token, approvalBindings.invoice_note_reversal({ note_id: noteId }), trx);
+      const data = await reverseInvoiceAdjustment(trx, {
+        noteId, reversalDate: getKenyaDate(), reason: req.body.reason, actorId: req.employee?.id,
+      });
+      return { status: 200, body: { success: true, data } };
     });
-    res.json({ success: true, data: result });
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     console.error('[customerInvoices:reverseNote] ERROR', err.message);
     res.status(err.http || err.httpStatus || paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
   }
 });
 
-// Body: { note_type, correction: 'litres'|'price', fuel_type, litres,
-//         unit_price? (price corrections, and debit notes for a shift),
-//         reason, shift_id?, attendant? (the shift's attendant owes it, or is
-//         owed it), approval_token? } (services/invoiceAdjustments.ts)
-const wantsAttendant = (value: unknown) => value === true || value === 'true';
+// Issued documents are corrected in money. Fuel and attendant changes are not
+// accepted here, including obsolete fields from an older client.
 function noteInput(req: any, approver: any) {
   return {
     noteType: req.body?.note_type,
     correction: req.body?.correction,
-    fuelType: req.body?.fuel_type,
-    litres: Number(req.body?.litres),
-    unitPrice: req.body?.unit_price === undefined || req.body?.unit_price === null ? null : Number(req.body.unit_price),
+    amount: req.body?.amount,
     reason: req.body?.reason,
-    shiftId: Number(req.body?.shift_id) > 0 ? Number(req.body.shift_id) : null,
-    attendant: wantsAttendant(req.body?.attendant),
     noteDate: getKenyaDate(),
     approver,
     actorId: req.employee?.id,
   };
 }
-const noteApproval = (req: any, accountId: number, invoiceId: number | null) => resolveApprover(
-  Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
-  req.body?.approval_token,
-  approvalBindings.invoice_note({
-    account_id: accountId,
-    invoice_id: invoiceId,
-    note_type: req.body?.note_type,
-    correction: req.body?.correction,
-    fuel_type: req.body?.fuel_type,
-    litres: req.body?.litres,
-    unit_price: req.body?.correction === 'litres' && invoiceId ? 0 : req.body?.unit_price,
-    shift_id: req.body?.shift_id,
-    attendant: wantsAttendant(req.body?.attendant),
-  }),
-  db,
-);
+const noteApproval = (req: any, accountId: number, invoiceId: number | null, conn: typeof db) => {
+  const fields = { ...req.body, account_id: accountId, invoice_id: invoiceId || 0 };
+  const error = approvalSubjectError('invoice_note', fields);
+  if (error) throw Object.assign(new Error(error), { http: 400, code: 'INVALID_NOTE_REQUEST' });
+  return resolveApprover(Number(req.employee?.id) > 0 ? Number(req.employee.id) : null,
+    req.body?.approval_token, approvalBindings.invoice_note(fields), conn);
+};
+const notePayload = (req: any) => {
+  const { approval_token: _token, ...payload } = req.body || {};
+  return payload;
+};
+async function noteSession(req: any) {
+  if (Number(req.employee?.id) > 0 && !await activeAdmin(Number(req.employee.id), db)) {
+    throw Object.assign(new Error('The signed-in employee is no longer an active administrator.'), { http: 403 });
+  }
+}
 
 // GET /note-attendant?account_id&invoice_id?&note_type&fuel_type&litres&shift_id
 // Who a note on a shift would put the litres on, and at what pump price, so
@@ -291,18 +288,22 @@ router.get('/note-attendant', requireAdmin, async (req: any, res) => {
   }
 });
 
-// POST /debit-notes - a debit note for a customer with no invoice to correct:
-// fuel taken on a shift but recorded on someone else, or missed.
-// Body: { account_id, fuel_type, litres, unit_price, reason, shift_id, approval_token? }
+// POST /debit-notes — a standalone monetary bill for an invoice customer.
+// Body: { account_id, note_type:'debit_note', correction:'amount', amount, reason, approval_token? }
 router.post('/debit-notes', requireAdmin, async (req: any, res) => {
   console.log('[customerInvoices:debitNote]', { ...req.body, approval_token: undefined });
   try {
+    await noteSession(req);
     const accountId = Number(req.body?.account_id);
-    req.body = { ...req.body, note_type: 'debit_note', correction: 'litres' };
-    const approver = await noteApproval(req, accountId, null);
-    const bill = await postStandaloneDebitNote(db, { ...noteInput(req, approver), accountId });
+    if (req.body?.note_type !== 'debit_note') throw Object.assign(new Error('Choose a debit note.'), { http: 400 });
+    const result = await runIdempotent(db, { scope: `invoice-debit-note:${accountId}`, key: normalizeIdempotencyKey(req.get('Idempotency-Key')), payload: notePayload(req) }, async (trx) => {
+      const approver = await noteApproval(req, accountId, null, trx);
+      const bill = await postStandaloneDebitNote(trx, { ...noteInput(req, approver), accountId });
+      return { status: 201, body: { success: true, data: bill } };
+    });
+    const bill = result.body.data;
     await saveDocumentAfterPosting(db, 'customer_invoice', Number(bill.id), req.employee?.id);
-    res.status(201).json({ success: true, data: bill });
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     console.error('[customerInvoices:debitNote] ERROR', err.message);
     res.status(err.http || err.httpStatus || paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
@@ -519,6 +520,8 @@ router.put('/:id/lines/:lineId', requireAdmin, async (req, res) => {
     }
 
     await db.transaction(async (trx) => {
+      const current = await trx('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first();
+      if (!current || current.status !== 'draft') throw Object.assign(new Error('Only draft invoices can be edited.'), { http: 409 });
       const line = await trx('invoice_lines').where({ id: lineId, invoice_id: invoiceId }).first();
       if (!line) throw Object.assign(new Error('Line not found'), { http: 404 });
       const lineTotal = Math.round(Number(line.total_litres) * priceNum * 100) / 100;
@@ -571,14 +574,19 @@ router.post('/:id/issue', requireAdmin, async (req: any, res) => {
 router.post('/:id/adjustments', requireAdmin, async (req: any, res) => {
   console.log('[customerInvoices:note]', { invoiceId: req.params.id, ...req.body, approval_token: undefined });
   try {
+    await noteSession(req);
     const invoiceId = Number(req.params.id);
-    const invoice = await db('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first('account_id');
-    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
-    const approver = await noteApproval(req, Number(invoice.account_id), invoiceId);
-    const result: any = await postInvoiceAdjustment(db, { ...noteInput(req, approver), invoiceId });
-    if (result.debit_note) await saveDocumentAfterPosting(db, 'customer_invoice', Number(result.debit_note.id), req.employee?.id);
-    if (result.note) await saveDocumentAfterPosting(db, 'credit_note', Number(result.note.id), req.employee?.id);
-    res.status(201).json({ success: true, data: result });
+    const result = await runIdempotent(db, { scope: `invoice-note:${invoiceId}`, key: normalizeIdempotencyKey(req.get('Idempotency-Key')), payload: notePayload(req) }, async (trx) => {
+      const invoice = await trx('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first('account_id');
+      if (!invoice) throw Object.assign(new Error('Invoice not found'), { http: 404 });
+      const approver = await noteApproval(req, Number(invoice.account_id), invoiceId, trx);
+      const data = await postInvoiceAdjustment(trx, { ...noteInput(req, approver), invoiceId });
+      return { status: 201, body: { success: true, data } };
+    });
+    const data: any = result.body.data;
+    if (data.debit_note) await saveDocumentAfterPosting(db, 'customer_invoice', Number(data.debit_note.id), req.employee?.id);
+    if (data.note) await saveDocumentAfterPosting(db, 'credit_note', Number(data.note.id), req.employee?.id);
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     console.error('[customerInvoices:note] ERROR', err.message);
     res.status(err.http || err.httpStatus || paymentHttpStatus(err)).json({ success: false, error: err.message, code: err.code });
@@ -611,7 +619,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       const invoice = await trx('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first();
       if (!invoice) throw Object.assign(new Error('Invoice not found'), { http: 404 });
       if (invoice.status !== 'draft') {
-        throw Object.assign(new Error('Only draft invoices can be deleted. Use /void for issued.'), { http: 400 });
+        throw Object.assign(new Error('Only draft invoices can be deleted. Correct an issued invoice with a monetary credit or debit note.'), { http: 400 });
       }
       await releaseInvoiceReservation(trx, invoiceId);
       await trx('invoice_lines').where({ invoice_id: invoiceId }).delete();

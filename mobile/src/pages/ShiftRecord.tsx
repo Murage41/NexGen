@@ -906,9 +906,9 @@ export default function ShiftRecord() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm">KES {Number(c.retail_amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
-                {isAdmin && !c.invoice_line_id && (
-                  <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>
-                )}
+                {isAdmin && (c.issued_source_locked
+                  ? <span className="text-xs text-gray-500">Issued consumption is fixed. Use an invoice note on the station PC.</span>
+                  : !c.invoice_line_id && <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>)}
               </div>
             </div>
           ))}

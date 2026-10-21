@@ -30,7 +30,7 @@ invoice only with a credit or debit note that refers to it.
 ## What can be corrected today
 
 On a closed shift:
-- **Fuel on account** (an invoice customer's fuel entry).
+- **Fuel on account** before invoice issue (unbilled or in a draft).
 - **Credit sales** (credit given to a credit customer).
 - **Debt payments** (a credit customer paying what they owe, into the drawer).
 - **Drawer expenses.**
@@ -42,19 +42,21 @@ retain their original calculation; new opening figures are never invented.
 
 Still done the old way until later phases: office payments and attendants'
 repayments (payment reversal), moving or writing off a balance (**Move
-balance**, see `CLOSED-SHIFT-CORRECTIONS.md`), cancelling an invoice (void),
-price notes, wages paid from the drawer, meter readings, deliveries and stock.
+balance**, see `CLOSED-SHIFT-CORRECTIONS.md`), wages paid from the drawer,
+meter readings, deliveries and stock. B2 handles issued invoice amounts with
+monetary notes; issued source consumption is fixed.
 
 ## Where
 
 - **On a closed shift** (desktop and phone): each list (fuel on account,
   credits given, debt collections, shift expenses) has **Correct** on every
-  entry and an **Add missing** button; A4's counts have **Correct cash and
+  eligible entry and an **Add missing** button; A4's counts have **Correct cash and
   M-Pesa totals** or **Correct closing balances**. An entry already corrected shows the correction's number
   instead.
 - **A fuel entry** can also be corrected from the customer's fuel history:
   Customer Invoices (desktop) or Invoice Customers (phone) → the customer →
-  **Correct**.
+  **Correct** before invoice issue. Issued entries show that their fuel is fixed;
+  use the linked invoice's monetary note instead.
 - **The register (desktop):** **Corrections** in the menu lists every
   correction, newest first. Open one to see exactly what it did, and to undo it.
 - **The daily report** lists the corrections posted that day.
@@ -92,12 +94,13 @@ shift's pump price for that fuel and day.
 |---|---|
 | Not yet invoiced | The wrong entry is reversed (kept, marked), the right one added. The customer's next invoice bills the right fuel. |
 | In a draft invoice | The same, and the draft is refreshed at once. Check the draft's prices before issuing it. |
-| On an issued invoice, paid or not | NexGen makes the notes itself, at the invoice's agreed price: a **credit note** for what was billed and should not have been, a **debit note** (a new bill) for what should have been billed. Credit beyond what the invoice still owes is held for the customer's next bill, and pays a debit note first. Fuel that was another customer's goes to that customer's next invoice. |
+| On an issued invoice, paid or not | Source correction is refused. On the invoice, manually post a monetary credit/debit note. Payments and original fuel/PDF stay recorded; excess credit is held for eligible bills. |
 
 The fuel on account for a fuel can never be more than that fuel's pumps sold
-on the shift. A credit note can never credit more litres than the invoice
-billed. If the invoice already has a note made by hand, NexGen warns you, so
-the same mistake is not corrected twice.
+on the shift. After issue, cumulative monetary credits cannot exceed that
+document's billed amount, including any historical inline debit notes. New
+separate DN bills have their own credit cap. Full credit keeps its fuel invoiced; it never
+returns to an unbilled selector. See [Invoice Customer Workflow](INVOICE-CUSTOMER-WORKFLOW.md).
 
 ### Credit sales
 

@@ -43,6 +43,8 @@ async function run() {
       table.integer('account_id').notNullable();
       table.string('invoice_number').nullable();
       table.string('status').notNullable();
+      table.date('issue_date').nullable();
+      table.timestamp('issued_at').nullable();
     });
     await db.schema.createTable('invoice_lines', (table) => {
       table.increments('id').primary();
@@ -134,9 +136,13 @@ async function run() {
     const reserved = await getInvoiceConsumptionHistory(db, 1, { status: 'reserved' });
     assert.equal(reserved.pagination.total, 1);
     assert.equal(reserved.rows[0].invoice_status, 'draft');
+    assert.equal(reserved.rows[0].issued_source_locked, false);
     const invoiced = await getInvoiceConsumptionHistory(db, 1, { status: 'invoiced' });
     assert.equal(invoiced.pagination.total, 1);
     assert.equal(invoiced.rows[0].invoice_number, 'INV-0001');
+    assert.equal(invoiced.rows[0].issued_source_locked, true);
+    assert.equal(invoiced.rows[0].issued_invoice_id, 21);
+    assert.equal(invoiced.rows[0].issued_invoice_number, 'INV-0001');
     const audit = await getInvoiceConsumptionHistory(db, 1, { status: 'all', pageSize: 2 });
     assert.equal(audit.pagination.total, 5);
     assert.equal(audit.pagination.total_pages, 3);

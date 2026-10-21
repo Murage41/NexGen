@@ -297,6 +297,13 @@ router.put('/:id', requireAdmin, validate(updateCreditAccountSchema), async (req
         }
       } else {
         // invoice → money
+        if (await invoiceCustomerCredit(Number(account.id), db) > 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Cannot switch to money mode while this customer holds invoice credit. Keep their invoice account available for that credit.',
+            code: 'INVOICE_CREDIT_HELD',
+          });
+        }
         const unbilled = await db('invoice_consumption')
           .where({ account_id: account.id })
           .whereNull('deleted_at')
@@ -333,6 +340,10 @@ router.put('/:id', requireAdmin, validate(updateCreditAccountSchema), async (req
     const updated = await db('credit_accounts').where({ id: account.id }).first();
     res.json({ success: true, data: updated });
   } catch (err: any) {
+    if (String(err.message).includes('This customer holds invoice credit.')) {
+      return res.status(400).json({ success: false, code: 'INVOICE_CREDIT_HELD',
+        error: 'Cannot switch to money mode while this customer holds invoice credit. Keep their invoice account available for that credit.' });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });

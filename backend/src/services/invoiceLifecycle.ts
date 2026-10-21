@@ -6,10 +6,7 @@ import {
   nextInvoiceDocumentNumber,
   postInvoiceAccountingEvent,
 } from './invoiceAccounting';
-import {
-  releaseInvoiceReservation,
-  validateDraftReservationForIssue,
-} from './invoiceDraftReservations';
+import { validateDraftReservationForIssue } from './invoiceDraftReservations';
 import { reverseAttendantEntries } from './invoiceAdjustments';
 import { applyInvoiceCustomerCredit, recomputeInvoiceTotals, roundMoney } from './receivablePayments';
 
@@ -115,6 +112,19 @@ export async function voidIssuedCustomerInvoice(
     if (!['issued', 'partial', 'paid'].includes(invoice.status)) {
       throw httpError('Only issued invoices can be voided', 400, 'INVOICE_NOT_ISSUED');
     }
+    if (invoice.document_kind !== 'debit_note') {
+      throw httpError(
+        'Issued fuel stays on its invoice. Use a monetary credit note to reduce or cancel the amount due.',
+        409,
+        'ISSUED_INVOICE_SOURCE_FIXED',
+      );
+    }
+    const linkedSource = await trx('invoice_consumption as source')
+      .join('invoice_lines as line', 'source.invoice_line_id', 'line.id')
+      .where('line.invoice_id', input.invoiceId).first('source.id');
+    if (linkedSource) {
+      throw httpError('This debit note contains issued fuel. Use a monetary credit note instead.', 409, 'ISSUED_INVOICE_SOURCE_FIXED');
+    }
     if (input.voidDate < invoice.issue_date) {
       throw httpError('Void date cannot be before the issue date.', 400, 'INVALID_VOID_DATE');
     }
@@ -151,7 +161,6 @@ export async function voidIssuedCustomerInvoice(
       );
     }
 
-    await releaseInvoiceReservation(trx, input.invoiceId);
     await trx('customer_invoices').where({ id: input.invoiceId }).update({
       status: 'void',
       balance: 0,

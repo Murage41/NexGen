@@ -11,7 +11,6 @@ import {
   voidCustomerInvoice,
   deleteCustomerInvoiceDraft,
   createCustomerInvoiceAdjustment,
-  getNoteAttendant,
   reverseCustomerInvoiceAdjustment,
   desktopApproval,
   getCreditAccounts,
@@ -382,8 +381,8 @@ export default function CustomerInvoices() {
     setReasonAction({
       kind: 'invoice',
       id,
-      title: 'Void customer invoice',
-      description: 'This reverses the invoice accounting entry and releases its consumption back to unbilled history.',
+      title: 'Void unpaid debit note',
+      description: 'This cancels the unpaid debit-note bill. Its original document and history stay on record.',
     });
     setReasonText('');
     setReasonDate(today());
@@ -487,6 +486,7 @@ export default function CustomerInvoices() {
     { customer_count: 0, issued_balance: 0, unbilled_litres: 0, unbilled_retail_amount: 0, total_exposure: 0, unbilled_entries: 0 },
   );
   const fmtLitres = (n: number) => `${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`;
+  const monetaryDocument = Boolean(detail?.lines?.length) && detail.lines.every((line: any) => line.fuel_type === 'adjustment');
 
   return (
     <div>
@@ -1248,21 +1248,33 @@ export default function CustomerInvoices() {
                   <span>The rows shown here are reserved for this draft. Later entries are added only when you refresh it.</span>
                 </div>
               )}
+              {detail.status !== 'draft' && detail.document_kind !== 'debit_note' && (
+                <p className="text-xs border border-blue-200 bg-blue-50 p-3 text-blue-900">
+                  Issued fuel consumption and the original invoice are fixed. Use a credit note to reduce the amount owed, including a full credit, or a debit note for an additional amount. Payments stay recorded; a note does not pay out a refund.
+                </p>
+              )}
               {/* Lines */}
               <div>
                 <p className="text-xs font-semibold text-gray-600 mb-1">Lines</p>
                 <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
                   <thead className="bg-gray-50 text-xs text-gray-500">
                     <tr>
-                      <th className="text-left px-3 py-2">Fuel</th>
-                      <th className="text-right px-3 py-2">Litres</th>
-                      <th className="text-right px-3 py-2">Agreed price</th>
+                      <th className="text-left px-3 py-2">Description</th>
+                      {!monetaryDocument && <>
+                        <th className="text-right px-3 py-2">Litres</th>
+                        <th className="text-right px-3 py-2">Agreed price</th>
+                      </>}
                       <th className="text-right px-3 py-2">Line total</th>
                       {detail.status === 'draft' && <th className="w-10"></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.lines.map((l: any) => (
+                    {detail.lines.map((l: any) => l.fuel_type === 'adjustment' ? (
+                      <tr key={l.id} className="border-t border-gray-100">
+                        <td className="px-3 py-2 font-medium" colSpan={monetaryDocument ? 1 : 3}>Money adjustment</td>
+                        <td className="px-3 py-2 text-right font-medium">{fmt(l.line_total)}</td>
+                      </tr>
+                    ) : (
                       <tr key={l.id} className="border-t border-gray-100">
                         <td className="px-3 py-2 capitalize font-medium">{l.fuel_type}</td>
                         <td className="px-3 py-2 text-right">{Number(l.total_litres).toLocaleString()}</td>
@@ -1306,7 +1318,7 @@ export default function CustomerInvoices() {
                       </tr>
                     ))}
                     <tr className="border-t-2 border-gray-200 font-bold bg-gray-50">
-                      <td className="px-3 py-2" colSpan={3}>
+                      <td className="px-3 py-2" colSpan={monetaryDocument ? 1 : 3}>
                         Total
                       </td>
                       <td className="px-3 py-2 text-right">{fmt(detail.total_amount)}</td>
@@ -1314,7 +1326,7 @@ export default function CustomerInvoices() {
                     </tr>
                     {Number(detail.balance) !== Number(detail.total_amount) && detail.status !== 'draft' && (
                       <tr className="text-sm">
-                        <td className="px-3 py-1" colSpan={3}>Balance</td>
+                        <td className="px-3 py-1" colSpan={monetaryDocument ? 1 : 3}>Balance</td>
                         <td className={`px-3 py-1 text-right font-semibold ${Number(detail.balance) > 0 ? 'text-red-600' : 'text-green-600'}`}>
                           {fmt(detail.balance)}
                         </td>
@@ -1375,7 +1387,7 @@ export default function CustomerInvoices() {
                   <p className="font-semibold text-gray-600 mb-1">Debit notes for this invoice</p>
                   {detail.debit_notes.map((d: any) => (
                     <p key={d.id} className="text-gray-700">
-                      <span className="font-mono">{d.invoice_number}</span> · {d.issue_date} · {fmt(d.total_amount)} · {d.status}
+                      <button onClick={() => void openDetail({ id: d.id })} className="font-mono text-blue-700 hover:underline">{d.invoice_number}</button> · {d.issue_date} · {fmt(d.total_amount)} · {d.status}
                     </p>
                   ))}
                 </div>
@@ -1403,7 +1415,8 @@ export default function CustomerInvoices() {
                             {note.note_type === 'credit_note' && <DocumentButton load={() => getCreditNoteDocument(note.id)} />}
                           </td>
                           <td className="px-2 py-1.5">
-                            {note.fuel_type && (
+                            {note.correction === 'amount' && <span className="block text-gray-600">Money adjustment</span>}
+                            {note.fuel_type && note.fuel_type !== 'adjustment' && (
                               <span className="block text-gray-600">
                                 {note.fuel_type} · {Number(note.litres).toFixed(2)} L × {fmt(note.unit_price)}
                                 {note.correction === 'price' ? ' (price difference)' : ''}
@@ -1417,7 +1430,7 @@ export default function CustomerInvoices() {
                               </span>
                             )}
                             {note.status === 'posted' && Number(note.unapplied_amount) > 0 && (
-                              <span className="block text-amber-700">{fmt(note.unapplied_amount)} held as the customer's credit for their next invoice</span>
+                              <span className="block text-amber-700">{fmt(note.unapplied_amount)} held as the customer's credit for other or later invoices</span>
                             )}
                           </td>
                           <td className={`px-2 py-1.5 text-right font-medium ${Number(note.signed_amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
@@ -1552,12 +1565,12 @@ export default function CustomerInvoices() {
                     <Trash2 size={14} /> Delete draft
                   </button>
                 )}
-                {(detail.status === 'issued' || detail.status === 'partial') && (
+                {detail.document_kind === 'debit_note' && detail.status === 'issued' && Number(detail.paid_amount || 0) === 0 && (
                   <button
                     onClick={() => handleVoid(detail.id)}
                     className="inline-flex items-center gap-1 text-red-600 text-sm hover:bg-red-50 px-3 py-1.5 rounded-lg"
                   >
-                    <Ban size={14} /> Void
+                    <Ban size={14} /> Void unpaid bill
                   </button>
                 )}
               </div>
@@ -1634,8 +1647,7 @@ export default function CustomerInvoices() {
                   noteType={noteType!}
                   invoice={detail}
                   approval={desktopApproval}
-                  post={(body) => createCustomerInvoiceAdjustment(detail.id, body)}
-                  attendantPreview={getNoteAttendant}
+                  post={(body, key) => createCustomerInvoiceAdjustment(detail.id, body, key)}
                   onDone={noteDone}
                   onCancel={() => setNoteType(null)}
                 />
@@ -1692,7 +1704,7 @@ export default function CustomerInvoices() {
                 disabled={reasonBusy || reasonText.trim().length < 10}
                 className="px-4 py-2 text-sm bg-red-600 text-white rounded font-medium hover:bg-red-700 disabled:opacity-50"
               >
-                {reasonBusy ? 'Posting...' : reasonAction.kind === 'invoice' ? 'Void invoice' : 'Post reversal'}
+                {reasonBusy ? 'Posting...' : reasonAction.kind === 'invoice' ? 'Void unpaid bill' : 'Post reversal'}
               </button>
             </div>
           </div>

@@ -5,9 +5,8 @@ import path from 'node:path';
 import express from 'express';
 
 // Corrections (services/corrections.ts, docs/CORRECTIONS.md), phase 1: fuel on
-// account. Every error kind at every stage (not yet invoiced, in a draft, on an
-// issued invoice paid or not), the attendant rule on shortage and surplus
-// shifts with both routings, the notes, approval bound to the preview, undo,
+// account. Unbilled and draft source corrections, issued-source refusals,
+// the attendant rule, approval bound to the preview, undo,
 // the register, and that closed shifts keep showing what they closed with.
 // Runs on a private temporary database; never touches data/nexgen.db.
 async function main() {
@@ -239,78 +238,41 @@ async function main() {
     assert.equal((await call('POST', '/inv/payments', desktop, { account_id: delta, amount: 8850, payment_method: 'cash' })).status, 201);
     assert.equal((await invoice()).status, 'paid');
 
-    // ---- 4. Wrong litres on a paid invoice, a surplus shift, the attendant ----
-    const c4 = await correct({ error_kind: 'wrong_litres', target_id: e5, litres: 8, charge_to: 'attendant' });
-    assert.equal(c4.status, 201, JSON.stringify(c4.body));
-    const cn4 = c4.preview.documents[0];
-    assert.deepEqual([cn4.type, cn4.fuel_type, cn4.litres, cn4.unit_price, cn4.amount, cn4.held_as_credit], ['credit_note', 'diesel', 2, 185, 370, 370], "at the invoice's price; all held (paid)");
-    const note4 = await db('invoice_adjustment_notes').where({ record_correction_id: c4.body.data.id }).first();
-    assert.deepEqual([Number(note4.amount), Number(note4.unapplied_amount), note4.invoice_id], [370, 370, invId]);
-    const event4 = await db('invoice_accounting_events').where({ adjustment_note_id: note4.id }).first();
-    assert.equal(Number(event4.revenue_adjustment), 10, "only the price difference is revenue: the shift's result carries the 380");
-    const e5b = c4.body.data.lines.find((l: any) => l.action === 'add').created_record_id;
-    assert.equal((await row(e5b)).invoice_line_id, (await row(e5)).invoice_line_id, 'the right litres stay on the invoice');
-    assert.equal(await owed(s2.id), 180, 'a surplus of 200 absorbs 200 of the 380 first');
-    assert.equal(c4.body.data.lines.find((l: any) => l.document_type === 'credit_note').document_number, note4.note_number);
-    console.log('PASS wrong litres on a paid invoice: credit note at the invoice price, held as credit, surplus absorbs first');
+    // ---- Issued fuel stays fixed, whether paid or unpaid ----
+    const issuedSource = await db('invoice_consumption').whereIn('id', [e4, e5]).orderBy('id');
+    for (const request of [
+      { error_kind: 'wrong_litres', target_id: e5, litres: 8 },
+      { error_kind: 'wrong_fuel', target_id: e4, fuel_type: 'diesel' },
+      { error_kind: 'wrong_customer', target_id: e4, account_id: gamma },
+      { error_kind: 'wrong_shift', target_id: e5, shift_id: s3.id },
+      { error_kind: 'duplicate', target_id: e4 },
+    ]) {
+      const refused = await preview(request);
+      assert.equal(refused.status, 409, JSON.stringify(refused.body));
+      assert.equal(refused.body.code, 'ISSUED_INVOICE_SOURCE_FIXED');
+    }
+    assert.deepEqual(await db('invoice_consumption').whereIn('id', [e4, e5]).orderBy('id'), issuedSource);
+    assert.equal(await db('invoice_adjustment_notes').count({ n: 'id' }).first().then((r: any) => Number(r.n)), 0, 'source refusal never generates a note');
+    assert.equal(await owed(s2.id), 0, 'a source refusal never charges an attendant');
+    console.log('PASS all issued source corrections refused; existing paid invoice, source and staff result unchanged');
 
-    // ---- 5. Wrong fuel on the same invoice: credit note, and a debit note paid by the held credit ----
-    const c5 = await correct({ error_kind: 'wrong_fuel', target_id: e4, fuel_type: 'diesel' });
-    assert.equal(c5.status, 201, JSON.stringify(c5.body));
-    assert.deepEqual(c5.preview.documents.map((d: any) => [d.type, d.fuel_type, d.litres, d.unit_price, d.amount]), [
-      ['credit_note', 'petrol', 40, 175, 7000],
-      ['debit_note', 'diesel', 40, 185, 7400],
-    ]);
-    const dn5 = await db('customer_invoices').where({ record_correction_id: c5.body.data.id }).first();
-    assert.deepEqual([dn5.document_kind, dn5.corrects_invoice_id, Number(dn5.total_amount), Number(dn5.balance)], ['debit_note', invId, 7400, 30], 'held credit 7370 pays it first');
-    const e4b = c5.body.data.lines.find((l: any) => l.action === 'add').created_record_id;
-    assert.equal((await db('invoice_lines').where({ id: (await row(e4b)).invoice_line_id }).first()).invoice_id, dn5.id, 'the diesel is billed by the debit note');
-    assert.equal(await owed(s2.id), 0, 'better by 400: 180 owed goes');
-    console.log('PASS wrong fuel on a paid invoice: credit note plus debit note, the held credit pays it');
-
-    // ---- 6. Wrong customer: the plan changes when the invoice is issued in between ----
+    // An earlier draft approval cannot bypass the boundary after issue.
     const body6 = { record_type: 'fuel_on_account', error_kind: 'wrong_customer', target_id: e6, account_id: delta, ...reason };
     const p6 = (await call('POST', '/corrections/preview', desktop, body6)).body.data;
-    assert.equal(p6.documents.length, 0);
-    assert.equal(p6.needs_choice, false, 'same fuel, same price: the shift result does not move');
     const t6 = await token('correction', { plan_hash: p6.plan_hash });
     const gInv = (await call('POST', '/inv', desktop, { account_id: gamma, from_date: daysAgo(9), to_date: daysAgo(9), agreed_prices: { petrol: 170 } })).body.data.id;
     assert.equal((await call('POST', `/inv/${gInv}/issue`, desktop, {})).status, 200);
-    assert.equal((await call('POST', '/corrections', desktop, { ...body6, plan_hash: p6.plan_hash, approval_token: t6 })).body.code, 'PLAN_CHANGED');
-    const c6 = await correct({ error_kind: 'wrong_customer', target_id: e6, account_id: delta });
-    assert.equal(c6.status, 201, JSON.stringify(c6.body));
-    assert.deepEqual(c6.preview.documents.map((d: any) => [d.type, d.amount, d.held_as_credit]), [['credit_note', 3400, 0]], 'unpaid: the note reduces what Gamma owes');
-    assert.equal(Number((await db('customer_invoices').where({ id: gInv }).first()).balance), 0);
-    const e6b = c6.body.data.lines.find((l: any) => l.action === 'add').created_record_id;
-    assert.deepEqual(await row(e6b).then((r: any) => [r.account_id, r.invoice_line_id]), [delta, null], "on Delta's unbilled fuel");
-    console.log('PASS wrong customer: approval refused once the invoice was issued; then a credit note and the fuel moves to the right customer');
+    assert.equal((await call('POST', '/corrections', desktop, { ...body6, plan_hash: p6.plan_hash, approval_token: t6 })).body.code, 'ISSUED_INVOICE_SOURCE_FIXED');
+    assert.equal((await preview({ error_kind: 'wrong_customer', target_id: e6, account_id: delta })).body.code, 'ISSUED_INVOICE_SOURCE_FIXED');
+    assert.deepEqual(await row(e6).then((r: any) => [r.account_id, r.entry_status]), [gamma, 'active']);
+    console.log('PASS issue invalidates pending source approvals and unpaid issued source stays fixed');
 
-    // ---- 7. Wrong shift on an issued invoice: no notes ----
-    const c7 = await correct({ error_kind: 'wrong_shift', target_id: e5b, shift_id: s3.id, charge_to: 'station' });
-    assert.equal(c7.status, 201, JSON.stringify(c7.body));
-    assert.equal(c7.preview.documents.length, 0);
-    assert.deepEqual(c7.preview.shifts.map((s: any) => [s.shift_id, s.change]), [[s2.id, -1520], [s3.id, 1520]]);
-    assert.equal((await row(c7.body.data.lines[1].created_record_id)).invoice_line_id, (await row(e5b)).invoice_line_id);
-    assert.equal(await owed(s2.id), 0, 'worse, the station carries it');
-    assert.equal(await owed(s3.id), 0, 'better: a surplus is the station\'s');
-    console.log('PASS wrong shift on an issued invoice: it stays billed; one shift worse, the other better');
-
-    // ---- 8. Missing, then the pump cap ----
-    assert.equal((await preview({ error_kind: 'missing', account_id: gamma, shift_id: s3.id, fuel_type: 'diesel', litres: 93 })).body.code, 'LITRES_EXCEED_PUMP_SALES', '8 L already on account');
+    // ---- Missing unbilled fuel still uses the pump cap ----
+    assert.equal((await preview({ error_kind: 'missing', account_id: gamma, shift_id: s3.id, fuel_type: 'diesel', litres: 101 })).body.code, 'LITRES_EXCEED_PUMP_SALES');
     const c8 = await correct({ error_kind: 'missing', account_id: gamma, shift_id: s3.id, fuel_type: 'diesel', litres: 15 });
     assert.equal(c8.status, 201, JSON.stringify(c8.body));
-    assert.equal(c8.body.data.number, `C-${year}-0008`);
-    console.log('PASS missing fuel added at the shift price, within what the pumps sold');
-
-    // ---- A note made by hand on the same invoice: warned, and never more litres credited than billed ----
-    const e7b = c7.body.data.lines.find((l: any) => l.action === 'add').created_record_id;
-    const manual = { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 1 };
-    const manualToken = await token('invoice_note', { account_id: delta, invoice_id: invId, ...manual });
-    assert.equal((await call('POST', `/inv/${invId}/adjustments`, desktop, { ...manual, reason: 'One litre spilt at the pump', approval_token: manualToken })).status, 201);
-    const warned = (await preview({ error_kind: 'wrong_litres', target_id: e7b, litres: 7.5, charge_to: 'station' })).body.data;
-    assert(warned.effects.some((e: string) => /^Check: invoice .* already has credit note/.test(e)), JSON.stringify(warned.effects));
-    assert.equal((await preview({ error_kind: 'duplicate', target_id: e7b, charge_to: 'station' })).body.code, 'CREDIT_LITRES_EXCEED_INVOICE', '3 L credited + 8 L > 10 L billed');
-    console.log('PASS a hand-made note on the invoice is flagged; credits never exceed the litres billed');
+    assert.equal(c8.body.data.number, `C-${year}-0004`);
+    console.log('PASS missing unbilled fuel remains independently correctable within pump sales');
 
     // ---- Current rows and original close stay independently available ----
     await db('shift_expenses').insert({ shift_id: s3.id, category: 'other', amount: 100 });
@@ -328,13 +290,13 @@ async function main() {
     assert.deepEqual(s1View.invoice_consumption.map((entry: any) => [entry.fuel_type, Number(entry.litres)]).sort(),
       [['petrol', 32], ['petrol', 50]].sort());
     const s2View = await shiftView(s2.id);
-    assert.deepEqual([s2View.total_invoice_consumption, s2View.variance], [11200, -1300], 'issued fuel corrections are reflected in financial views without changing pump sales');
+    assert.deepEqual([s2View.total_invoice_consumption, s2View.variance], [12700, 200], 'issued source remains fixed in current views');
     const s3View = await shiftView(s3.id);
-    assert.deepEqual([s3View.total_invoice_consumption, s3View.total_expenses, s3View.variance], [4370, 100, 4470], 'new active rows contribute to current values, even without a Correction header');
+    assert.deepEqual([s3View.total_invoice_consumption, s3View.total_expenses, s3View.variance], [2850, 100, 2950], 'new active rows contribute to current values, even without a Correction header');
     for (const [date, retail, petrol, diesel, variance] of [
       [daysAgo(10), 14760, 82, 0, -4240],
-      [daysAgo(9), 11200, 20, 40, -1300],
-      [daysAgo(8), 4370, 0, 23, 4470],
+      [daysAgo(9), 12700, 60, 10, 200],
+      [daysAgo(8), 2850, 0, 15, 2950],
     ] as const) {
       const daily = await call('GET', `/reports/daily?date=${date}`, desktop);
       assert.equal(daily.status, 200, JSON.stringify(daily.body));
@@ -351,12 +313,12 @@ async function main() {
     assert.equal(s1Attendant.record_corrections.lines[0].party_name, undefined, 'the attendant sees what changed, not customer details');
     const history = (await call('GET', `/inv/customers/${delta}/consumption?page_size=50&status=all`)).body.data;
     const status = Object.fromEntries(history.rows.map((r: any) => [r.id, r.billing_status]));
-    assert.deepEqual([status[e2], status[e1b], status[e6b]], ['reversed', 'reserved', 'unbilled']);
+    assert.deepEqual([status[e2], status[e1b], status[e4]], ['reversed', 'reserved', 'invoiced']);
+    assert.equal(history.rows.find((r: any) => r.id === e4).issued_source_locked, true);
+    assert.equal(history.rows.find((r: any) => r.id === e1b).issued_source_locked, false);
     console.log('PASS closed shifts keep their snapshot and entries as closed; the corrected result and history show the corrections');
 
     // ---- Undo ----
-    const u4 = await call('POST', `/corrections/${c4.body.data.id}/undo`, phoneAdmin, { reason_note: 'The litres were right' });
-    assert.equal(u4.body.code, 'UNDO_BLOCKED', 'it made a credit note');
     assert.equal((await call('POST', `/corrections/${c1.body.data.id}/undo`, desktop, { reason_note: 'It was diesel after all' })).status, 400, 'the desktop needs a PIN');
     const u1 = await call('POST', `/corrections/${c1.body.data.id}/undo`, desktop, {
       reason_note: 'It was diesel after all',
@@ -375,17 +337,17 @@ async function main() {
     const afterUndo = await shiftView(s1.id);
     assert.deepEqual([afterUndo.total_invoice_consumption, afterUndo.variance], [15260, -3740], 'undo restores diesel source value once');
     assert.equal((await call('POST', `/corrections/${c1.body.data.id}/undo`, phoneAdmin, { reason_note: 'a second time over' })).body.code, 'UNDO_BLOCKED');
-    console.log('PASS undo: a cancelling correction; blocked when it made notes or was undone');
+    console.log('PASS undo: a cancelling correction with originals preserved; duplicate undo refused');
 
     // ---- The register ----
     const list = (await call('GET', '/corrections')).body.data;
-    assert.equal(list.length, 9);
-    assert.equal((await call('GET', `/corrections?shift_id=${s3.id}`)).body.data.length, 2);
+    assert.equal(list.length, 5);
+    assert.equal((await call('GET', `/corrections?shift_id=${s3.id}`)).body.data.length, 1);
     assert.equal((await call('GET', '/corrections', attendantSession)).status, 403);
-    const detail = (await call('GET', `/corrections/${c5.body.data.id}`)).body.data;
-    assert.deepEqual(detail.lines.map((l: any) => l.document_type), ['credit_note', 'debit_note']);
-    assert.match(detail.undo_blocked_by, /^It made CN-.* and DN-/);
-    console.log('PASS the register lists every correction with its lines and documents');
+    const detail = (await call('GET', `/corrections/${c3.body.data.id}`)).body.data;
+    assert.equal(detail.lines.length, 2);
+    assert(detail.lines.every((line: any) => !line.document_type), 'unbilled corrections do not manufacture invoice notes');
+    console.log('PASS the register lists unbilled/draft corrections and preserves the issued boundary');
   } finally {
     server?.close();
     await db.destroy();

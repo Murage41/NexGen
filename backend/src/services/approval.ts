@@ -19,11 +19,10 @@ export const approvalBindings = {
   // Fuel on account past a limit; the retail value is priced by the server.
   consumption_override: (fields: any) =>
     `consumption_override:${Number(fields?.account_id)}:${Number(fields?.shift_id)}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(3)}`,
-  // An invoice customer's credit or debit note: which customer, which invoice
-  // (0 = none, a debit note for a shift), which kind, fuel, litres and price per
-  // litre (0 = the invoice's own price, a litres correction).
+  // A monetary invoice note: customer, source document (0 = standalone DN),
+  // kind, exact amount and reason. JSON keeps reasons unambiguous.
   invoice_note: (fields: any) =>
-    `invoice_note:${Number(fields?.account_id) || 0}:${Number(fields?.invoice_id) || 0}:${String(fields?.note_type ?? '')}:${String(fields?.correction ?? '')}:${String(fields?.fuel_type ?? '')}:${Number(fields?.litres).toFixed(2)}:${(Number(fields?.unit_price) || 0).toFixed(2)}:${Number(fields?.shift_id) || 0}:${fields?.attendant === true ? 1 : 0}`,
+    `invoice_note:${JSON.stringify([Number(fields?.account_id) || 0, Number(fields?.invoice_id) || 0, fields?.note_type, fields?.correction, fields?.amount, String(fields?.reason ?? '').trim()])}`,
   // Reversing an invoice customer's credit or debit note.
   invoice_note_reversal: (fields: any) => `invoice_note_reversal:${Number(fields?.note_id) || 0}`,
   // Paying a customer back credit they hold on account.
@@ -57,9 +56,14 @@ const positive = (value: unknown) => Number.isFinite(Number(value)) && Number(va
 export function approvalSubjectError(purpose: ApprovalPurpose, fields: any): string | null {
   if (purpose === 'invoice_note') {
     if (!['credit_note', 'debit_note'].includes(String(fields?.note_type ?? ''))) return 'Choose a credit or debit note.';
-    if (!['litres', 'price'].includes(String(fields?.correction ?? ''))) return 'Say what was wrong: the litres or the price.';
-    if (!String(fields?.fuel_type ?? '')) return 'Choose the fuel.';
-    if (!positive(fields?.litres)) return 'The litres being approved are missing.';
+    if (fields?.correction !== 'amount') return 'Use a monetary credit or debit note. Issued fuel entries stay as recorded.';
+    if (['fuel_type', 'litres', 'unit_price', 'shift_id', 'attendant', 'shift_value'].some((key) => Object.prototype.hasOwnProperty.call(fields, key))) return 'Monetary notes do not change fuel, shifts or attendant debts.';
+    if (!Number.isInteger(fields?.account_id) || fields.account_id <= 0) return 'The invoice customer being approved is missing.';
+    if (fields?.note_type === 'credit_note' && (!Number.isInteger(fields?.invoice_id) || fields.invoice_id <= 0)) return 'Choose the invoice to credit.';
+    const amount = fields?.amount;
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || amount > 100_000_000
+      || Math.round((amount + Number.EPSILON) * 100) / 100 !== amount) return 'Enter a positive amount, up to KES 100,000,000, with at most two decimal places.';
+    if (String(fields?.reason ?? '').trim().length < 10) return 'A reason of at least 10 characters is required.';
     return null;
   }
   if (purpose === 'invoice_note_reversal') {

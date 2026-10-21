@@ -36,7 +36,8 @@ exclusions and measurable result. Split any broad row further before code.
 | A3 | Manual opening cash/M-Pesa floats, closing balances and minimal funds movements | Published `8997896`; queued after A2. [Release card](releases/A3-SHIFT-FLOATS.md), [operating guide](OPENING-FUNDS-GUIDE.md). Never linked to the previous shift. |
 | A4 | Independently correct closing cash and M-Pesa totals | Published `03d0653`; checks pass, queued after A3. [Release card](releases/A4-CLOSING-TOTAL-CORRECTIONS.md), [operating guide](CLOSING-TOTAL-CORRECTIONS.md) |
 | B1 | Customer credit and shift debt receipts | Published `c3b3e14`; checks pass, included with A1-A4 in the authorised combined update #16. [Release card](releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md), [operating guide](CUSTOMER-SHIFT-CORRECTIONS.md) |
-| B2 → B3 | Fixed issued consumption with monetary notes; unbilled fuel and draft/limit controls | Planned separate releases; B2 is next development |
+| B2 | Fixed issued consumption and monetary notes | Complete on `codex/issued-invoice-notes` from `454640a`; 44 suites, types/builds, six planted faults, migration/restore and desktop/phone checks pass. Separate queued installation with migration 056; [release card](releases/B2-ISSUED-INVOICE-MONEY-NOTES.md). |
+| B3 | Unbilled fuel and draft/limit controls | Next development; separate release. |
 | B4 → B7 | Expenses; employee debts/targeted repayments; office payments/refunds; drawer wage payments | Planned separate releases |
 | C1 → C2 | Actual supplier-payment cash flow; supplier-payables drift audit | Planned separate releases |
 | D1 → D5 | Fuel orders; GRNs/delivery document; supplier invoice matching; supplier price/document amendments; physical adjustments/returns | M9 and physical work split into releases; meter edits excluded |

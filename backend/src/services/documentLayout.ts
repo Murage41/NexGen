@@ -71,6 +71,7 @@ function paymentFooter(p: StationProfile): string {
 export function documentDefinition(input: DocumentInput): TDocumentDefinitions {
   const { profile } = input;
   const logo = `data:${input.logo.mime};base64,${input.logo.data.toString('base64')}`;
+  const moneyOnly = input.lines.every((line) => line.litres == null && line.price == null);
   const lineRows: TableCell[][] = [
     [
       { text: 'Description', style: 'th' },
@@ -85,6 +86,11 @@ export function documentDefinition(input: DocumentInput): TDocumentDefinitions {
       { text: number2(line.amount), alignment: 'right' as const },
     ]),
   ];
+  if (moneyOnly) {
+    lineRows.splice(0, lineRows.length,
+      [{ text: 'Description', style: 'th' }, { text: 'Amount (KES)', style: 'th', alignment: 'right' }],
+      ...input.lines.map((line) => [{ text: line.description }, { text: number2(line.amount), alignment: 'right' as const }]));
+  }
   const totalRows: TableCell[][] = input.totals.map((row) => [
     { text: row.label, alignment: 'right', bold: row.strong, color: row.strong ? NAVY : GREY },
     { text: kes(row.amount), alignment: 'right', bold: row.strong, color: row.strong ? NAVY : undefined },
@@ -134,7 +140,7 @@ export function documentDefinition(input: DocumentInput): TDocumentDefinitions {
         margin: [0, 0, 0, 18],
       },
       {
-        table: { headerRows: 1, widths: ['*', 70, 85, 95], body: lineRows },
+        table: { headerRows: 1, widths: moneyOnly ? ['*', 95] : ['*', 70, 85, 95], body: lineRows },
         layout: {
           hLineColor: () => LINE,
           vLineColor: () => LINE,

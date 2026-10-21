@@ -47,6 +47,7 @@ import {
   resolveConsumptionSource,
   validateInvoiceConsumptionAgainstReadings,
 } from '../services/invoiceConsumption';
+import { isEverIssuedInvoiceSql } from '../services/issuedInvoiceSource';
 import { cancelOpenShift, previewShiftCancellation } from '../services/shiftCancellation';
 import { buildShiftTimeline } from '../services/shiftTimeline';
 import { getShiftReview, updateShiftReview } from '../services/shiftReview';
@@ -397,6 +398,8 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         .leftJoin('credit_accounts', 'invoice_consumption.account_id', 'credit_accounts.id')
         .leftJoin('pumps as invoice_pumps', 'invoice_consumption.pump_id', 'invoice_pumps.id')
         .leftJoin('tanks as invoice_tanks', 'invoice_consumption.tank_id', 'invoice_tanks.id')
+        .leftJoin('invoice_lines as consumption_line', 'invoice_consumption.invoice_line_id', 'consumption_line.id')
+        .leftJoin('customer_invoices as consumption_invoice', 'consumption_line.invoice_id', 'consumption_invoice.id')
         .where('invoice_consumption.shift_id', shift.id)
         .modify((query: any) => {
           // Reconstruct historical rows only for the explicit original view.
@@ -414,6 +417,13 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
           'invoice_pumps.label as pump_label',
           'invoice_pumps.nozzle_label as nozzle_label',
           'invoice_tanks.label as tank_label',
+          trx.raw(`CASE WHEN ${isEverIssuedInvoiceSql('consumption_invoice')}
+            THEN consumption_invoice.id ELSE NULL END as issued_invoice_id`),
+          trx.raw(`CASE WHEN ${isEverIssuedInvoiceSql('consumption_invoice')}
+            THEN consumption_invoice.invoice_number ELSE NULL END as issued_invoice_number`),
+          trx.raw(`CASE WHEN invoice_consumption.invoice_line_id IS NOT NULL
+            AND (consumption_invoice.id IS NULL OR ${isEverIssuedInvoiceSql('consumption_invoice')})
+            THEN 1 ELSE 0 END as issued_source_locked`),
         )
         .orderBy('invoice_consumption.created_at', 'asc');
 

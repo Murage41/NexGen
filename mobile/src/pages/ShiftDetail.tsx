@@ -702,7 +702,9 @@ export default function ShiftDetail() {
                 {fmt(Number(c.retail_amount))}
                 {canCorrect && (c.deleted_at
                   ? <span className="text-xs text-amber-700">{c.correction_reason ? c.correction_reason.split(':')[0] : 'Corrected'}</span>
-                  : <button onClick={() => setCorrecting({ recordType: 'fuel_on_account', target: c })} className="text-xs rounded border border-gray-300 px-2 py-0.5 text-gray-700">Correct</button>)}
+                  : c.issued_source_locked
+                    ? <span className="text-xs text-gray-500">Issued consumption is fixed. Use an invoice note on the station PC.</span>
+                    : <button onClick={() => setCorrecting({ recordType: 'fuel_on_account', target: c })} className="text-xs rounded border border-gray-300 px-2 py-0.5 text-gray-700">Correct</button>)}
               </span>
             </div>
           ))}

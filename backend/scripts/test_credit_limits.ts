@@ -17,6 +17,7 @@ async function main() {
   const auth = await import('../src/middleware/requireAdmin');
   const { evaluateCreditLimits, addDays } = await import('../src/services/creditLimits');
   const { getKenyaDate } = await import('../src/utils/timezone');
+  const { recordInvoicePayment } = await import('../src/services/receivablePayments');
   const migration = await import('../migrations/20260913_044_credit_customer_limits');
   const { default: authRouter } = await import('../src/routes/auth');
   const { default: shiftsRouter } = await import('../src/routes/shifts');
@@ -187,10 +188,16 @@ async function main() {
       { account_id: gammaId, shift_id: ninetyDaysAgo, fuel_type: 'diesel', litres: 30, retail_price_at_time: 200, retail_amount: 6000, entry_status: 'active' },
       { account_id: gammaId, shift_id: ninetyDaysAgo, fuel_type: 'diesel', litres: 250, retail_price_at_time: 200, retail_amount: 50000, entry_status: 'reversed' },
     ]);
-    const [invoiceId] = await db('customer_invoices').insert({
-      account_id: gammaId, invoice_number: 'CINV-TEST-1', from_date: addDays(today, -60), to_date: addDays(today, -30),
-      issue_date: addDays(today, -19), due_date: addDays(today, -5), status: 'issued', total_amount: 2000, balance: 2000,
-    });
+    const issuedInvoice = async (number: string, dueDate: string) => {
+      const [id] = await db('customer_invoices').insert({
+        account_id: gammaId, invoice_number: number, from_date: addDays(today, -60), to_date: addDays(today, -30),
+        due_date: dueDate, status: 'draft', total_amount: 2000, balance: 2000,
+      });
+      await db('invoice_lines').insert({ invoice_id: id, fuel_type: 'diesel', total_litres: 10, agreed_price: 200, line_total: 2000 });
+      await db('customer_invoices').where({ id }).update({ issue_date: addDays(today, -19), status: 'issued' });
+      return Number(id);
+    };
+    const invoiceId = await issuedInvoice('CINV-TEST-1', addDays(today, -5));
     const consume = (body: any, headers: Record<string, string>) => call('POST', `/shifts/${openShift}/invoice-consumption`, headers, body);
     const within = await consume({ account_id: gammaId, fuel_type: 'diesel', litres: 5 }, attendantSession);
     assert.equal(within.status, 201, `6,000 unbilled + 2,000 invoiced + 1,000 is within 10,000, and 5 days past due is within 7; reversed and aged unbilled entries do not count: ${JSON.stringify(within.body)}`);
@@ -201,7 +208,11 @@ async function main() {
     assert.equal(overLimit.body.details.exposure_before, 9000);
     assert.equal(overLimit.body.details.exposure_after, 12000);
 
-    await db('customer_invoices').where({ id: invoiceId }).update({ due_date: addDays(today, -9) });
+    // Settle the first invoice, then test a different, older-due invoice of
+    // the same value. Issued document dates never change to age a fixture.
+    await recordInvoicePayment(db, { accountId: gammaId, amount: 2000, paymentMethod: 'cash', paymentDate: today });
+    assert.equal((await db('customer_invoices').where({ id: invoiceId }).first()).status, 'paid');
+    await issuedInvoice('CINV-TEST-2', addDays(today, -9));
     const overdue = await consume({ account_id: gammaId, fuel_type: 'diesel', litres: 15 }, desktop);
     assert.deepEqual(overdue.body.details.breaches.map((b: any) => b.rule), ['credit_limit', 'repayment_limit']);
     assert.match(overdue.body.error, /9 days past due/);

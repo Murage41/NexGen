@@ -36,6 +36,8 @@
     "test:shift-floats": "tsx scripts/test_shift_floats.ts",
     "test:closing-total-corrections": "tsx scripts/test_closing_total_corrections.ts",
     "test:customer-shift-corrections": "tsx scripts/test_customer_shift_corrections.ts",
+    "test:issued-invoice-source-guards": "tsx scripts/test_issued_invoice_source_guards.ts",
+    "test:issued-invoice-money-notes": "tsx scripts/test_issued_invoice_money_notes.ts",
     "test:invoice-notes": "tsx scripts/test_invoice_notes.ts",
     "test:employee-variances": "tsx scripts/test_employee_variances.ts",
     "test:invoice-draft-reservations": "tsx scripts/test_invoice_draft_reservations.ts",

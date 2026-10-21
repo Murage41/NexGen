@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import {
   createStandaloneDebitNote,
-  getNoteAttendant,
   desktopApproval,
   getCreditAccount,
   getCustomerInvoices,
@@ -128,7 +127,7 @@ export default function InvoiceCustomerWorkspace({
   // Full account record: KRA PIN, limits, live limit status, limit approvals.
   const [account, setAccount] = useState<any>(null);
   const [editingCustomer, setEditingCustomer] = useState(false);
-  // A debit note for a shift: fuel recorded on someone else, or missed.
+  // A separate monetary bill, without changing recorded fuel or shift facts.
   const [debitNote, setDebitNote] = useState(false);
   const [savingTerms, setSavingTerms] = useState(false);
   const [reversalPayment, setReversalPayment] = useState<any | null>(null);
@@ -373,7 +372,6 @@ export default function InvoiceCustomerWorkspace({
               accountId={customer.id}
               approval={desktopApproval}
               post={createStandaloneDebitNote}
-              attendantPreview={getNoteAttendant}
               onDone={async () => { setDebitNote(false); await loadWorkspace(); await onChanged(); }}
               onCancel={() => setDebitNote(false)}
             />
@@ -423,7 +421,7 @@ export default function InvoiceCustomerWorkspace({
             <button onClick={() => onReceivePayment(customer.id)} className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700">
               <Wallet size={16} /> Receive Payment
             </button>
-            <button onClick={() => setDebitNote(true)} className="inline-flex items-center gap-2 px-3 py-2 border border-green-700 text-green-800 text-sm font-medium rounded hover:bg-green-50" title="Fuel from a shift that was recorded on someone else, or missed">
+            <button onClick={() => setDebitNote(true)} className="inline-flex items-center gap-2 px-3 py-2 border border-green-700 text-green-800 text-sm font-medium rounded hover:bg-green-50" title="Add a separate amount this customer owes; recorded fuel stays fixed">
               Debit note
             </button>
             <button onClick={() => onGenerateInvoice(customer.id)} className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700">
@@ -594,10 +592,11 @@ export default function InvoiceCustomerWorkspace({
                           </td>
                           <td className="px-3 py-2 text-right text-xs">
                             {/* An open shift's entry is fixed on the shift; a closed shift's is corrected. */}
-                            {row.shift_status === 'closed' && !['reversed', 'deleted'].includes(row.billing_status) && (
+                            {row.shift_status === 'closed' && !row.issued_source_locked && !['reversed', 'deleted'].includes(row.billing_status) && (
                               <button onClick={() => setCorrecting(row)} className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50">Correct</button>
                             )}
-                            {row.shift_status === 'open' && <span className="text-gray-400">Fix on shift #{row.shift_id}</span>}
+                            {row.issued_source_locked && <span className="text-gray-500">Issued consumption is fixed. Adjust the invoice amount with a credit or debit note.</span>}
+                            {row.shift_status === 'open' && !row.issued_source_locked && <span className="text-gray-400">Fix on shift #{row.shift_id}</span>}
                           </td>
                         </tr>
                       ))}

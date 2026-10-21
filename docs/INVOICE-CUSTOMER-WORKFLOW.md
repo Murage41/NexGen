@@ -104,87 +104,74 @@ future approved workflow explicitly links that payment to the shift.
 
 ## Correct Consumption
 
-Which way depends on where the fuel is:
+Before issue, review the litres, customer, fuel and supply source. An open
+shift uses its existing entry controls; a closed shift uses **Correct** for
+unbilled or draft consumption. Drafts refresh after a valid correction.
 
-1. **The shift is still open:** change the litres or delete the entry on the
-   shift (to change the fuel, delete it and enter it again).
-2. **The shift is closed:** **Correct** the entry, wherever it is (not yet
-   invoiced, in a draft, or on an issued invoice paid or not). See
-   `CORRECTIONS.md`. On an issued invoice the correction makes the credit or
-   debit note itself, at the invoice's agreed price.
-3. **The price was wrong on an issued invoice** (a commercial change, not a
-   recording mistake): a price note (below). An issued invoice is final: only a
-   note that refers to it corrects it (KRA eTIMS works the same way).
+**After invoice issue, consumption is fixed.** The original customer, fuel,
+litres, shift, pump/source, invoice lines and original PDF stay recorded.
+Correct the money payable using a credit or debit note. A full credit does
+not return that fuel to Unbilled and does not put litres back in a tank.
+Issued invoices cannot be voided to release their fuel for another bill.
 
-In the customer's fuel history (desktop: Customer Invoices → the customer;
-phone: Invoice Customers → the customer → Consumption), every entry from a
-closed shift that has not been reversed has **Correct**. A corrected entry is
-kept, marked **Reversed**, with the correction's number (C-2026-0001) in its
-note; the right entry shows "Corrects entry #…".
+### Credit and debit notes after issue
 
-### Credit and debit notes (after invoicing)
+On desktop, open **Customer Invoices**, open the invoice, then choose
+**Credit note** or **Debit note**. Enter the amount in KES and explain what
+happened. Choose the approving administrator and enter their PIN. Notes are
+dated today. The approval covers the customer, invoice, type, full amount and
+reason. Do not enter a new fuel quantity or change a shift through this form.
 
-A fuel entry recorded wrongly is corrected with **Correct** (above), which
-makes the note for you. Make a note by hand only when the entry itself was
-right: an agreed price changed, or a litres difference that no single entry
-explains.
+**Credit note: the customer owes less.** It reduces the invoice's unpaid
+money first. Any excess is held as customer credit, settling other eligible
+open bills and then a future bill. It does not create a payment or pay out
+a refund. The form shows the remaining amount available to credit; total
+posted credits cannot exceed that document's billed amount. Historical debit
+notes recorded inside the same bill add to that amount; a newer separate DN-
+bill has its own credit limit and is corrected against that bill itself.
 
-Invoice customers take fuel on account, so every note is **fuel, litres and a
-price per litre**, never a bare amount. On the invoice, choose **Credit note**
-or **Debit note**, then what was wrong:
+For example: original invoice 1,000, actual payment 800, credit note 300.
+The invoice has nothing left to collect and the customer holds credit 100.
+The original invoice remains 1,000 and the real payment remains 800.
 
-- **The litres:** fewer (credit) or more (debit) litres than the invoice says,
-  priced at the invoice's own agreed price for that fuel.
-- **The price per litre:** the same litres at the difference per litre (for
-  example agreed 185, invoiced 190: 5 a litre).
+**Debit note: the customer owes more.** It creates a separate DN- bill,
+linked to the invoice, with its own amount due, due date and saved PDF. Open
+that bill to collect it using the existing invoice-payment workflow. A 250
+debit bill on the account above uses held credit 100 and leaves 150 payable.
+The linked original invoice's fuel and face amount remain fixed.
 
-Give the reason and the approving administrator with their PIN (on the phone
-the signed-in administrator approves). Notes are dated the day they are
-posted. Tank stock never changes: the fuel left the pumps either way; a note
-only changes who owes it.
+For a charge on a customer with no invoice to correct, use **Debit note** on
+the customer's desktop page. Enter the money owed and a clear explanation.
+It creates a monetary DN- bill; no shift or invented litres are required.
 
-**Credit note (they owe less).** It reduces what the invoice still owes. If the
-invoice is already paid, or the credit is more than what is unpaid, the rest is
-the customer's **credit**: it pays their other open invoices and then their
-next invoice when it is issued. It is never paid out. A credit note can never
-credit more of a fuel than the invoice billed.
+**Wrong invoice customer.** Make a credit note on the wrongly charged
+customer's invoice. Make a separate debit bill on the right customer, with
+the original invoice reference in the explanation. Real payments stay with
+the customer who paid. There is no automatic transfer or attendant charge.
 
-**Debit note (they owe more).** It is a **bill of its own** (numbered DN-), due
-and payable like an invoice, and it appears in their invoices, statements and
-aging. From an invoice it refers to that invoice. For a customer with no
-invoice to correct (fuel taken on a shift but recorded on someone else, or
-missed), use **Debit note** on the customer's page and give the shift and the
-price per litre.
+**Full credit.** Enter the remaining available credit amount on that document.
+An unpaid invoice becomes settled; money already paid remains recorded and
+any excess becomes customer credit. The fuel stays linked to its issued bill.
 
-**Fuel recorded on the wrong invoice customer:** a credit note on the customer
-charged wrongly and a debit note on the one who took it, each at their own
-agreed price.
+**Mistaken note.** Notes are never edited. Reverse a wrong credit note with
+a reason and approval; any credit it applied to other bills is taken back off
+them. An unpaid debit bill can be voided. Once paid, correct it with a credit
+note against that debit bill. Its original invoice has a separate credit cap.
 
-**When the shift's attendant owes it.** A litres note that gives a shift number
-can name that shift's attendant instead of the station:
+**Historical notes.** Existing fuel/litres/price notes and earlier attendant
+effects remain visible, with their stored PDFs and permitted reversals.
+New notes are money only and do not change an employee's debt, wages, shift
+money, pump readings, tank stock or FIFO. Customer notes are not an employee
+responsibility decision. Genuine refunds remain a separate financial action;
+B6's payment/refund changes and E2's new phone note actions are later stages.
 
-- **Credit note:** the attendant recorded fuel on the customer that the
-  customer never took, to cover a drawer shortage. Tick *the attendant of
-  shift #N ... owes it*. The customer is credited at their invoice price; the
-  attendant's shortage on that shift goes up by the litres at the **shift's
-  pump price** (what their drawer was really short). Only litres recorded on
-  this customer in that shift, on this invoice, can be put on them, and never
-  the same litres twice.
-- **Debit note:** the customer took fuel the attendant never recorded, so the
-  drawer came up short by it. Tick *... never recorded this fuel*. The customer
-  is billed; the attendant's shortage on that shift goes down by the litres at
-  that day's pump price.
+Keep the invoice billing mode while the customer holds invoice credit. A note
+cannot be reversed on an archived customer or an account switched to normal
+money credit; restore a valid invoice account and review it before proceeding.
 
-Before the PIN, the form shows the attendant, their shortage on that shift now,
-and the change. The station's revenue then moves only by the customer's price
-difference on those litres. Reversing the credit note (or voiding the debit
-note) undoes the attendant's change too. A price correction is never the
-attendant's.
-
-**Mistakes on notes.** A note is never edited. Reverse a wrong credit note (any
-credit it gave other invoices comes back off them). Void a wrong debit note
-while it is unpaid; once paid (in money or with the customer's credit), correct
-it with a credit note.
+The phone continues to show invoice/customer history and saved documents.
+Issued source entries display that they are fixed, with guidance to use a
+monetary note. Historical records are not rewritten when B2 is installed.
 
 ## Release Acceptance Test
 
@@ -206,14 +193,14 @@ live station records:
 8. Attempt an overpayment and confirm no payment or allocation is created.
 9. Reverse the partial payment and confirm the balances return while both audit
    records remain visible.
-10. Post a litres credit note on a paid invoice: the customer shows In credit,
-    and the credit pays their next invoice when it is issued.
-11. Post a debit note for a shift on a customer with no invoice: it appears as
-    a DN- bill, due and payable.
-12. Post a litres credit note naming the shift's attendant: the attendant's
-    shortage on that shift (Employees) goes up by the litres at the shift's pump
-    price; reverse it and confirm the shortage returns.
-13. Attempt to edit invoiced consumption from the shift and confirm rejection.
+10. Post a monetary credit note on a part-paid/paid invoice; verify retained
+    actual payments, correct credit held and application to a new bill.
+11. Post a linked or standalone monetary debit bill; collect its true balance
+    through the existing invoice-payment form without adding shift money.
+12. Fully credit an issued invoice; verify its source remains Invoiced,
+    unavailable to another draft, with unchanged original PDF and stock.
+13. Attempt issued source changes, correction/undo and issued fuel void;
+    confirm refusal with guidance to monetary notes. Draft release still works.
 14. Filter the customer history by date, shift, fuel, source, and status on
     both desktop and mobile.
 

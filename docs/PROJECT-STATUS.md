@@ -5,7 +5,7 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-10-19.
+Last updated: 2026-10-21.
 
 ## Station PC
 
@@ -113,7 +113,29 @@ Last updated: 2026-10-19.
   See `docs/releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md` and
   `docs/CUSTOMER-SHIFT-CORRECTIONS.md`. Install A1-A4/B1 together under the
   owner's 2026-10-19 decision above. Station remains `c5c4ee8`/054 until
-  installation is confirmed; next development is B2.
+  installation is confirmed; next development after completed B2 is B3.
+- **B2 complete: issued source fixed, monetary credit/debit notes.** Authorised
+  2026-10-20, developed on `codex/issued-invoice-notes` from `454640a`; exact
+  publication commit is supplied in the completion report. Migration `056`
+  protects original issued consumption, invoice lines and invoice facts.
+  Issued source corrections/undo and fuel-release voids are refused; drafts
+  still release. Full credit retains its fuel links. Amount-and-reason notes
+  reuse existing credit applications, invoice payments, separate DN bills,
+  original PDF storage, approval and duplicate-request controls. Historical
+  fuel notes and inline debit amounts remain usable; no new note changes shift
+  money, stock/FIFO or employee debt. Held invoice credit prevents switching
+  to money billing, and note reversal checks the active invoice account.
+  All 44 backend suites, three typechecks, both builds and six planted faults
+  pass. Desktop note posting and a 390-pixel phone view confirm the 1,000 bill /
+  800 payment / 300 credit / 250 debit example leaves 150 payable, keeping the
+  original fuel, face, PDF and payment. Migration/backup/independent restore
+  and UI audits preserve 73 old business tables / 4,180 rows; integrity checks
+  pass and both real-DB fingerprints are unchanged. Isolated tabs/servers are
+  cleaned up. See `docs/releases/B2-ISSUED-INVOICE-MONEY-NOTES.md` and the
+  updated invoice workflow. B2 is a separate queued installation after the
+  pinned combined update #16, needs its own backup/migration 056 and mobile
+  build, and includes no dependencies or B3/B6/E2 work. Neither station update
+  is marked installed without the owner's confirmation. Next development: B3.
 - **The development PC's copy of station data** (`backend/data/nexgen.db`) was
   replaced by the owner with the station's live files on 2026-09-30 (last
   written there 09:45; 124 closed shifts, migration 052). It goes out of date

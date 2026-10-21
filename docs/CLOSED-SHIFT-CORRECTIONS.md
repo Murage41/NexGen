@@ -90,14 +90,13 @@ A move is never edited or deleted. A wrong move is fixed by moving it back.
 
 ## Invoice Customers
 
-Their fuel is billed on invoices, so it is corrected with a **credit note**
-(they owe less) or **debit note** (they owe more), always in fuel, litres and
-price per litre. A debit note is a bill of its own and also works for a shift
-when there is no invoice yet. When the shift's attendant is the one who owes
-it (fuel recorded on the customer to cover their drawer, or the customer's fuel
-never recorded), the note names them and their shortage on that shift changes,
-as a customer-to-attendant move does. See
-[Invoice Customer Workflow](INVOICE-CUSTOMER-WORKFLOW.md).
+Before issue, use the existing unbilled/draft consumption correction.
+After issue, original consumption is fixed. Use a monetary **credit note**
+(they owe less) or **debit note** (they owe more), entering the KES amount and
+reason. Full credit keeps the source invoiced. Real payments remain recorded,
+excess stays customer credit and no new note automatically changes an
+attendant's debt. Historical fuel notes remain readable and reversible where
+permitted. See [Invoice Customer Workflow](INVOICE-CUSTOMER-WORKFLOW.md).
 
 ## Corrections Made Before This Rule
 

@@ -4,15 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 
-// Invoice customers' credit and debit notes (services/invoiceAdjustments.ts,
-// migration 049): every note is fuel, litres and a price per litre; a credit
+// Historical invoice customers' fuel notes (migrations 049/050): a credit
 // note beyond what the invoice still owes becomes the customer's credit, which
 // pays their open and next invoices and is never paid out; a debit note is a
 // bill of its own, for an invoice or a shift. A note on a shift can name its
 // attendant (migration 050): their shortage on the shift changes by the litres
 // at the shift's pump price. Notes are dated today and need an administrator.
-// Runs on a private temporary database through the real routes; never touches
-// data/nexgen.db.
+// New public requests are money-only (covered by test_issued_invoice_money_notes).
+// These old records are deliberately created through retained internal helpers
+// to prove their history and reversal semantics survive. Private database only.
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexgen-invoice-notes-test-'));
   process.env.NEXGEN_DATA_DIR = directory;
@@ -25,6 +25,7 @@ async function main() {
   const { getReceivablePositionAsOf } = await import('../src/services/receivableReporting');
   const { auditReceivableIntegrity } = await import('../src/services/receivableIntegrity');
   const { getVarianceStatement, postShiftVariance } = await import('../src/services/employeeVariances');
+  const { postCreditNote, createDebitNoteBill } = await import('../src/services/invoiceAdjustments');
   const { default: invoicesRouter } = await import('../src/routes/customerInvoices');
   const { default: authRouter } = await import('../src/routes/auth');
 
@@ -76,12 +77,22 @@ async function main() {
       return issued.body.data;
     };
     const note = async (invoiceId: number, accountId: number, fields: Record<string, unknown>) => {
-      const token = await approve({
-        purpose: 'invoice_note', account_id: accountId, invoice_id: invoiceId, ...fields,
-        unit_price: fields.correction === 'litres' ? 0 : fields.unit_price,
-      });
-      return call('POST', `/inv/${invoiceId}/adjustments`, { ...fields, approval_token: token });
+      try {
+        const data = await db.transaction(async (trx) => {
+          const invoice = await trx('customer_invoices').where({ id: invoiceId }).first();
+          const input: any = { noteType: fields.note_type, correction: fields.correction, fuelType: fields.fuel_type, litres: fields.litres, unitPrice: fields.unit_price,
+            reason: fields.reason, shiftId: fields.shift_id, attendant: fields.attendant, noteDate: today, approver: { id: admin, name: 'Owner Admin' } };
+          return fields.note_type === 'debit_note'
+            ? { debit_note: await createDebitNoteBill(trx, accountId, invoice, input) }
+            : { note: await postCreditNote(trx, invoice, input) };
+        });
+        return { status: 201, body: { success: true, data } as any };
+      } catch (err: any) { return { status: err.http || 500, body: { error: err.message, code: err.code } as any }; }
     };
+    const legacyDebit = async (accountId: number, fields: any) => ({ status: 201, body: { data: await db.transaction((trx) => createDebitNoteBill(trx, accountId, null, {
+      noteType: 'debit_note', correction: 'litres', fuelType: fields.fuel_type, litres: fields.litres, unitPrice: fields.unit_price,
+      reason: fields.reason, shiftId: fields.shift_id, attendant: fields.attendant, noteDate: today, approver: { id: admin, name: 'Owner Admin' },
+    })) } });
     const invoice = async (id: number) => db('customer_invoices').where({ id }).first();
     const balance = async (id: number) => Number((await invoice(id)).balance);
 
@@ -91,14 +102,14 @@ async function main() {
     const inv1 = await invoiceFor(gamma);
     assert.equal(Number(inv1.total_amount), 9500);
 
-    // 1. A note is fuel, litres and price; an administrator approves it.
+    // 1. New public requests refuse obsolete fuel-note decisions.
     let r = await call('POST', `/inv/${inv1.id}/adjustments`, { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 5, reason: 'no approval given' });
     assert.equal(r.status, 400, 'the desktop needs an approver');
     r = await call('POST', '/auth/verify-pin', { employee_id: admin, pin: '4821', purpose: 'invoice_note', account_id: gamma, invoice_id: inv1.id, note_type: 'credit_note', correction: 'litres', fuel_type: '', litres: 5 });
     assert.equal(r.status, 400, 'no approval for a note without fuel');
     r = await call('POST', `/inv/${inv1.id}/adjustments`, { note_type: 'credit_note', amount: 500, reason: 'an amount without fuel', approval_token: 'x' });
     assert.notEqual(r.status, 201, 'a bare amount is refused');
-    console.log('PASS a note is fuel, litres and price, approved by an administrator');
+    console.log('PASS new public requests refuse obsolete fuel-note decisions');
 
     // 2. Litres corrections are priced at the invoice's agreed price and can
     // never credit more litres than it billed.
@@ -156,12 +167,11 @@ async function main() {
     // 7. A debit note for a customer with no invoice: fuel from a shift.
     r = await call('POST', '/inv/debit-notes', {
       account_id: delta, fuel_type: 'diesel', litres: 20, unit_price: 185, reason: 'Fuel recorded on Gamma, was Delta',
-      approval_token: await approve({ purpose: 'invoice_note', account_id: delta, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185 }),
     });
-    assert.equal(r.status, 400, 'the shift is required');
-    const token = await approve({ purpose: 'invoice_note', account_id: delta, invoice_id: 0, note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1 });
-    r = await call('POST', '/inv/debit-notes', {
-      account_id: delta, fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1, reason: 'Fuel recorded on Gamma, was Delta', approval_token: token,
+    assert.equal(r.status, 400, 'new fuel-based debit notes are refused');
+    const token = 'obsolete-approval';
+    r = await legacyDebit(delta, {
+      account_id: delta, fuel_type: 'diesel', litres: 20, unit_price: 185, shift_id: s1, reason: 'Fuel recorded on Gamma, was Delta',
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     const dn2 = r.body.data;
@@ -248,7 +258,7 @@ async function main() {
     r = await call('GET', `/inv/note-attendant?account_id=${kamau}&note_type=credit_note&fuel_type=diesel&litres=10&shift_id=${s1}`);
     assert.equal(r.body.code, 'ATTENDANT_NOT_ON_SHIFT', "Gamma's litres on shift s1 are not Kamau's");
     // An approval for the station is not one for the attendant.
-    const stationToken = await approve({ purpose: 'invoice_note', account_id: kamau, invoice_id: inv4.id, note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 10, unit_price: 0, shift_id: s3 });
+    const stationToken = 'obsolete-approval';
     r = await call('POST', `/inv/${inv4.id}/adjustments`, { ...onAttendant, litres: 10, approval_token: stationToken });
     assert.notEqual(r.status, 201, 'the attendant was not approved');
 
@@ -282,10 +292,7 @@ async function main() {
     await db.transaction((trx) => postShiftVariance(trx, { id: s4, employee_id: attendant, shift_date: daysAgo(5) }, -2500, null));
     assert.equal(await shortageOn(s4), 2500);
     const dnFields = { account_id: kamau, fuel_type: 'diesel', litres: 10, unit_price: 185, shift_id: s4, attendant: true, reason: 'Kamau took 10 L that was never recorded' };
-    r = await call('POST', '/inv/debit-notes', {
-      ...dnFields,
-      approval_token: await approve({ purpose: 'invoice_note', invoice_id: 0, note_type: 'debit_note', correction: 'litres', ...dnFields }),
-    });
+    r = await legacyDebit(kamau, dnFields);
     assert.equal(r.status, 201, JSON.stringify(r.body));
     const dn4 = r.body.data;
     assert.equal(Number(dn4.total_amount), 1850);

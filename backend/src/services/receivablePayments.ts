@@ -110,7 +110,7 @@ export async function recomputeInvoiceTotals(
   const balanceCents = effectiveTotalCents - paidCents;
   let nextStatus = current.status;
   if (current.status !== 'draft' && current.status !== 'void') {
-    if (balanceCents === 0 && effectiveTotalCents > 0) nextStatus = 'paid';
+    if (balanceCents === 0) nextStatus = 'paid';
     else if (paidCents > 0 || adjustmentCents !== 0) nextStatus = 'partial';
     else nextStatus = 'issued';
   }

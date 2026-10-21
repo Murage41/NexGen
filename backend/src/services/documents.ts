@@ -67,7 +67,9 @@ export async function invoiceDocument(conn: Conn, invoiceId: number, actorId?: n
   const isDebitNote = invoice.document_kind === 'debit_note';
 
   const lines = (await conn('invoice_lines').where({ invoice_id: invoice.id }).orderBy('fuel_type').orderBy('id'))
-    .map((line: any) => litresLine(line.fuel_type, line.total_litres, line.agreed_price, line.line_total));
+    .map((line: any) => isDebitNote && line.fuel_type === 'adjustment'
+      ? { description: 'Monetary debit adjustment', litres: null, price: null, amount: Number(line.line_total) }
+      : litresLine(line.fuel_type, line.total_litres, line.agreed_price, line.line_total));
   const credits = await conn('invoice_credit_applications as c')
     .join('invoice_adjustment_notes as n', 'c.note_id', 'n.id')
     .where('c.invoice_id', invoice.id)
@@ -122,9 +124,14 @@ export async function creditNoteDocument(conn: Conn, noteId: number, actorId?: n
   const amount = Math.abs(Number(note.amount || 0));
   const applied = note.applied_amount == null ? null : Number(note.applied_amount);
   const held = Number(note.unapplied_amount || 0);
+  const applications = await conn('invoice_credit_applications as c')
+    .join('customer_invoices as i', 'i.id', 'c.invoice_id')
+    .where('c.note_id', note.id).whereNull('c.reversed_at')
+    .select('c.amount', 'i.invoice_number');
 
   const totals: DocumentInput['totals'] = [{ label: 'Credit total', amount, strong: true }];
   if (applied != null) totals.push({ label: `Taken off ${invoice?.invoice_number || 'the invoice'}`, amount: applied });
+  for (const application of applications) totals.push({ label: `Applied to ${application.invoice_number}`, amount: Number(application.amount) });
   if (held > 0) totals.push({ label: 'Held for the next invoice', amount: held });
 
   const pdf = await renderPdf(documentDefinition({
@@ -133,7 +140,9 @@ export async function creditNoteDocument(conn: Conn, noteId: number, actorId?: n
     number: note.note_number,
     details: [['Date', longDate(note.note_date)], ['Against invoice', invoice?.invoice_number || '']],
     customer: party,
-    lines: [litresLine(note.fuel_type, note.litres, note.unit_price, amount, note.correction === 'price' ? ': price correction' : '')],
+    lines: [note.correction === 'amount'
+      ? { description: 'Monetary credit adjustment', litres: null, price: null, amount }
+      : litresLine(note.fuel_type, note.litres, note.unit_price, amount, note.correction === 'price' ? ': price correction' : '')],
     totals,
     notes: [`Reason: ${note.reason}`],
   }));

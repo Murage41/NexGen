@@ -10,10 +10,9 @@ import { applyInvoiceCustomerCredit, recomputeInvoiceTotals, roundMoney } from '
 import { syncVarianceAccount } from './employeeVariances';
 import type { Approver } from './approval';
 
-// Credit and debit notes for invoice customers. An issued invoice is final:
-// it is corrected only by a note that refers to it (KRA eTIMS works the same
-// way). Invoice customers take fuel on account, so every note is fuel, litres
-// and a price per litre, never a bare amount:
+// An issued invoice's source is final. New public notes change money only,
+// using the existing bills, retained payments and held-credit applications.
+// The older fuel-note helpers below remain for historical compatibility:
 //
 // - What was wrong is the litres (fewer or more than the invoice says: priced
 //   at the invoice's agreed price for that fuel) or the price (the same litres
@@ -59,6 +58,37 @@ export type NoteInput = {
   approver: Approver;
   actorId?: number | null;
 };
+
+// New notes change money due. The old fuel helpers below are retained only to
+// understand and reverse historical notes; they are not the public contract.
+export type MonetaryNoteInput = {
+  noteType: 'credit_note' | 'debit_note';
+  correction: 'amount';
+  amount: number;
+  reason: string;
+  noteDate: string;
+  approver: Approver;
+  actorId?: number | null;
+};
+
+function moneyNote(input: MonetaryNoteInput) {
+  if (['fuelType', 'fuel_type', 'litres', 'unitPrice', 'unit_price', 'shiftId', 'shift_id', 'attendant', 'shiftValue', 'shift_value']
+    .some((key) => Object.prototype.hasOwnProperty.call(input, key))) {
+    throw httpError('Monetary notes do not change fuel, shifts or attendant debts.', 400, 'MONEY_NOTES_ONLY');
+  }
+  if (!['credit_note', 'debit_note'].includes(input.noteType) || input.correction !== 'amount') {
+    throw httpError('Use a monetary credit or debit note. Issued fuel entries stay as recorded.', 400, 'MONEY_NOTES_ONLY');
+  }
+  const amount = input.amount;
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || amount > 100_000_000
+    || roundMoney(amount) !== amount) {
+    throw httpError('Enter an amount greater than zero, up to KES 100,000,000, with at most two decimal places.', 400, 'INVALID_NOTE_AMOUNT');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.noteDate)) {
+    throw httpError('note_date must use YYYY-MM-DD format.', 400, 'INVALID_NOTE_DATE');
+  }
+  return { amount: roundMoney(amount), reason: validateReason(input.reason, 'Reason') };
+}
 
 function httpError(message: string, http: number, code?: string): Error {
   return Object.assign(new Error(message), { http, code });
@@ -424,9 +454,9 @@ export async function createDebitNoteBill(
     document_kind: 'debit_note',
     from_date: fromDate,
     to_date: fromDate,
-    issue_date: input.noteDate,
+    issue_date: null,
     due_date: addDaysToBusinessDate(input.noteDate, termsDays),
-    status: 'issued',
+    status: 'draft',
     reservation_status: 'not_applicable',
     total_amount: amount,
     // Its revenue: voiding it reverses this (invoiceLifecycle.ts).
@@ -436,7 +466,7 @@ export async function createDebitNoteBill(
     notes: reason,
     shift_id: input.shiftId || null,
     corrects_invoice_id: correctedInvoice?.id || null,
-    issued_at: trx.fn.now(),
+    issued_at: null,
     issued_by_employee_id: actorId(input.actorId),
     approved_by_employee_id: input.approver.id,
     approved_by_name: input.approver.name,
@@ -448,6 +478,7 @@ export async function createDebitNoteBill(
     agreed_price: unitPrice,
     line_total: amount,
   });
+  await trx('customer_invoices').where({ id: billId }).update({ status: 'issued', issue_date: input.noteDate, issued_at: trx.fn.now() });
   await recomputeInvoiceTotals(Number(billId), trx);
   if (attendant) {
     await postAttendantEntry(
@@ -480,7 +511,8 @@ export async function createDebitNoteBill(
 
 // A note against an issued invoice: a credit note on it, or a debit-note bill
 // correcting it.
-export async function postInvoiceAdjustment(conn: Knex, input: NoteInput & { invoiceId: number }) {
+export async function postInvoiceAdjustment(conn: Knex, input: MonetaryNoteInput & { invoiceId: number }) {
+  moneyNote(input);
   return conn.transaction(async (trx) => {
     const invoice = await trx('customer_invoices').where({ id: input.invoiceId }).whereNull('deleted_at').first();
     if (!invoice) throw httpError('Invoice not found', 404, 'INVOICE_NOT_FOUND');
@@ -488,20 +520,93 @@ export async function postInvoiceAdjustment(conn: Knex, input: NoteInput & { inv
       throw httpError('Credit and debit notes can only be posted to an issued invoice.', 400, 'INVOICE_NOT_ISSUED');
     }
     await invoiceAccount(trx, Number(invoice.account_id));
+    // Refresh only derived totals, under the same write transaction as the
+    // note. Existing payments and issued source facts are never rewritten.
+    await recomputeInvoiceTotals(Number(invoice.id), trx);
+    const current = await trx('customer_invoices').where({ id: invoice.id }).first();
     if (input.noteType === 'debit_note') {
-      const bill = await createDebitNoteBill(trx, Number(invoice.account_id), invoice, input);
+      const bill = await createMonetaryDebitNote(trx, Number(invoice.account_id), current, input);
       return { debit_note: bill, invoice: await trx('customer_invoices').where({ id: invoice.id }).first() };
     }
-    const note = await postCreditNote(trx, invoice, input);
+    const note = await postMonetaryCreditNote(trx, current, input);
     return { note, invoice: await trx('customer_invoices').where({ id: invoice.id }).first() };
   });
 }
 
-// A debit note for a customer without an invoice to correct: fuel from a
-// shift that was recorded on someone else, or missed.
-export async function postStandaloneDebitNote(conn: Knex, input: NoteInput & { accountId: number }) {
-  if (!input.shiftId) throw httpError('Enter the shift the fuel was taken on.', 400, 'SHIFT_REQUIRED');
-  return conn.transaction((trx) => createDebitNoteBill(trx, input.accountId, null, { ...input, noteType: 'debit_note' }));
+// A monetary debit note for a customer without an invoice to correct.
+export async function postStandaloneDebitNote(conn: Knex, input: MonetaryNoteInput & { accountId: number }) {
+  moneyNote(input);
+  if (input.noteType !== 'debit_note') throw httpError('Choose a debit note.', 400, 'INVALID_NOTE_TYPE');
+  return conn.transaction((trx) => createMonetaryDebitNote(trx, input.accountId, null, { ...input, noteType: 'debit_note' }));
+}
+
+async function postMonetaryCreditNote(trx: Knex.Transaction, invoice: any, input: MonetaryNoteInput) {
+  const { amount, reason } = moneyNote(input);
+  const earlier: any = await trx('invoice_adjustment_notes')
+    .where({ invoice_id: invoice.id, status: 'posted' })
+    .select(trx.raw("COALESCE(SUM(CASE WHEN note_type = 'credit_note' THEN amount ELSE 0 END), 0) AS credited, COALESCE(SUM(CASE WHEN note_type = 'debit_note' THEN amount ELSE 0 END), 0) AS debited"))
+    .first();
+  // A linked debit note is a separate bill. It does not make this invoice's
+  // original face value larger or permit crediting its fuel twice.
+  // Older inline debit notes were supplements on this document, rather than
+  // separate bills. Their posted amounts must remain creditable as well.
+  if (cents(earlier?.credited) + cents(amount) > cents(invoice.total_amount) + cents(earlier?.debited)) {
+    throw httpError('The credit exceeds this document’s original amount plus its historical inline debit notes, less earlier posted credits. Credit a separate debit-note bill against that bill itself.', 400, 'CREDIT_NOTE_EXCEEDS_BILLED');
+  }
+  const applied = Math.min(cents(amount), Math.max(0, cents(invoice.balance)));
+  const noteNumber = await nextInvoiceDocumentNumber(trx, 'credit_note', input.noteDate);
+  const [noteId] = await trx('invoice_adjustment_notes').insert({
+    account_id: invoice.account_id, invoice_id: invoice.id,
+    note_number: noteNumber, note_type: 'credit_note', note_date: input.noteDate,
+    amount, signed_amount: -amount, applied_amount: applied / 100,
+    unapplied_amount: (cents(amount) - applied) / 100,
+    correction: 'amount', fuel_type: null, litres: null, unit_price: null,
+    shift_id: null, reason, status: 'posted',
+    approved_by_employee_id: input.approver.id, approved_by_name: input.approver.name,
+    created_by_employee_id: actorId(input.actorId),
+  });
+  await recomputeInvoiceTotals(Number(invoice.id), trx);
+  await postInvoiceAccountingEvent(trx, {
+    sourceKey: `adjustment-note:${noteId}:posted`, accountId: Number(invoice.account_id),
+    invoiceId: Number(invoice.id), adjustmentNoteId: Number(noteId),
+    eventType: 'credit_note', postingDate: input.noteDate,
+    receivableDelta: -amount, revenueAdjustment: -amount, documentAmount: -amount,
+    reason, actorId: input.actorId,
+  });
+  await applyInvoiceCustomerCredit(trx, Number(invoice.account_id));
+  await recomputeAccountBalance(Number(invoice.account_id), trx);
+  return trx('invoice_adjustment_notes').where({ id: noteId }).first();
+}
+
+async function createMonetaryDebitNote(trx: Knex.Transaction, accountId: number, correctedInvoice: any | null, input: MonetaryNoteInput) {
+  const { amount, reason } = moneyNote(input);
+  const account = await invoiceAccount(trx, accountId);
+  const number = await nextInvoiceDocumentNumber(trx, 'debit_note', input.noteDate);
+  const terms = Math.max(0, Math.trunc(Number(account.payment_terms_days || 0)));
+  const [billId] = await trx('customer_invoices').insert({
+    account_id: accountId, invoice_number: number, document_kind: 'debit_note',
+    from_date: input.noteDate, to_date: input.noteDate, issue_date: null,
+    due_date: addDaysToBusinessDate(input.noteDate, terms), status: 'draft',
+    reservation_status: 'not_applicable', total_amount: amount, balance: amount,
+    price_adjustment_amount: amount, reason, notes: reason, shift_id: null,
+    corrects_invoice_id: correctedInvoice?.id || null,
+    issued_at: null, issued_by_employee_id: actorId(input.actorId),
+    approved_by_employee_id: input.approver.id, approved_by_name: input.approver.name,
+  });
+  // Existing bill/payment allocation machinery needs one amount-bearing line.
+  // This sentinel is rendered as money, never as an invented fuel quantity.
+  await trx('invoice_lines').insert({ invoice_id: billId, fuel_type: 'adjustment', total_litres: 0, agreed_price: 0, line_total: amount });
+  await trx('customer_invoices').where({ id: billId }).update({ status: 'issued', issue_date: input.noteDate, issued_at: trx.fn.now() });
+  await recomputeInvoiceTotals(Number(billId), trx);
+  await postInvoiceAccountingEvent(trx, {
+    sourceKey: `debit-note:${billId}:issue`, accountId, invoiceId: Number(billId),
+    eventType: 'debit_note', postingDate: input.noteDate,
+    receivableDelta: amount, revenueAdjustment: amount, documentAmount: amount,
+    reason, actorId: input.actorId,
+  });
+  await applyInvoiceCustomerCredit(trx, accountId);
+  await recomputeAccountBalance(accountId, trx);
+  return trx('customer_invoices').where({ id: billId }).first();
 }
 
 export async function reverseInvoiceAdjustment(
@@ -524,6 +629,7 @@ export async function reverseInvoiceAdjustment(
     if (note.status !== 'posted') {
       throw httpError('Adjustment note has already been reversed.', 409, 'ADJUSTMENT_ALREADY_REVERSED');
     }
+    await invoiceAccount(trx, Number(note.account_id));
     if (input.reversalDate < note.note_date) {
       throw httpError('Reversal date cannot be before the note date.', 400, 'INVALID_REVERSAL_DATE');
     }

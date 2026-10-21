@@ -365,6 +365,15 @@ export async function releaseInvoiceReservation(
   trx: Knex.Transaction,
   invoiceId: number,
 ) {
+  const invoice = await trx('customer_invoices').where({ id: invoiceId }).first();
+  if (!invoice) throw httpError('Invoice not found', 404, 'INVOICE_NOT_FOUND');
+  if (invoice.status !== 'draft' || invoice.issue_date || invoice.issued_at) {
+    throw httpError(
+      'Issued fuel stays on its invoice. Use a monetary credit note instead.',
+      409,
+      'ISSUED_INVOICE_SOURCE_FIXED',
+    );
+  }
   const lineIds = await trx('invoice_lines').where({ invoice_id: invoiceId }).pluck('id');
   if (lineIds.length === 0) return 0;
   return trx('invoice_consumption')

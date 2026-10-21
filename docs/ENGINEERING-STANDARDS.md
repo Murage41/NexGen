@@ -143,6 +143,16 @@ cache instead of recomputing; computing at event time and never updating.
   sales/wage basis to its saved close; actual wage cash is a separate figure.
   Fixed meter revenue and posting-dated invoice revenue events keep their own
   meanings. Missing historical inputs are not invented or backfilled on GET.
+- **Invoice issue fixes the fuel source.** B2 refuses issued consumption
+  correction/replacement/undo and release through void, with database guards
+  for original source, line and invoice facts. Drafts alone release fuel.
+  New notes use money and reason, never litres or employee responsibility;
+  retained payments and excess credit use existing settlement helpers.
+  A credit cap includes historical inline debit notes on the same bill, but
+  not separate linked DN bills. Keep an invoice account available while it
+  holds credit; reverse notes only on an active invoice-mode account.
+  New DN construction is draft header, amount line, then issue in the same
+  transaction. Never weaken issued-line insertion guards for a test fixture.
 - **Opening funds use a versioned basis.** Only new shifts use `balances_v1`;
   older and already-open shifts stay legacy. Original opening declarations
   never change; effective openings include their correction lines. Freeze

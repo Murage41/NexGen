@@ -63,7 +63,14 @@ defines A3's field meanings, arithmetic, historical compatibility and examples.
   checks pass. See [the B1 release card](releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md)
   and [operating guide](CUSTOMER-SHIFT-CORRECTIONS.md). Queue after A4; no new
   migration. Station installation/checkpoints remain separate.
-- B2 and later releases below are **not built as agreed complete releases**.
+- B2 is complete on `codex/issued-invoice-notes`, based on `454640a`:
+  issued fuel/line/original-invoice guards plus amount-only notes, retained
+  payments/customer credit and historical compatibility ship together.
+  Migration 056, all 44 backend suites, types/builds, six planted faults,
+  migration/restore and isolated desktop/phone checks pass. See the
+  [B2 release card](releases/B2-ISSUED-INVOICE-MONEY-NOTES.md). Its separate
+  installation follows the pinned A1-A4/B1 update; installation is unconfirmed.
+- B3 and later releases below are **not built as agreed complete releases**.
   Existing helpers, screens and selected uncommitted code can be reused after
   review; that does not make a release complete or authorise all old 2b work.
 - Preserve existing local work. Start the approved release from the station's
@@ -153,7 +160,7 @@ as a fresh receipt, or deducted twice.
 | Release | Scope | Not included | Required evidence before moving on |
 |---|---|---|---|
 | B1 | Customer credit and shift debt-receipt changes, using exact debt/payment allocations and exposure controls. | Meter revenue changes, invented receipts, or automatic charges against attendants. | Wrong customer/amount/method, duplicate and missing cases yield correct customer balances; real cash counted once; employee impact separately approved. |
-| B2 | Freeze issued invoice source consumption and provide suitable linked monetary credit/debit notes, retained payments and correctly held customer credit/refund due. | Replacing issued litres/customer/shift/source; silently releasing fully credited fuel back to unbilled; rebuilding B6's payment/refund workflow. | Source and original PDF unchanged after notes, full credit and partial payment; additional/reduced money due remains actionable; existing receipt/refund paths still work. |
+| B2 | Freeze issued invoice source consumption and provide suitable linked monetary credit/debit notes, retained payments and correctly held customer credit/refund due. | Replacing issued litres/customer/shift/source; silently releasing fully credited fuel back to unbilled; rebuilding B6's payment/refund workflow. | Complete from `454640a`; source/PDF/payment preservation, full credits, money bills, history compatibility, types/builds, 44 suites and six faults verified. Separate migration 056 installation remains. |
 | B3 | Editable unbilled invoice fuel; refresh reserved drafts; normal limit/approval and pump/fuel litre controls. | Bypassing B2, extra stock consumption, or inventing another sale. | Unbilled changes refresh the draft correctly; exposure increases checked; invoice litres do not exceed metered litres; issued source still refused. |
 | B4 | Drawer/office expense amendments with category, date, reason and the correct expense/reconciliation effect. | Fake cash receipt to cancel expense; changing fuel cost or wages earned. | Missing/duplicate/wrong expense changes expense totals once; actual cash and any employee responsibility remain separately explainable. |
 | B5 | Manual employee debts and targeted new repayments, including debts added by hand; preserve historical repayment allocations. | Reallocating old repayments oldest-first, shortages reducing wages, or a customer edit automatically charging staff. | New receipt names its debt; overpayment against that debt refused; historical applications unchanged; already-paid/adjusted cases retain real money evidence. |

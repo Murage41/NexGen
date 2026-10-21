@@ -159,24 +159,24 @@ async function main() {
       assert.equal(r.status, 200, JSON.stringify(r.body));
       return r.body.data.approval_token;
     };
-    // Paid in full, then 5 L found not taken: the credit is held for the next invoice.
+    // Paid in full, then a monetary credit: held for the next invoice.
     assert.equal((await call('POST', '/inv/payments', desktop, { account_id: account, amount: 9500 + 3800, payment_method: 'cash' })).status, 201);
-    const cnFields = { note_type: 'credit_note', correction: 'litres', fuel_type: 'diesel', litres: 5, unit_price: 0 };
-    const cn = await call('POST', `/inv/${inv2.id}/adjustments`, desktop, { ...cnFields, unit_price: undefined, reason: 'Five litres were not taken', approval_token: await token(cnFields) });
+    const cnFields = { note_type: 'credit_note', correction: 'amount', amount: 950, reason: 'Agreed commercial credit' };
+    const cn = await call('POST', `/inv/${inv2.id}/adjustments`, desktop, { ...cnFields, approval_token: await token(cnFields) });
     assert.equal(cn.status, 201, JSON.stringify(cn.body));
     const note = cn.body.data.note;
     assert(await stored('credit_note', note.id), 'credit note saved when posted');
     const cnText = pdfText((await call('GET', `/inv/adjustments/${note.id}/document`)).buffer);
-    for (const expected of ['CREDIT NOTE', note.note_number, inv2.invoice_number, 'Five litres were not taken', 'Held for the next invoice', '950.00']) {
+    for (const expected of ['CREDIT NOTE', note.note_number, inv2.invoice_number, 'Agreed commercial credit', 'Held for the next invoice', '950.00']) {
       assert(cnText.includes(expected), `credit note shows "${expected}"`);
     }
 
-    const dnFields = { note_type: 'debit_note', correction: 'litres', fuel_type: 'diesel', litres: 2, unit_price: 0 };
-    const dn = await call('POST', `/inv/${inv2.id}/adjustments`, desktop, { ...dnFields, unit_price: undefined, reason: 'Two litres missed', approval_token: await token(dnFields) });
+    const dnFields = { note_type: 'debit_note', correction: 'amount', amount: 380, reason: 'Agreed additional charge' };
+    const dn = await call('POST', `/inv/${inv2.id}/adjustments`, desktop, { ...dnFields, approval_token: await token(dnFields) });
     assert.equal(dn.status, 201, JSON.stringify(dn.body));
     const bill = dn.body.data.debit_note;
     const dnText = pdfText(Buffer.from((await stored('customer_invoice', bill.id)).content));
-    for (const expected of ['DEBIT NOTE', bill.invoice_number, `Corrects`, inv2.invoice_number, 'Reason: Two litres missed']) {
+    for (const expected of ['DEBIT NOTE', bill.invoice_number, `Corrects`, inv2.invoice_number, 'Reason: Agreed additional charge']) {
       assert(dnText.includes(expected), `debit note shows "${expected}"`);
     }
 

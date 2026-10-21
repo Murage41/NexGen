@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { isEverIssuedInvoiceSql } from './issuedInvoiceSource';
 
 export type ConsumptionHistoryStatus =
   | 'active'
@@ -128,6 +129,7 @@ export async function getInvoiceConsumptionHistory(
       'ci.id as invoice_id',
       'ci.invoice_number',
       'ci.status as invoice_status',
+      db.raw(`CASE WHEN ic.invoice_line_id IS NOT NULL AND (ci.id IS NULL OR ${isEverIssuedInvoiceSql('ci')}) THEN 1 ELSE 0 END as issued_source_locked`),
       db.raw(`${billingStatusSql} as billing_status`),
       db.raw(
         '(SELECT MIN(replacement.id) FROM invoice_consumption replacement WHERE replacement.correction_of_id = ic.id) as replacement_id',
@@ -204,6 +206,9 @@ export async function getInvoiceConsumptionHistory(
     totals,
     rows: (rows as any[]).map((row) => ({
       ...row,
+      issued_source_locked: Boolean(row.issued_source_locked),
+      issued_invoice_id: row.issued_source_locked && row.invoice_id ? Number(row.invoice_id) : null,
+      issued_invoice_number: row.issued_source_locked ? row.invoice_number : null,
       litres: round2(row.litres),
       retail_price_at_time: round2(row.retail_price_at_time),
       retail_amount: round2(row.retail_amount),

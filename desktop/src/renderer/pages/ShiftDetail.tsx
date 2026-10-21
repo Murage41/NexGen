@@ -1602,13 +1602,17 @@ export default function ShiftDetail() {
                     <td className="p-2 text-right font-medium">{formatKES(Number(c.retail_amount))}</td>
                     {isOpen && (
                       <td className="p-2 text-right">
-                        <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>
+                        {c.issued_source_locked
+                          ? <span className="text-xs text-gray-500">Issued consumption is fixed. Use an invoice note.</span>
+                          : <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-500 hover:text-red-700"><Trash2 size={14} /></button>}
                       </td>
                     )}
                     {isClosed && (
                       <td className="p-2 text-right text-xs">
                         {c.deleted_at ? (
                           <span className="text-amber-700">{c.correction_reason ? c.correction_reason.split(':')[0] : 'Corrected'}</span>
+                        ) : c.issued_source_locked ? (
+                          <span className="text-gray-500">Issued consumption is fixed. Use an invoice credit or debit note.</span>
                         ) : (
                           <button onClick={() => setCorrecting({ recordType: 'fuel_on_account', target: c })} className="rounded border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-50">Correct</button>
                         )}

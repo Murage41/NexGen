@@ -91,7 +91,7 @@ async function main() {
       { payroll_line_id: line, employee_id: employee, shift_id: legacy, amount: 50, payment_method: 'mpesa', payment_date: date, status: 'reversed' },
     ]);
     const [invoice] = await db('customer_invoices').insert({ account_id: invoiceAccount, invoice_number: 'CINV-TEST-SOURCE', from_date: date, to_date: date,
-      issue_date: date, due_date: date, status: 'paid', total_amount: 665, balance: 0 });
+      issue_date: null, due_date: date, status: 'draft', total_amount: 665, balance: 0 });
     const [invoiceLine] = await db('invoice_lines').insert({ invoice_id: invoice, fuel_type: 'petrol', total_litres: 7, agreed_price: 95, line_total: 665 });
     const [legacyHeader] = await db('shift_accountability_adjustments').insert({ shift_id: legacy, adjustment_type: 'historical_invoice_consumption_repair',
       amount_delta: 280, variance_before: -100, variance_after: 180, reason: 'Historical source corrections already reflected in active rows' });
@@ -102,6 +102,7 @@ async function main() {
         fuel_type: 'petrol', litres: amount / 100, retail_price_at_time: 100, retail_amount: amount, entry_status: 'active', ...extra }))[0]);
     const originalFuel = await consumption(legacy, 500, { entry_status: 'reversed', deleted_at: `${date}T19:00:00Z`, reversed_by_correction_id: legacyHeader, invoice_line_id: invoiceLine });
     const replacementFuel = await consumption(legacy, 700, { correction_of_id: originalFuel, created_by_correction_id: legacyHeader, invoice_line_id: invoiceLine });
+    await db('customer_invoices').where({ id: invoice }).update({ issue_date: date, status: 'paid' });
     await consumption(legacy, 999, { entry_status: 'reversed', deleted_at: `${date}T19:00:00Z` });
     await consumption(backfilled, 500, { entry_status: 'reversed', deleted_at: `${date}T19:00:00Z`, reversed_by_correction_id: backfilledHeader });
     const backfilledFuel = await consumption(backfilled, 700, { created_by_correction_id: backfilledHeader });
