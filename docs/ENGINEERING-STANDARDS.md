@@ -25,7 +25,7 @@ corrected by a new, dated entry that refers to the original.
 - **Attendant shortages** are derived on read from `employee_variance_entries`
   (`computeVarianceStatement`); nothing stores a running balance. An employee
   owes the shortages of their short shifts and pays them in money; surpluses
-  belong to the station. See `docs/ATTENDANT-VARIANCES.md`.
+  belong to the station. See `docs/STAFF-AND-PAY.md`.
 - **Double entry for moves:** every amount taken off one party is put on
   another in the same transaction (customer, employee, station, or revenue).
 - **Money arithmetic in cents** (`Math.round(x * 100)`), rounded back with the
@@ -83,7 +83,7 @@ cache instead of recomputing; computing at event time and never updating.
 - **Role checks are server-side** (`requireAdmin`, `requireOwnShiftOrAdmin`).
   Hiding a button is not a permission. Attendant-facing payloads are filtered
   on the server (see the dashboard's non-admin branch in `routes/dashboard.ts`).
-- **What attendants see** is fixed in `docs/ATTENDANT-ACCESS.md` (M6). A new
+- **What attendants see** is fixed in `docs/SHIFTS.md` (M6). A new
   `GET` route that returns money, cost, stock variance or anyone else's data
   is `requireAdmin` unless an attendant screen needs it; then send only the
   fields that screen needs and add the route to `test_attendant_access.ts`.
@@ -228,12 +228,15 @@ cache instead of recomputing; computing at event time and never updating.
   #16 silently started it at 0 and its tests passed because they always typed
   the wage (fixed 2026-10-23, `test:shift-drawer-wage`). When a release changes
   a default, say so to the owner in plain words.
-- **E2E from a git worktree:** `preview_start` reads launch names from
-  `D:\NexGen\.claude\launch.json`, and `scripts/e2e/copy-db.cjs` reads the
-  worktree's own (empty) `backend/data`. Add launch entries that run the
-  worktree's `scripts/e2e/start.cjs` by absolute path, copy the real data into
-  the worktree's `.e2e-data` read-only (`VACUUM INTO`), and check the log's
-  `database folder` line before using the page.
+- **No git worktrees.** Work in `D:\NexGen` itself, one branch per change
+  (`git switch -c <branch>` from the commit you are building on). On
+  2026-10-23 removing an old worktree whose `node_modules` was a junction to
+  `D:\NexGen\node_modules` deleted through it, and npm's workspace links in
+  there emptied `backend`, `desktop`, `mobile`, `shared` and the real
+  database copy in `D:\NexGen`. Code came back from git; the database had to
+  be copied from the station again. Before deleting any folder, list its
+  junctions (`Get-ChildItem <dir> -Recurse -Force -Attributes ReparsePoint`),
+  unlink each with `cmd /c rmdir <link>` (never `/s`), and check none remain.
 - **End-to-end on a scratch copy of real data**, never on
   `backend/data/nexgen.db`:
   1. `node scripts/e2e/copy-db.cjs` (copy + saves the real DB fingerprint)
@@ -261,20 +264,13 @@ pushed commits.
 1. Checks pass → commit (only when the owner asks) → push `origin/main` →
    `git status --short` clean.
 2. Give the owner **one command block per pending update, in order**, each
-   ending with its own short check. Never one combined jump.
-   **Explicit exception, owner decision 2026-10-19:** completed A1-A4/B1
-   may be installed together as update #16, pinned to the published B1 code
-   (`c3b3e14`) plus accompanying rollout documentation. Preserve the separate
-   development commits. Back up before migration 055, migrate/check integrity,
-   build mobile once and verify startup immediately; the owner validates
-   genuine operations from 2026-10-20. This does not authorise bundling future
-   unfinished stages. See `releases/A1-B1-COMBINED-STATION-UPDATE.md`.
-   **Owner decision 2026-10-23:** update #17 (daily drawer wage) ships alone,
-   ahead of B2, which is already on `main`. It is committed on branch
-   `claude/drawer-wage-default` from the station's code (`454640a`), pushed as
-   that branch, and the station fast-forwards to its pinned commit. Later,
-   `main` takes the branch with an ordinary merge commit (never a rebase or
-   force), so the station can fast-forward onto `main` when B2 is installed.
+   ending with its own short check. Never one combined jump unless the owner
+   says so (allowed once, for update #16).
+   **A fix the station needs ahead of work already on `main`** (as update #17
+   was ahead of B2): branch from the station's commit, push that branch, and
+   pin the station to it. Then merge the branch into `main` with an ordinary
+   merge commit (never rebase or force), so the station can later
+   fast-forward onto `main`.
 3. Each block, in this order: `npm run dev:stop` **first**, then
    `git fetch origin` (first block), `git merge --ff-only <commit>`,
    `npm run backup:database -w backend` (always when a migration is included),

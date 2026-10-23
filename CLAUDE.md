@@ -6,15 +6,18 @@ stock and deliveries. It runs on the station PC (desktop app + backend) with a
 phone web app for attendants and the owner, and is meant to become a
 production ERP for other stations.
 
-These files are the single source of truth. Every session, whatever tool or
-worktree, follows them and keeps them current:
+These files are the single source of truth. Every session, whatever tool,
+follows them and keeps them current:
 
 | File | What it holds |
 |---|---|
 | `docs/PROJECT-STATUS.md` | Current state, the station's version, pending station updates, open items |
 | `docs/ROADMAP.md` | What is left to build, in order, with each item's spec |
 | `docs/ENGINEERING-STANDARDS.md` | How to build, test and deploy (money rules, migrations, E2E, station updates) |
-| `docs/*.md` (others) | How each feature works, written for the owner |
+| `docs/SHIFTS.md`, `CORRECTIONS.md`, `CUSTOMERS.md`, `STAFF-AND-PAY.md`, `STOCK.md`, `STATION-PC.md` | One plain manual per area, written for the owner. Explanations live here, not on screens |
+
+Old plans and release cards are in git history only; don't recreate them.
+Keep these files short: update a manual in place instead of adding a new doc.
 
 ## Start of a session
 
@@ -107,6 +110,9 @@ worktree, follows them and keeps them current:
 - Never edit a closed shift, delete a financial row, edit a pushed migration,
   or force/rebase/reset the station PC. Corrections are new dated entries.
 - Never enter real credentials anywhere.
+- Never create git worktrees; work in `D:\NexGen` on a branch. Never delete a
+  folder before unlinking its junctions (`docs/ENGINEERING-STANDARDS.md` §6:
+  a junction once wiped this folder and the real database copy).
 
 ## Definition of done
 
@@ -130,5 +136,4 @@ worktree, follows them and keeps them current:
 - `scripts/`: station PowerShell scripts (`station:bg`, `dev:stop`, backups)
   and `scripts/e2e` (isolated testing).
 - Local only, never committed: `.claude/plans/` (planning history with station
-  data; readable at `D:\NexGen\.claude\plans\` from worktrees) and
-  `.claude/launch.json`.
+  data) and `.claude/launch.json`.

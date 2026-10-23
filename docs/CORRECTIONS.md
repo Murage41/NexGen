@@ -1,213 +1,100 @@
 # Corrections
 
-How to fix a mistake found after a shift has closed. For the owner and for
-training whoever handles the office.
-
-## The rule
+How to fix a mistake after a shift has closed. Only administrators correct.
 
 **Before a shift closes, fix it on the shift. After it closes, correct it.**
+A closed shift's records and its saved close never change. A correction is a
+new numbered record (C-2026-0001, …) kept beside the shift: what was wrong,
+the right record, why, and who approved it. This is how SAP, Dynamics 365 and
+NetSuite keep closed records closed: they post a reversal, never an edit.
 
-In A3, a declared opening or posted money movement keeps its history even
-while open: use **Correct** on an opening or **Reverse movement**, then record
-the replacement if needed. This release is queued after A2. See the
-[opening-funds guide](OPENING-FUNDS-GUIDE.md).
+## What a correction can fix
 
-A closed shift keeps its original records and saved close. The database
-refuses changes to those records. In A2, the shift screen and financial reports
-show the current figures, including corrections; **Original close → View
-original figures** shows the saved figures. See
-[Current shift figures](CURRENT-SHIFT-FIGURES.md). A2 is queued after A1;
-the station keeps its earlier display until A2 is installed and checked.
+On a closed shift, beside each entry (**Correct**) or list (**Add missing**),
+desktop and phone:
 
-A mistake found later is fixed by a **correction**: a numbered record
-(C-2026-0001, C-2026-0002, …) that says what was wrong, what the right record
-is, why, and who approved it. It is kept next to the shift, never inside it.
-This is how accounting systems keep closed records closed: SAP and Dynamics 365
-post a reversal instead of editing, Odoo corrects a delivery before it is
-invoiced and with a credit note after, and KRA (eTIMS) corrects an issued
-invoice only with a credit or debit note that refers to it.
+| Record | Mistakes it fixes |
+|---|---|
+| Fuel on account (invoice customer) | Litres, fuel, customer, shift, never taken, not recorded. Only before the fuel is on an issued invoice. |
+| Credit sale | Customer, amount, shift, never given, not recorded |
+| Debt payment taken in the shift | Customer, amount, cash/M-Pesa swapped, shift, never received, not recorded |
+| Drawer expense | Amount, category, never paid, not recorded |
+| Cash and M-Pesa totals | The counted money, each figure independently (zero allowed) |
+| Opening cash / M-Pesa | A wrong opening figure (also while the shift is open) |
+| Money added / removed | A missing movement, or reverse a wrong one |
 
-## What can be corrected today
+Other mistakes:
 
-On a closed shift:
-- **Fuel on account** before invoice issue (unbilled or in a draft).
-- **Credit sales** (credit given to a credit customer).
-- **Debt payments** (a credit customer paying what they owe, into the drawer).
-- **Drawer expenses.**
-- **Cash and M-Pesa totals**, independently through A4.
-
-A3 also provides opening cash/M-Pesa corrections and missing/mistaken custody
-movements on balance-based shifts. Historical shifts with uncaptured openings
-retain their original calculation; new opening figures are never invented.
-
-Still done the old way until later phases: office payments and attendants'
-repayments (payment reversal), moving or writing off a balance (**Move
-balance**, see `CLOSED-SHIFT-CORRECTIONS.md`), wages paid from the drawer,
-meter readings, deliveries and stock. B2 handles issued invoice amounts with
-monetary notes; issued source consumption is fixed.
-
-## Where
-
-- **On a closed shift** (desktop and phone): each list (fuel on account,
-  credits given, debt collections, shift expenses) has **Correct** on every
-  eligible entry and an **Add missing** button; A4's counts have **Correct cash and
-  M-Pesa totals** or **Correct closing balances**. An entry already corrected shows the correction's number
-  instead.
-- **A fuel entry** can also be corrected from the customer's fuel history:
-  Customer Invoices (desktop) or Invoice Customers (phone) → the customer →
-  **Correct** before invoice issue. Issued entries show that their fuel is fixed;
-  use the linked invoice's monetary note instead.
-- **The register (desktop):** **Corrections** in the menu lists every
-  correction, newest first. Open one to see exactly what it did, and to undo it.
-- **The daily report** lists the corrections posted that day.
-
-Only administrators correct. On the desktop, choose the approving
-administrator and enter their PIN; on the phone the signed-in administrator
-approves.
+- **Balance on the wrong account** (a customer's or employee's): **Move
+  balance**, below.
+- **An issued invoice:** a credit or debit note ([Customers](CUSTOMERS.md)).
+- **Meter readings, deliveries and stock, office payments, wages:** no
+  correction yet; see the roadmap.
 
 ## The steps
 
-1. **What was wrong?** The choices depend on the record (below).
-2. **The right value.** Only the wrong part can be changed.
-3. **Check what it does.** NexGen lists every effect in plain words: what is
-   reversed and what is added, what each customer owes before and after, the
-   shift's result at close and after, and the attendant.
-4. **Who carries it?** Asked only when a shift's result gets worse:
-   - **The attendant (normal rules):** it adds to their shortage on that shift.
-   - **The station (not their doing):** their shortage stays as it is.
+1. Choose what was wrong. Only the wrong part can change.
+2. Enter the right value (for amounts, the full correct amount).
+3. Check the effects NexGen lists: what is reversed and added, what each
+   customer owes before and after, and the shift's result at close and now.
+4. **Who carries it?** Asked only when the shift's result gets worse: the
+   attendant (it adds to their shortage on that shift) or the station (their
+   shortage stays). A correction that improves the shift lowers what the
+   attendant owes on it.
+5. Give a reason (at least 10 characters) and approve: on desktop choose the
+   administrator and enter their PIN; on the phone the signed-in administrator
+   approves. If the records change before approval, NexGen asks you to check
+   the new effects again.
 
-   A correction that makes a shift better always goes to the attendant: it
-   lowers what they owe on that shift (a surplus is the station's).
-5. **Reason and approval.** Choose a reason and say what happened (at least 10
-   characters). The approval is for exactly what was shown: if anything changed
-   in between, NexGen stops and shows the new effects to check again.
+## What happens to the money
 
-## Record by record
+- **Customers.** A reversed credit sale that was already paid: the money stays
+  with the customer who paid and pays their other debts, oldest first; anything
+  left is their credit. A reversed payment puts back the debts it paid. Going
+  past a credit limit needs the limit approval, recorded like any other.
+- **The shift.** Credit sales and expenses count as money accounted for;
+  debt payments add to what the till should hold. So an expense found later
+  improves the shift, and a payment never received improves it too. Swapping
+  cash and M-Pesa changes neither.
+- **Counted money stays as counted** unless you correct the totals. Never
+  invent a payment to fix a count.
+- **Never changed:** pump readings, fuel sold, tank stock, fuel cost, earned
+  wages, later shifts' openings.
 
-### Fuel on account
-
-Mistakes: the litres, the other fuel, another customer, another shift, never
-taken (or recorded twice), or taken but not recorded. The price is always the
-shift's pump price for that fuel and day.
-
-| Where the entry is | What the correction does |
-|---|---|
-| Not yet invoiced | The wrong entry is reversed (kept, marked), the right one added. The customer's next invoice bills the right fuel. |
-| In a draft invoice | The same, and the draft is refreshed at once. Check the draft's prices before issuing it. |
-| On an issued invoice, paid or not | Source correction is refused. On the invoice, manually post a monetary credit/debit note. Payments and original fuel/PDF stay recorded; excess credit is held for eligible bills. |
-
-The fuel on account for a fuel can never be more than that fuel's pumps sold
-on the shift. After issue, cumulative monetary credits cannot exceed that
-document's billed amount, including any historical inline debit notes. New
-separate DN bills have their own credit cap. Full credit keeps its fuel invoiced; it never
-returns to an unbilled selector. See [Invoice Customer Workflow](INVOICE-CUSTOMER-WORKFLOW.md).
-
-### Credit sales
-
-Mistakes: another customer, the wrong amount, another shift, never given (or
-recorded twice), or given but not recorded.
-
-- The customer's debt moves with the sale. If the wrong sale had already been
-  paid (fully or partly), that money goes on to pay the same customer's other
-  debts, oldest first; anything left is held as their credit (it pays their
-  next credit, or can be refunded).
-- When a customer takes on more credit, their credit limits are checked. If
-  the correction would take them past a limit, NexGen says so and the
-  administrator ticks **Approve going past the customer's credit limit**; the
-  approval is recorded like any other limit override.
-- The shift: a credit counts towards what the drawer accounted for, so
-  removing one makes the shift worse and adding one makes it better.
-
-B1 tightens paid-debt allocation checks and uses the resulting net exposure
-for limit approval. A 1,000 debt with 800 paid, corrected to 1,200, leaves 400
-owed; it is not treated as a fresh unpaid 1,200. The full source amount is
-prefilled, and neither counted money nor fixed pump revenue changes. See the
-[customer-correction guide](CUSTOMER-SHIFT-CORRECTIONS.md).
-
-### Debt payments taken in a shift
-
-Mistakes: another customer paid, the wrong amount, cash and M-Pesa the wrong
-way round, another shift, never received (or recorded twice), or received but
-not recorded.
-
-- A payment reversed puts back the debts it paid: the customer owes them
-  again. A payment added pays the customer's oldest debts; anything beyond
-  what they owe is held as their credit (the money was received).
-- The shift: a debt payment adds to what the drawer should hold. So a payment
-  that was never received makes the shift better (the drawer was never short
-  of it), and one not recorded makes it worse. Cash and M-Pesa the wrong way
-  round changes neither.
-- A payment part of which has already been refunded to the customer cannot be
-  corrected.
-- Counted cash/M-Pesa remain fixed. Correct a mistaken count separately with
-  A4; changing the receipt's method only changes its classification. B1 binds
-  approval to the involved account/shift allocation history, including changes
-  followed by undo, and shows the same current variance as reports.
-
-### Drawer expenses
-
-Mistakes: the wrong amount, the wrong category, never paid (or recorded
-twice), or paid but not recorded (for example a receipt found later).
-
-- The shift: an expense counts towards what the drawer accounted for, so an
-  expense found later makes the shift better (the attendant owes less), and
-  one that was never paid makes it worse. A wrong category does not change the
-  shift.
-- Wages are never a drawer expense; they are paid through Payroll.
-
-### Cash and M-Pesa totals
-
-A4 adds **Correct closing balances** for balance-based shifts and **Correct
-cash and M-Pesa totals** for older shifts. Both current figures are filled in;
-enter the full correct amounts, changing one or both. Zero is valid, and the
-combined total can change. Review the resulting variance and responsibility,
-give a reason and approve. Original close and the saved count remain intact.
-See the [operating guide](CLOSING-TOTAL-CORRECTIONS.md).
-
-Earlier split-only corrections keep their history. This new form corrects
-recorded totals; actual custody movements use **Money added / removed**.
-Install A4 separately after A1, A2 and A3 and check each update.
-
-## What happens elsewhere
-
-**The shift.** Its main figures and lists include current corrections. The
-original close remains available separately. A note compares the result at
-close with the current result and lists each correction. Attendants see the
-corrections on their own shifts (without customers' balances).
-
-**The attendant.** Their shortage on that shift changes as described in step 4,
-through their Variances, like any other correction of their shortage.
-
-**Reports.** Daily figures, the dashboard and relevant monthly/cash-flow
-totals include current corrections. Corrected drawer expenses belong to the
-shift's date; the correction register records when the correction was made.
-Invoice revenue adjustments retain their posting date. History exports have
-separately labelled Original and Current financial columns.
-
-**Tank stock, fuel sales and fuel cost never change.** These records are how
-metered sales were paid or accounted for; the pumps measured the fuel either
-way.
+The shift page and reports show current figures; **Original close → View
+original figures** shows the saved close. The desktop **Corrections** page
+lists every correction; the daily report lists the day's.
 
 ## Undo
 
-A correction made in error is undone from the register: **Undo this
-correction**, with a reason and approval. The undo is itself a new correction
-(it cancels the first exactly): the reversed record comes back, the added one
-is reversed, and anything it did to the attendant is cancelled. Customers'
-balances follow: a restored credit sale is owed again (credit they hold pays
-it first), a restored payment pays their debts again.
+From the desktop **Corrections** page: **Undo this correction**, with a reason
+and approval. The undo is itself a new correction that cancels the first
+exactly. It is refused when something was built on it since (its fuel is now
+on an issued invoice, a later correction changed what it added, or a later
+cash/M-Pesa correction on the same shift depends on it): undo the later one
+first, or make a new correction.
 
-An undo is refused when something has been built on the correction since: it
-made a credit or debit note (correct the entry again instead: that makes the
-opposite note), its fuel is now on an issued invoice, a later correction
-changed what it added (undo that one first), or a later cash/M-Pesa correction
-on the same shift was worked out from it.
+## Move balance
+
+For money sitting on the wrong account after close. From a customer
+(**Credit Accounts**, phone **Credits**) or an employee (**Employees →
+Shortages**): **Move balance** of KES ___ **from** one account (owes less)
+**to** another (owes more), with the shift number, reason and approval.
+
+| Mistake | From | To |
+|---|---|---|
+| Repayment recorded on the wrong employee | employee who paid | employee it was recorded on |
+| A customer's debt nobody will pay | the customer | the Station |
+| Credit hid a till shortage | the customer | the attendant |
+
+A move between a customer and an employee must name that employee's shift.
+The Station is only ever on a customer's side: an employee's shortage is never
+written off. No money moves; a wrong move is fixed by moving it back. Moves
+show on statements, the shift's **Mistakes fixed later** and **Reports →
+Mistakes Fixed**.
 
 ## What corrections don't do
 
-- Decide which record is wrong: check the issue book, the customer's statement,
-  the M-Pesa statement and the dips first.
-- Replace KRA eTIMS documents: those come from the POS.
-- Correct the records listed above as "still done the old way" (later phases).
-- Show the station's own losses as a separate figure: a loss the station
-  carries shows in the shift's corrected result.
+They don't decide which record is wrong: check the issue book, the customer,
+the M-Pesa statement and the dips first. They don't replace KRA eTIMS
+documents, which come from the POS.

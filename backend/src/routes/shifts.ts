@@ -1637,7 +1637,7 @@ router.delete('/:id/invoice-consumption/:entryId', requireAdmin, async (req, res
   }
 });
 
-// A closed shift is never changed (docs/CLOSED-SHIFT-CORRECTIONS.md). Mistakes
+// A closed shift is never changed (docs/CORRECTIONS.md). Mistakes
 // found after close are fixed by moving the amount between the accounts it
 // affects (POST /balance-moves). Corrections posted before this stay on record.
 router.post(

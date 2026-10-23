@@ -4,7 +4,7 @@ import { positiveMoney, settlementError } from './employeeDebt';
 
 // Attendant shortages (owner decision 2026-09-24): an employee owes the
 // shortages of the shifts they ran and pays them. That is all.
-// See docs/ATTENDANT-VARIANCES.md.
+// See docs/STAFF-AND-PAY.md.
 //
 // - A shift's shortage is owed. A shift's surplus is recorded (the report
 //   shows it) but belongs to the station: it never pays a shortage.

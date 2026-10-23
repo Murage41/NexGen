@@ -50,7 +50,7 @@ for (const [file, totalName] of [
   }
 
   // Execute the screen's open-shift preview, using independent known amounts
-  // from SHIFT-FLOATS.md. A float or bank movement changes custody, never sales.
+  // from docs/SHIFTS.md. A float or bank movement changes custody, never sales.
   const expectedTotal = expression(absolute, 'expectedShiftTotal');
   const payouts = expression(absolute, 'businessPayouts');
   const receipts = expression(absolute, 'expectedReceipts');

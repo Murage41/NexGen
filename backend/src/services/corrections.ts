@@ -15,7 +15,7 @@ import { shiftFundsRule } from './correctionRules/shiftFunds';
 import { readShiftFinancials } from './shiftFinancials';
 import { customerCorrectionState } from './correctionRules/customerState';
 
-// Corrections (docs/ROADMAP.md §3c, docs/CORRECTIONS.md). A closed record is
+// Corrections (docs/CORRECTIONS.md). A closed record is
 // never changed. A mistake found later is fixed by a numbered Correction whose
 // lines reverse the wrong record, add the right one, or both. What it produces
 // depends on how far the record has gone (not yet invoiced, in a draft, on an
