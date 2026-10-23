@@ -32,8 +32,10 @@ Last updated: 2026-10-23.
   scratch desktop/phone on the 2026-10-23 data copy (a daily-paid attendant's
   open shift showed the plan's wage as the planned drawer payment and closed
   balanced; a different typed amount survived a reload; a monthly-paid
-  attendant's box showed 0). Receivables audit: zero issues. Not committed or
-  pushed yet.
+  attendant's box showed 0). Receivables audit: zero issues. Code commit
+  `50f78f9` pushed on branch `claude/drawer-wage-default` (remote SHA
+  verified 2026-10-23); the following documentation commit on that branch is
+  the installation target (same code). Installation not yet confirmed.
 - **Set aside:** the other assistant's unfinished alternative (migration 057,
   `closing_wage_*` columns, a new route and hook) in
   `C:\Users\cmuge\.codex\worktrees\shift-pay-calculation` is not to be shipped;
@@ -192,7 +194,7 @@ Last updated: 2026-10-23.
 | A3 (queued after A2) | `8997896` | Manual opening cash/M-Pesa, closing balances, custody movements and correction history | 055 |
 | A4 (queued after A3) | `03d0653` | Independent current cash/M-Pesa total corrections with approval/history/undo | no new migration |
 | B1 (queued after A4) | Separate B1 release commit based on `03d0653`; see release card | Customer credit/shift debt-receipt allocation, exposure, preview and undo checks | no new migration |
-| 17 (pending) | Branch `claude/drawer-wage-default` from `454640a` | Daily drawer wage starts at the shift's earnings again; typed wage survives a reload. B2 held back | none |
+| 17 (pending installation) | `50f78f9` + publication record, branch `claude/drawer-wage-default` | Daily drawer wage starts at the shift's earnings again; typed wage survives a reload. B2 held back | none |
 
 ## How the system works now (recent decisions that code must respect)
 
