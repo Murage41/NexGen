@@ -275,7 +275,7 @@ export default function ShiftDetail() {
       setTotalOutstandingDebt(d.total_outstanding_debt || 0);
       setCreditReceipts(d.credit_receipts || []);
       setNotes(d.notes || '');
-      setWagePaid(String(d.default_direct_wage_payment || 0));
+      setWagePaid(draft?.wage_paid ?? String(d.default_direct_wage_payment || 0));
       // Load tank stock summary
       try {
         const tankRes = await getShiftTankSummary(parseInt(id!));
@@ -1857,7 +1857,7 @@ export default function ShiftDetail() {
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Direct Wage Paid From This Shift (KES)</label>
                 <input type="number" step="0.01" min="0" value={wagePaid}
-                  onChange={e => setWagePaid(e.target.value)}
+                  onChange={e => { setWagePaid(e.target.value); writeShiftDraft(id!, { wage_paid: e.target.value }); }}
                   className="w-full border border-gray-300 rounded-lg p-2"
                 />
                 <p className="text-xs text-gray-400 mt-1">

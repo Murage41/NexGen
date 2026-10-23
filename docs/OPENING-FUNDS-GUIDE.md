@@ -37,8 +37,10 @@ Their combined effect is zero. Opening funds are not added again as a movement.
 
 ## Close and review
 
-Record the actual funds held and actual wages paid from this shift. Review
-the readings, funds and other entries, then close. Wage earnings and cash paid
+Record the actual funds held. For an attendant paid daily, the wage box starts
+at what this shift earned; change it only if a different amount was taken
+from the till. Weekly or monthly pay is never taken from the till, so its box
+stays at 0. Review the readings, funds and other entries, then close. Wage earnings and cash paid
 remain separate. A transfer to the station bank is not an expense or shortage.
 
 For example, opening funds 5,000 plus sales 10,000, less credit sales 1,000,

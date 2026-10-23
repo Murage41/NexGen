@@ -213,6 +213,17 @@ cache instead of recomputing; computing at event time and never updating.
   `for t in $(grep -o '"test:[a-z0-9-]*"' package.json | tr -d '"'); do npm run -s $t >/dev/null 2>&1 && echo "ok $t" || echo "FAIL $t"; done`
 - **Mutation check new logic:** plant each important bug (remove a guard,
   change a sign) and confirm a test fails; restore the file afterwards.
+- **Test what a screen starts with, not only typed values.** A prefilled
+  figure the owner relies on (the daily wage at close) is behaviour. Update
+  #16 silently started it at 0 and its tests passed because they always typed
+  the wage (fixed 2026-10-23, `test:shift-drawer-wage`). When a release changes
+  a default, say so to the owner in plain words.
+- **E2E from a git worktree:** `preview_start` reads launch names from
+  `D:\NexGen\.claude\launch.json`, and `scripts/e2e/copy-db.cjs` reads the
+  worktree's own (empty) `backend/data`. Add launch entries that run the
+  worktree's `scripts/e2e/start.cjs` by absolute path, copy the real data into
+  the worktree's `.e2e-data` read-only (`VACUUM INTO`), and check the log's
+  `database folder` line before using the page.
 - **End-to-end on a scratch copy of real data**, never on
   `backend/data/nexgen.db`:
   1. `node scripts/e2e/copy-db.cjs` (copy + saves the real DB fingerprint)
@@ -248,6 +259,12 @@ pushed commits.
    build mobile once and verify startup immediately; the owner validates
    genuine operations from 2026-10-20. This does not authorise bundling future
    unfinished stages. See `releases/A1-B1-COMBINED-STATION-UPDATE.md`.
+   **Owner decision 2026-10-23:** update #17 (daily drawer wage) ships alone,
+   ahead of B2, which is already on `main`. It is committed on branch
+   `claude/drawer-wage-default` from the station's code (`454640a`), pushed as
+   that branch, and the station fast-forwards to its pinned commit. Later,
+   `main` takes the branch with an ordinary merge commit (never a rebase or
+   force), so the station can fast-forward onto `main` when B2 is installed.
 3. Each block, in this order: `npm run dev:stop` **first**, then
    `git fetch origin` (first block), `git merge --ff-only <commit>`,
    `npm run backup:database -w backend` (always when a migration is included),
