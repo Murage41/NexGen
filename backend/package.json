@@ -34,6 +34,7 @@
     "test:shift-floats-math": "tsx scripts/test_shift_floats_math.ts",
     "test:shift-float-corrections": "tsx scripts/test_shift_float_corrections.ts",
     "test:shift-floats": "tsx scripts/test_shift_floats.ts",
+    "test:shift-drawer-wage": "tsx scripts/test_shift_drawer_wage.ts",
     "test:closing-total-corrections": "tsx scripts/test_closing_total_corrections.ts",
     "test:customer-shift-corrections": "tsx scripts/test_customer_shift_corrections.ts",
     "test:issued-invoice-source-guards": "tsx scripts/test_issued_invoice_source_guards.ts",

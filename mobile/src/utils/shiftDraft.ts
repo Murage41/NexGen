@@ -1,6 +1,9 @@
 export type ShiftDraft = {
   readings?: Record<string, { raw_l_input: string; raw_a_input: string }>;
   collections?: { cash_amount: number | string; mpesa_amount: number | string };
+  // The wage typed on the close form. It is sent with the close, so it never
+  // waits to sync; it only survives a reload until then.
+  wage_paid?: string;
   updated_at: string;
 };
 
@@ -39,7 +42,7 @@ export function clearShiftDraftSection(
     const current = readShiftDraft(shiftId);
     if (!current) return;
     delete current[section];
-    if (!current.readings && !current.collections) localStorage.removeItem(keyFor(shiftId));
+    if (!current.readings && !current.collections && current.wage_paid === undefined) localStorage.removeItem(keyFor(shiftId));
     else localStorage.setItem(keyFor(shiftId), JSON.stringify(current));
   } catch {
     // A failed cleanup is harmless; the server copy remains authoritative.

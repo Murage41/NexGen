@@ -5,10 +5,45 @@ that changes code, the station, or the plan.** What is left to build, in
 order, is in `docs/ROADMAP.md`; how to build it is in
 `docs/ENGINEERING-STANDARDS.md`.
 
-Last updated: 2026-10-21.
+Last updated: 2026-10-23.
 
 ## Station PC
 
+- **Station runs update #16** (A1-A4/B1, migration 055). Evidence: the owner's
+  data copy of 2026-10-23 has migration 055 and shifts #148-#151 on the new
+  opening-funds rules. Its code is `c3b3e14` or its rollout-documentation
+  commit `454640a` (identical code). The older "Running `c5c4ee8`" line below
+  is superseded. Shift #149 was closed at the station on 2026-10-23 with the
+  readings recovered from the WAL and the attendant's actual pay; it balanced.
+- **Pending station update #17: daily drawer wage (owner-authorised
+  2026-10-23).** Cause: A3 (`8997896`) started "Direct wage paid from this
+  shift" at 0 on every new-rule open shift, so a daily-paid attendant showed
+  short by exactly their pay until the admin typed it, and a typed amount was
+  lost on reload. This contradicted `docs/ATTENDANT-VARIANCES.md` and was not
+  flagged to the owner. Fix: the wage starts at what the plan earned this shift
+  for daily pay (fixed, sales %, per litre, with minimum/maximum); weekly and
+  monthly pay stay 0; a typed amount is kept in the device's existing shift
+  draft until close; the phone's open-shift card uses the typed amount like the
+  close form and desktop. No migration. Built on the station's code `454640a`
+  in branch `claude/drawer-wage-default`. **B2 is held back** from the station
+  (owner, 2026-10-23); update #17 ships alone and B2 stays queued after it.
+  Checks: all 43 backend suites (new `test:shift-drawer-wage`), three type
+  checks, four planted bugs caught (including the original zero default), and
+  scratch desktop/phone on the 2026-10-23 data copy (a daily-paid attendant's
+  open shift showed the plan's wage as the planned drawer payment and closed
+  balanced; a different typed amount survived a reload; a monthly-paid
+  attendant's box showed 0). Receivables audit: zero issues. Code commit
+  `50f78f9` pushed on branch `claude/drawer-wage-default` (remote SHA
+  verified 2026-10-23); the following documentation commit on that branch is
+  the installation target (same code). Installation not yet confirmed.
+- **Set aside:** the other assistant's unfinished alternative (migration 057,
+  `closing_wage_*` columns, a new route and hook) in
+  `C:\Users\cmuge\.codex\worktrees\shift-pay-calculation` is not to be shipped;
+  the number 057 is unused.
+- **Real-DB fingerprint, 2026-10-23:** the saved fingerprint no longer matches
+  because the owner copied fresh station files into `backend/data` around
+  13:45 (the new WAL holds shifts #149-#151). No test touched it; every check after 13:56 matched that new copy. Re-save the
+  fingerprint (`node scripts/e2e/copy-db.cjs`) before the next E2E run.
 - **Current installation decision, 2026-10-19:** the owner authorised one
   combined update #16 containing all completed A1, A2, A3, A4 and B1 work,
   instead of installing/checking each stage separately. Published code target
@@ -181,6 +216,7 @@ Last updated: 2026-10-21.
 | A3 (queued after A2) | `8997896` | Manual opening cash/M-Pesa, closing balances, custody movements and correction history | 055 |
 | A4 (queued after A3) | `03d0653` | Independent current cash/M-Pesa total corrections with approval/history/undo | no new migration |
 | B1 (queued after A4) | Separate B1 release commit based on `03d0653`; see release card | Customer credit/shift debt-receipt allocation, exposure, preview and undo checks | no new migration |
+| 17 (pending installation) | `50f78f9` + publication record, branch `claude/drawer-wage-default` | Daily drawer wage starts at the shift's earnings again; typed wage survives a reload. B2 held back | none |
 
 ## How the system works now (recent decisions that code must respect)
 

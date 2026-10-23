@@ -452,10 +452,11 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       );
       // Earnings are an expense when earned. Only actual direct payments belong
       // in drawer accountability; monthly/weekly earnings accrue without leaving
-      // the shift drawer.
+      // the shift drawer. A daily-paid attendant takes the shift's earnings from
+      // the drawer, so an open shift (either basis) starts from that amount; the
+      // admin changes it at close only if a different amount was taken.
       const employee_wage = shift.status === 'closed'
         ? (shift.wage_paid ?? shift.employee_wage ?? 0)
-        : shift.reconciliation_basis === 'balances_v1' ? 0
         : compensationPlan?.pay_schedule === 'daily'
           ? grossEarningPreview
           : 0;

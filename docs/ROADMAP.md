@@ -38,6 +38,7 @@ exclusions and measurable result. Split any broad row further before code.
 | B1 | Customer credit and shift debt receipts | Published `c3b3e14`; checks pass, included with A1-A4 in the authorised combined update #16. [Release card](releases/B1-CUSTOMER-SHIFT-CORRECTIONS.md), [operating guide](CUSTOMER-SHIFT-CORRECTIONS.md) |
 | B2 | Fixed issued consumption and monetary notes | Complete on `codex/issued-invoice-notes` from `454640a`; 44 suites, types/builds, six planted faults, migration/restore and desktop/phone checks pass. Separate queued installation with migration 056; [release card](releases/B2-ISSUED-INVOICE-MONEY-NOTES.md). |
 | B3 | Unbilled fuel and draft/limit controls | Next development; separate release. |
+| A3 fix | Daily drawer wage starts at the shift's earnings again; weekly/monthly stay 0; a typed wage survives a reload | Built 2026-10-23 on branch `claude/drawer-wage-default` from station code `454640a`; station update #17, shipped alone ahead of B2 (owner, 2026-10-23) |
 | B4 → B7 | Expenses; employee debts/targeted repayments; office payments/refunds; drawer wage payments | Planned separate releases |
 | C1 → C2 | Actual supplier-payment cash flow; supplier-payables drift audit | Planned separate releases |
 | D1 → D5 | Fuel orders; GRNs/delivery document; supplier invoice matching; supplier price/document amendments; physical adjustments/returns | M9 and physical work split into releases; meter edits excluded |

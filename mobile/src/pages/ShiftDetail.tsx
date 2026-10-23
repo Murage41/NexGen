@@ -8,7 +8,7 @@ import { getShift, closeShift, getStaffDebts, getShiftTankSummary, addShiftCredi
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import { AlertTriangle, Lock, Edit3, X, DollarSign, CreditCard, Droplets, Plus, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
-import { clearShiftDraft, hasPendingShiftDraft } from '../utils/shiftDraft';
+import { clearShiftDraft, hasPendingShiftDraft, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 function compensationComponentLabel(component: any, schedule: string) {
   if (component.component_type === 'fixed_per_shift') return `KES ${Number(component.amount || 0).toLocaleString('en-KE')} per shift`;
@@ -76,7 +76,8 @@ export default function ShiftDetail() {
       const d = res.data.data;
       setShift(d);
       setCreditReceipts(d.credit_receipts || []);
-      setWagePaid(String(d.default_direct_wage_payment || 0));
+      const draft = d.status === 'open' ? readShiftDraft(id!) : null;
+      setWagePaid(draft?.wage_paid ?? String(d.default_direct_wage_payment || 0));
       // Use outstanding_debts from shift response, or fetch separately
       if (d.outstanding_debts) {
         setDebts(d.outstanding_debts);
@@ -260,7 +261,6 @@ export default function ShiftDetail() {
     shift.total_accounted
       ?? (drawerTotal + totalCredits + totalInvoiceConsumption + totalExpenses + employeeWage + totalPayrollPayments),
   );
-  const variance = Number(shift.variance ?? (totalAccounted - expectedShiftTotal));
   const closeTotalAccounted = drawerTotal
     + totalCredits
     + totalInvoiceConsumption
@@ -273,6 +273,9 @@ export default function ShiftDetail() {
   const expectedReceipts = expected - totalCredits - totalInvoiceConsumption + totalCreditReceipts;
   const expectedClosing = openingTotal + expectedReceipts + fundsAdded - businessPayouts - fundsRemoved;
   const closeVariance = Math.round((closeTotalAccounted - expectedShiftTotal) * 100) / 100;
+  // An open shift shows the result with the wage entered on the close form,
+  // as the close form and the desktop do.
+  const variance = isOpen ? closeVariance : Number(shift.variance ?? (totalAccounted - expectedShiftTotal));
   const closeReviewComplete = closeReview.readings
     && closeReview.collections
     && closeReview.entries;
@@ -898,7 +901,7 @@ export default function ShiftDetail() {
               <div className="mb-4">
                 <label className="text-sm font-medium text-gray-700 mb-1 block">Direct Wage Paid From This Shift (KES)</label>
                 <input type="number" step="0.01" min="0" value={wagePaid}
-                  onChange={e => setWagePaid(e.target.value)}
+                  onChange={e => { setWagePaid(e.target.value); writeShiftDraft(id!, { wage_paid: e.target.value }); }}
                   className="w-full border border-gray-300 rounded-lg p-3 text-base" />
                 <p className="text-xs text-gray-400 mt-1">
                   Pay the full wage. Shortages are paid separately under Employees, Shortages, never taken from pay.
