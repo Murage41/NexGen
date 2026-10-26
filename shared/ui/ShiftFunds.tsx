@@ -43,7 +43,7 @@ export function FundsCloseReview({ opening, added, removed, payouts, expectedClo
   ];
   return (
     <dl className="bg-gray-50 rounded-lg p-3 mb-4 text-sm space-y-1">
-      {rows.map(([label, amount]) => (
+      {rows.filter(([label, amount]) => amount !== 0 || (label !== 'Money added' && label !== 'Money removed')).map(([label, amount]) => (
         <div key={label} className="flex justify-between gap-3">
           <dt className="text-gray-500">{label}</dt>
           <dd className="font-semibold text-right shrink-0">{formatMoney(amount)}</dd>

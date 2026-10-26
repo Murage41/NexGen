@@ -18,6 +18,11 @@ Administrators open shifts (desktop and phone **Shifts → Open shift**).
 
 ## During the shift
 
+On the desktop a shift page has four parts: **Readings** (opens first),
+**Money** (counts, credit sales, fuel on account, expenses, debt payments,
+money added/removed), **Close** (pay and the result) and **History**
+(activity, original close, corrections). A closed shift opens on **Result**.
+
 Record, through their own forms:
 
 - **Readings:** the closing figure on each pump's display. NexGen keeps a
@@ -47,7 +52,9 @@ reversed, never deleted.
 
 ## Close
 
-Review readings, money and entries, then close. NexGen works out:
+In **Close**, press **Close shift**. NexGen checks that the readings and the
+cash/M-Pesa count are saved (no tick boxes), shows the pay taken and the
+result, and closes on one more press. It works out:
 
 ```text
 expected = opening cash + opening M-Pesa + sales from the pumps
@@ -82,6 +89,7 @@ received instead of opening and closing balances.
 Bottom bar: **Home, My Shift, My Pay, Credits, More**.
 
 - Home: whether a shift is open, and "Fuel is low" warnings.
+- Home: **Record my shift** opens their open shift on the readings.
 - My Shift: their own shifts. An open shift is **blind**: they record readings,
   money, credits and expenses but see no expected total or shortage until an
   administrator closes it. The pump's own money meter still shows its sales.

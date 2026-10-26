@@ -69,11 +69,12 @@ export default function Dashboard() {
             </p>
             {/* Attendants open only their own shift. */}
             {(isAdmin || Number(data.current_shift.employee_id) === Number(user?.id)) && (
+              // The attendant's own shift opens straight on recording (readings first).
               <button
-                onClick={() => navigate(`/shifts/${data.current_shift.id}`)}
-                className="mt-2 w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
+                onClick={() => navigate(isAdmin ? `/shifts/${data.current_shift.id}` : `/shifts/${data.current_shift.id}/record`)}
+                className="mt-2 w-full bg-blue-600 text-white py-3 rounded-lg text-base font-semibold"
               >
-                View Shift Details
+                {isAdmin ? 'Open shift' : 'Record my shift'}
               </button>
             )}
           </div>

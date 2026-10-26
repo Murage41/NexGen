@@ -4,33 +4,27 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-10-24.
+Last updated: 2026-10-26.
 
 ## Station PC
 
-- **Runs update #17**, installed 2026-10-23 (owner's report): commit
-  `74ef1f7` on branch `claude/drawer-wage-default` (fix `50f78f9`, built on
-  the station's previous code `454640a`). Latest migration
-  `20261016_055_shift_floats`. Update #16 (A1–A4 and B1: M-Pesa fees removed,
-  current figures, opening cash/M-Pesa, independent cash/M-Pesa corrections,
-  customer corrections) is under it.
-- **#17 fixed:** A3 (`8997896`) started "Direct wage paid from this shift" at 0,
-  so daily-paid attendants showed short by exactly their pay and a typed wage
-  was lost on reload. Daily plans now start at the shift's earnings,
-  weekly/monthly at 0, and a typed wage stays in the device's shift draft.
-  Suite: `test:shift-drawer-wage`.
-- **Next station update: #18 = the facelift** (owner yes, 2026-10-26),
-  built on branch `ui-facelift` from `main`, not committed yet: new colours
-  and grouped menu, navy phone header, 51 helper paragraphs and the
-  opening/close notes boxes removed, opening cash/M-Pesa start at 0, and a
-  date on the open-shift form (backend `shift_date`, suite
-  `test:shift-date`), and optional notes boxes removed from 16 forms
-  (payments, receipts, credit sales, shift expenses, dips, invoices, pay
-  plans; required reasons stay). Places and clicks unchanged; workflow
-  changes follow in the phases of the screen plan. **#18 also ships B2**
-  (`4f9b3b4`, migration 056, money-only invoice notes; owner, 2026-10-26).
-  The station fast-forwards from `74ef1f7` onto `main`; it never `git pull`s.
-  Installation not yet confirmed. Next update after it: #19.
+- **Runs update #18**, installed 2026-10-26 (owner's report): `main` at
+  `cea43f3`, latest migration `20261020_056_issued_invoice_money_notes`.
+  It brought: the facelift (new colours, grouped menu, navy phone header,
+  helper paragraphs and optional notes boxes removed from about 16 forms;
+  places and clicks unchanged), opening cash/M-Pesa starting at 0, a date on
+  the open-shift form (`ceca62d`, suite `test:shift-date`), and B2
+  (`4f9b3b4`, money-only invoice credit/debit notes). Under it: #17 (daily
+  drawer wage, `74ef1f7`) and #16 (A1–A4, B1).
+- The station is now on branch `main` and fast-forwards to pinned commits;
+  it never `git pull`s.
+- **Pending station update #19** (owner yes, 2026-10-26): screen phase 1,
+  part 1. Desktop shift page in tabs (Readings, Money, Close, History; a
+  closed shift opens on Result), close with automatic checks instead of the
+  three tick boxes, and the attendant's phone home opens their open shift on
+  the readings ("Record my shift"). No migration, no new packages.
+  Installation not yet confirmed. Next after it: #20 (rest of phase 1: the
+  admin's phone shift page, Money tab order).
 
 ## Development PC
 

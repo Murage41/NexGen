@@ -52,11 +52,18 @@ const PREDEFINED_EXPENSE_CATEGORIES = [
   'Cleaning', 'Insurance', 'Accounting', 'Other',
 ];
 
+type ShiftTab = 'readings' | 'money' | 'close' | 'history';
+const SHIFT_TABS: Array<{ id: ShiftTab; label: string }> = [
+  { id: 'readings', label: 'Readings' }, { id: 'money', label: 'Money' }, { id: 'close', label: 'Close' }, { id: 'history', label: 'History' },
+];
+
 export default function ShiftDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [shift, setShift] = useState<any>(null);
+  // Which part of the shift is showing; null = the default for its status.
+  const [tab, setTab] = useState<ShiftTab | null>(null);
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState<{ cash_amount: number | string; mpesa_amount: number | string }>({ cash_amount: 0, mpesa_amount: 0 });
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
@@ -603,7 +610,7 @@ export default function ShiftDetail() {
   async function handleCloseShift() {
     setCloseError('');
     if (!closeReviewComplete) {
-      setCloseError('Complete the reconciliation review and record a variance reason when required.');
+      setCloseError('Save the readings and the cash and M-Pesa count first.');
       return;
     }
     if (readingsDirty || collectionsDirty || readingSync === 'saving' || collectionSync === 'saving' || readingSync === 'error' || collectionSync === 'error' || readingSync === 'review' || collectionSync === 'review') {
@@ -760,6 +767,7 @@ export default function ShiftDetail() {
   // Corrections posted before closed shifts became unchangeable (history only).
   const corrections: any[] = shift.corrections || [];
   const isCancelled = shift.status === 'cancelled';
+  const activeTab: ShiftTab = tab ?? (isOpen ? 'readings' : 'close');
   const hasUnsyncedDraft = readingsDirty
     || collectionsDirty
     || ['saving', 'error', 'review'].includes(readingSync)
@@ -817,9 +825,12 @@ export default function ShiftDetail() {
     + totalPayrollPayments
     + fundsRemoved : Number(shift.total_accounted ?? 0);
   const variance = isOpen ? Math.round((totalAccounted - expectedShiftTotal) * 100) / 100 : Number(shift.variance ?? 0);
-  const closeReviewComplete = closeReview.readings
-    && closeReview.collections
-    && closeReview.entries;
+  // NexGen checks what the tick boxes used to ask the person to confirm.
+  const closeChecks = [
+    { ok: !readingsDirty && !['saving', 'error', 'review'].includes(readingSync), label: 'Pump readings saved' },
+    { ok: !collectionsDirty && !['saving', 'error'].includes(collectionSync) && (!balanceBased || Boolean(shift.collection_count_recorded)), label: 'Cash and M-Pesa saved' },
+  ];
+  const closeReviewComplete = closeChecks.every((check) => check.ok);
   const formatKES = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
@@ -861,6 +872,15 @@ export default function ShiftDetail() {
         </span>
       </div>
 
+      <nav className="flex gap-1 border-b border-gray-200 mb-4" aria-label="Shift sections">
+        {SHIFT_TABS.filter((t) => t.id !== 'close' || !isCancelled).map((t, index) => (
+          <button key={t.id} type="button" onClick={() => setTab(t.id)}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px ${activeTab === t.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'} ${t.id === 'history' ? 'ml-auto' : ''}`}>
+            {t.id !== 'history' && <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-xs ${activeTab === t.id ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}>{index + 1}</span>}
+            {t.id === 'close' && !isOpen ? 'Result' : t.label}
+          </button>
+        ))}
+      </nav>
       {isCancelled && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
           <p className="text-sm font-semibold text-red-800">Cancelled shift</p>
@@ -868,6 +888,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      {activeTab === 'history' && (<>
       {!isOpen && !isCancelled && shift.review && (
         <section className="bg-white border border-gray-200 p-4 mb-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -971,6 +992,8 @@ export default function ShiftDetail() {
         </section>
       )}
 
+      </>)}
+      {activeTab === 'money' && (<>
       {/* Outstanding Debt Banner */}
       {totalOutstandingDebt > 0 && isOpen && (
         <div className="bg-orange-50 border border-orange-300 rounded-lg p-4 mb-4 flex items-center justify-between">
@@ -989,6 +1012,8 @@ export default function ShiftDetail() {
         reconciliation={balanceBased && !isCancelled ? { expectedClosing, inferredCollections: hasClosingCount ? inferredCollections : undefined, expectedReceipts, payouts: businessPayouts } : undefined} />
 
       {!hasClosingCount && !isCancelled && <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 mb-4 text-sm text-blue-800">Closing count not yet recorded. Enter and sync both closing balances before reviewing the result or closing the shift.</p>}
+      </>)}
+      {activeTab === 'close' && (<>
       {/* Accountability Summary Card */}
       {hasClosingCount && !isCancelled && <div className={`rounded-lg p-4 mb-6 ${variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
         <h3 className="text-xs font-semibold text-gray-500 uppercase mb-3">{isOpen ? 'Shift Accountability' : 'Current figures, including later corrections'}</h3>
@@ -1071,42 +1096,8 @@ export default function ShiftDetail() {
         </div>
       </div>}
 
-      {/* Tank Stock Movement */}
-      {tankSummary.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4 mb-4">
-          <h2 className="text-lg font-semibold text-gray-700 flex items-center gap-2 mb-3">
-            <Droplets size={18} /> Tank Stock Movement
-          </h2>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-2 font-medium text-gray-600">Tank</th>
-                <th className="text-right p-2 font-medium text-gray-600">Opening (L)</th>
-                <th className="text-right p-2 font-medium text-gray-600">Deliveries (L)</th>
-                <th className="text-right p-2 font-medium text-gray-600">Sales (L)</th>
-                <th className="text-right p-2 font-medium text-gray-600">Closing (L)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tankSummary.map((t: any) => (
-                <tr key={t.tank_id} className="border-t hover:bg-gray-50">
-                  <td className="p-2">
-                    <span className="font-medium">{t.tank_label}</span>
-                    <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${t.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {t.fuel_type}
-                    </span>
-                  </td>
-                  <td className="p-2 text-right">{Number(t.opening_stock_litres || 0).toFixed(1)}</td>
-                  <td className="p-2 text-right text-green-600">{Number(t.deliveries_litres || 0) > 0 ? `+${Number(t.deliveries_litres).toFixed(1)}` : '—'}</td>
-                  <td className="p-2 text-right text-red-600">{Number(t.sales_litres || 0) > 0 ? `-${Number(t.sales_litres).toFixed(1)}` : '—'}</td>
-                  <td className="p-2 text-right font-semibold">{Number(t.closing_stock_litres || 0).toFixed(1)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
+      </>)}
+      {activeTab === 'close' && (<>
       {/* Wage & Deduction */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-start justify-between gap-4">
@@ -1152,6 +1143,8 @@ export default function ShiftDetail() {
         </div>
       </div>
 
+      </>)}
+      {activeTab === 'readings' && (<>
       {/* Pump Readings */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
@@ -1287,6 +1280,44 @@ export default function ShiftDetail() {
         </table>
       </div>
 
+      {/* Tank Stock Movement */}
+      {tankSummary.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-4 mb-4">
+          <h2 className="text-lg font-semibold text-gray-700 flex items-center gap-2 mb-3">
+            <Droplets size={18} /> Tank Stock Movement
+          </h2>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 font-medium text-gray-600">Tank</th>
+                <th className="text-right p-2 font-medium text-gray-600">Opening (L)</th>
+                <th className="text-right p-2 font-medium text-gray-600">Deliveries (L)</th>
+                <th className="text-right p-2 font-medium text-gray-600">Sales (L)</th>
+                <th className="text-right p-2 font-medium text-gray-600">Closing (L)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tankSummary.map((t: any) => (
+                <tr key={t.tank_id} className="border-t hover:bg-gray-50">
+                  <td className="p-2">
+                    <span className="font-medium">{t.tank_label}</span>
+                    <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${t.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {t.fuel_type}
+                    </span>
+                  </td>
+                  <td className="p-2 text-right">{Number(t.opening_stock_litres || 0).toFixed(1)}</td>
+                  <td className="p-2 text-right text-green-600">{Number(t.deliveries_litres || 0) > 0 ? `+${Number(t.deliveries_litres).toFixed(1)}` : '—'}</td>
+                  <td className="p-2 text-right text-red-600">{Number(t.sales_litres || 0) > 0 ? `-${Number(t.sales_litres).toFixed(1)}` : '—'}</td>
+                  <td className="p-2 text-right font-semibold">{Number(t.closing_stock_litres || 0).toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      </>)}
+      {activeTab === 'money' && (<>
       {/* Sales Collections */}
       {isClosed && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
@@ -1739,6 +1770,8 @@ export default function ShiftDetail() {
         {receiptListError && <p className="text-sm text-red-600 mt-2">{receiptListError}</p>}
       </div>
 
+      </>)}
+      {activeTab === 'history' && (<>
       {/* Corrections posted after close */}
       {corrections.length > 0 && (
         <div className="bg-white rounded-lg shadow p-4 mb-4 border-l-4 border-blue-400">
@@ -1754,6 +1787,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      </>)}
       {correcting && (
         <div className="fixed inset-0 bg-black/45 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-4 space-y-2">
@@ -1771,17 +1805,19 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      {activeTab === 'close' && (<>
       {/* Close Shift */}
       {isOpen && (
         <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="text-lg font-semibold text-gray-700 mb-3">Close Shift</h2>
+          <h2 className="text-lg font-semibold text-gray-700 mb-3">Close shift</h2>
           <button onClick={openCloseReview}
             disabled={balanceBased && !shift.collection_count_recorded} className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50">
-            <Lock size={16} /> Close & Lock Shift
+            <Lock size={16} /> Close shift
           </button>
         </div>
       )}
 
+      </>)}
       {reviewAction && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
@@ -1815,23 +1851,14 @@ export default function ShiftDetail() {
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold mb-4">Close Shift #{shift.id}</h2>
 
-            <div className="mb-4 border border-blue-200 bg-blue-50 p-3 text-sm">
-              <div className="flex justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-gray-800">{compensationPlan?.name || 'Compensation plan unavailable'}</p>
-                  <p className="text-xs text-gray-500">Effective {compensationPlan?.effective_from} · Plan v{compensationPlan?.version}</p>
-                </div>
-                <span className="capitalize text-xs font-medium text-blue-700">{compensationPlan?.pay_schedule}</span>
-              </div>
-              <div className="mt-2 flex justify-between border-t border-blue-100 pt-2">
-                <span className="text-gray-600">Earned by this shift</span>
-                <span className="font-semibold">{formatKES(grossShiftEarnings)}</span>
-              </div>
-            </div>
+            <p className="mb-4 flex justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
+              <span className="text-gray-600">Earned this shift</span>
+              <span className="font-semibold">{formatKES(grossShiftEarnings)}</span>
+            </p>
 
             {shift.compensation_plan?.pay_schedule === 'daily' ? (
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Direct Wage Paid From This Shift (KES)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Pay taken from the till</label>
                 <input type="number" step="0.01" min="0" value={wagePaid}
                   onChange={e => { setWagePaid(e.target.value); writeShiftDraft(id!, { wage_paid: e.target.value }); }}
                   className="w-full border border-gray-300 rounded-lg p-2"
@@ -1846,24 +1873,14 @@ export default function ShiftDetail() {
 
 
             {balanceBased && <FundsCloseReview opening={openingTotal} added={fundsAdded} removed={fundsRemoved} payouts={businessPayouts} expectedClosing={expectedClosing} countedClosing={drawerTotal} formatMoney={formatKES} />}
-            <div className="mb-4">
-              <p className="text-sm font-semibold text-gray-700 mb-2">Reconciliation review</p>
-              <div className="space-y-2 text-sm">
-                <label className="flex items-start gap-2">
-                  <input type="checkbox" checked={closeReview.readings} onChange={(event) => setCloseReview({ ...closeReview, readings: event.target.checked })} className="mt-0.5" />
-                  <span>Pump closing readings match the physical displays.</span>
-                </label>
-                <label className="flex items-start gap-2">
-                  <input type="checkbox" checked={closeReview.collections} onChange={(event) => setCloseReview({ ...closeReview, collections: event.target.checked })} className="mt-0.5" />
-                  <span>{balanceBased ? 'Cash remaining and M-Pesa balance match the counted funds and account balance.' : 'Cash and M-Pesa totals match the counted cash and payment records.'}</span>
-                </label>
-                <label className="flex items-start gap-2">
-                  <input type="checkbox" checked={closeReview.entries} onChange={(event) => setCloseReview({ ...closeReview, entries: event.target.checked })} className="mt-0.5" />
-                  <span>Credits, invoice litres, debt receipts, expenses, and wage treatment have been reviewed.</span>
-                </label>
-              </div>
-            </div>
-
+            <ul className="mb-4 space-y-1.5 text-sm">
+              {closeChecks.map((check) => (
+                <li key={check.label} className="flex items-center gap-2">
+                  <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${check.ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{check.ok ? '✓' : '!'}</span>
+                  <span className={check.ok ? 'text-gray-700' : 'text-red-700'}>{check.label}</span>
+                </li>
+              ))}
+            </ul>
 
             {closeError && <p className="text-sm text-red-600 mb-3">{closeError}</p>}
             <div className="flex gap-2 justify-end mt-4">
