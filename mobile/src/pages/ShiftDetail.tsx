@@ -17,6 +17,11 @@ function compensationComponentLabel(component: any, schedule: string) {
   return `KES ${Number(component.rate || 0).toLocaleString('en-KE')} per ${component.fuel_type || 'all fuel'} litre`;
 }
 
+type ShiftTab = 'readings' | 'money' | 'close' | 'history';
+const SHIFT_TABS: Array<{ id: ShiftTab; label: string }> = [
+  { id: 'readings', label: 'Readings' }, { id: 'money', label: 'Money' }, { id: 'close', label: 'Close' }, { id: 'history', label: 'History' },
+];
+
 export default function ShiftDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -25,6 +30,8 @@ export default function ShiftDetail() {
   // A closed shift's fuel entry being corrected, or fuel missing from it (docs/CORRECTIONS.md).
   const [correcting, setCorrecting] = useState<{ recordType: RecordType; target?: any } | null>(null);
   const [shift, setShift] = useState<any>(null);
+  // Which part of the shift is showing; null = the default for its status.
+  const [tab, setTab] = useState<ShiftTab | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [closeReview, setCloseReview] = useState({ readings: false, collections: false, entries: false });
@@ -218,6 +225,7 @@ export default function ShiftDetail() {
   // Corrections posted before closed shifts became unchangeable (history only).
   const corrections: any[] = shift.corrections || [];
   const isCancelled = shift.status === 'cancelled';
+  const activeTab: ShiftTab = tab ?? (isOpen ? 'readings' : 'close');
   const expected = shift.expected_sales || 0;
   const balanceBased = shift.reconciliation_basis === 'balances_v1';
   const hasClosingCount = !balanceBased || Boolean(shift.collection_count_recorded);
@@ -314,6 +322,14 @@ export default function ShiftDetail() {
         </span>
       </div>
 
+      <nav className="flex gap-1 mb-3 rounded-xl bg-gray-200 p-1" aria-label="Shift sections">
+        {SHIFT_TABS.filter((t) => t.id !== 'close' || !isCancelled).map((t) => (
+          <button key={t.id} type="button" onClick={() => setTab(t.id)}
+            className={`flex-1 rounded-lg py-2 text-sm font-semibold ${activeTab === t.id ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600'}`}>
+            {t.id === 'close' && !isOpen ? 'Result' : t.label}
+          </button>
+        ))}
+      </nav>
       {isCancelled && (
         <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
           <p className="text-sm font-semibold text-red-800">Cancelled shift</p>
@@ -321,12 +337,12 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      {activeTab === 'history' && (<>
       {!isOpen && !isCancelled && shift.review && (
         <section className="bg-white border border-gray-200 p-4 mb-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="font-semibold text-gray-800 flex items-center gap-1.5"><ShieldCheck size={16} className="text-blue-600" /> Administrative Review</p>
-              <p className="text-xs text-gray-400 mt-1">Separate from the locked financial close.</p>
             </div>
             <span className={`shrink-0 px-2 py-1 text-[11px] font-semibold ${shift.review.review_status === 'flagged' ? 'bg-red-50 text-red-700' : shift.review.review_status === 'reviewed' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
               {shift.review.review_status === 'flagged' ? 'Flagged' : shift.review.review_status === 'reviewed' ? 'Reviewed' : 'Pending review'}
@@ -424,6 +440,8 @@ export default function ShiftDetail() {
         </section>
       )}
 
+      </>)}
+      {activeTab === 'close' && (<>
       {/* Outstanding Debt Banner (admin only) */}
       {isAdmin && isOpen && totalDebt > 0 && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3 flex items-center justify-between">
@@ -440,9 +458,8 @@ export default function ShiftDetail() {
         </div>
       )}
 
-      <ShiftFunds shift={shift} formatMoney={fmt} canManage={isAdmin && !isCancelled} onCorrect={(recordType, target) => setCorrecting({ recordType, target })}
-        reconciliation={balanceBased && !blind && !isCancelled ? { expectedClosing, inferredCollections: hasClosingCount ? inferredCollections : undefined, expectedReceipts, payouts: businessPayouts } : undefined} />
-
+      </>)}
+      {activeTab === 'close' && (<>
       {/* Accountability Card */}
       {!isCancelled && <div className={`rounded-xl p-4 mb-4 ${blind || !hasClosingCount ? 'bg-white shadow-sm' : variance >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
         <p className="text-[10px] text-gray-500 uppercase font-semibold mb-2">{blind ? 'Recorded so far' : isOpen ? 'Accountability' : 'Current figures, including later corrections'}</p>
@@ -536,29 +553,8 @@ export default function ShiftDetail() {
         )}
       </div>}
 
-      {/* Tank Stock Movement */}
-      {tankSummary.length > 0 && (
-        <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-          <p className="font-semibold text-gray-700 mb-2 flex items-center gap-1"><Droplets size={14} /> Tank Stock</p>
-          <div className="space-y-2">
-            {tankSummary.map((t: any) => (
-              <div key={t.tank_id} className="bg-gray-50 rounded-lg p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-medium text-sm">{t.tank_label}</span>
-                  <span className={`px-1.5 py-0.5 rounded text-xs ${t.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{t.fuel_type}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-gray-400">Opening</span><span>{Number(t.opening_stock_litres || 0).toFixed(1)} L</span></div>
-                  <div className="flex justify-between"><span className="text-gray-400">Sales</span><span className="text-red-600">-{Number(t.sales_litres || 0).toFixed(1)} L</span></div>
-                  <div className="flex justify-between"><span className="text-gray-400">Deliveries</span><span className="text-green-600">{Number(t.deliveries_litres || 0) > 0 ? `+${Number(t.deliveries_litres).toFixed(1)}` : '0.0'} L</span></div>
-                  <div className="flex justify-between"><span className="text-gray-400">Closing</span><span className="font-semibold">{Number(t.closing_stock_litres || 0).toFixed(1)} L</span></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
+      </>)}
+      {activeTab === 'close' && (<>
       {/* Wage & Deduction */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
         <div className="flex items-start justify-between gap-3 mb-2">
@@ -604,6 +600,8 @@ export default function ShiftDetail() {
         </div>
       </div>
 
+      </>)}
+      {activeTab === 'readings' && (<>
       {/* Readings */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
         <p className="font-semibold text-gray-700 mb-2">Pump Readings</p>
@@ -619,8 +617,32 @@ export default function ShiftDetail() {
         {(!shift.readings || shift.readings.length === 0) && <p className="text-sm text-gray-400">No readings</p>}
       </div>
 
+      {/* Tank Stock Movement */}
+      {tankSummary.length > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
+          <p className="font-semibold text-gray-700 mb-2 flex items-center gap-1"><Droplets size={14} /> Tank Stock</p>
+          <div className="space-y-2">
+            {tankSummary.map((t: any) => (
+              <div key={t.tank_id} className="bg-gray-50 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-sm">{t.tank_label}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-xs ${t.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{t.fuel_type}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <div className="flex justify-between"><span className="text-gray-400">Opening</span><span>{Number(t.opening_stock_litres || 0).toFixed(1)} L</span></div>
+                  <div className="flex justify-between"><span className="text-gray-400">Sales</span><span className="text-red-600">-{Number(t.sales_litres || 0).toFixed(1)} L</span></div>
+                  <div className="flex justify-between"><span className="text-gray-400">Deliveries</span><span className="text-green-600">{Number(t.deliveries_litres || 0) > 0 ? `+${Number(t.deliveries_litres).toFixed(1)}` : '0.0'} L</span></div>
+                  <div className="flex justify-between"><span className="text-gray-400">Closing</span><span className="font-semibold">{Number(t.closing_stock_litres || 0).toFixed(1)} L</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      </>)}
+      {activeTab === 'money' && (<>
       {/* Collections */}
-      {!isOpen && !isCancelled && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
         <div className="flex items-center justify-between mb-2">
           <p className="font-semibold text-gray-700">{balanceBased ? 'Closing balances' : 'Sales Collections'}</p>
@@ -735,19 +757,6 @@ export default function ShiftDetail() {
         </div>
       )}
 
-      {/* Shifts the attendant still owes on (admin only) */}
-      {isAdmin && debts.length > 0 && (
-        <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
-          <p className="font-semibold text-gray-700 mb-2">Still owed on variances</p>
-          {debts.map((d: any) => (
-            <div key={d.shift_id} className="flex justify-between py-1.5 border-b border-gray-100 last:border-0 text-sm">
-              <p className="text-gray-600">Shift #{d.shift_id}{d.date ? ` · ${d.date}` : ''}</p>
-              <p className="font-semibold text-red-600">{fmt(d.balance)}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Debt Collections */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
         <div className="flex items-center justify-between mb-2">
@@ -786,6 +795,26 @@ export default function ShiftDetail() {
         )}
       </div>
 
+      <ShiftFunds shift={shift} formatMoney={fmt} canManage={isAdmin && !isCancelled} onCorrect={(recordType, target) => setCorrecting({ recordType, target })}
+        reconciliation={balanceBased && !blind && !isCancelled ? { expectedClosing, inferredCollections: hasClosingCount ? inferredCollections : undefined, expectedReceipts, payouts: businessPayouts } : undefined} />
+
+      </>)}
+      {activeTab === 'close' && (<>
+      {/* Shifts the attendant still owes on (admin only) */}
+      {isAdmin && debts.length > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm mb-3">
+          <p className="font-semibold text-gray-700 mb-2">Still owed on variances</p>
+          {debts.map((d: any) => (
+            <div key={d.shift_id} className="flex justify-between py-1.5 border-b border-gray-100 last:border-0 text-sm">
+              <p className="text-gray-600">Shift #{d.shift_id}{d.date ? ` · ${d.date}` : ''}</p>
+              <p className="font-semibold text-red-600">{fmt(d.balance)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      </>)}
+      {activeTab === 'history' && (<>
       {/* Corrections posted after close */}
       {corrections.length > 0 && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-blue-400">
@@ -794,6 +823,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      </>)}
       {correcting && (
         <div className="fixed inset-0 bg-black/45 z-50 flex items-end sm:items-center justify-center">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-4 space-y-2">
@@ -813,6 +843,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      {activeTab === 'history' && (<>
       {(shift.balance_moves || []).length > 0 && (
         <div className="bg-white rounded-xl p-4 shadow-sm mb-3 border-l-4 border-gray-400">
           <p className="font-semibold text-gray-700">Mistakes fixed later</p>
@@ -820,6 +851,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
+      </>)}
       {/* Actions */}
       {isOpen && (
         <div className="space-y-2 mt-4">

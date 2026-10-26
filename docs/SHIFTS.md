@@ -18,7 +18,7 @@ Administrators open shifts (desktop and phone **Shifts → Open shift**).
 
 ## During the shift
 
-On the desktop a shift page has four parts: **Readings** (opens first),
+On desktop and phone a shift page has four parts: **Readings** (opens first),
 **Money** (counts, credit sales, fuel on account, expenses, debt payments,
 money added/removed), **Close** (pay and the result) and **History**
 (activity, original close, corrections). A closed shift opens on **Result**.

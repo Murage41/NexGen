@@ -993,7 +993,7 @@ export default function ShiftDetail() {
       )}
 
       </>)}
-      {activeTab === 'money' && (<>
+      {activeTab === 'close' && (<>
       {/* Outstanding Debt Banner */}
       {totalOutstandingDebt > 0 && isOpen && (
         <div className="bg-orange-50 border border-orange-300 rounded-lg p-4 mb-4 flex items-center justify-between">
@@ -1007,11 +1007,6 @@ export default function ShiftDetail() {
           <Link to={`/employees/${shift.employee_id}/variances`} className="text-sm text-orange-700 underline">Variances</Link>
         </div>
       )}
-
-      <ShiftFunds shift={shift} formatMoney={formatKES} canManage={!isCancelled} onCorrect={(recordType, target) => setCorrecting({ recordType, target })}
-        reconciliation={balanceBased && !isCancelled ? { expectedClosing, inferredCollections: hasClosingCount ? inferredCollections : undefined, expectedReceipts, payouts: businessPayouts } : undefined} />
-
-      {!hasClosingCount && !isCancelled && <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 mb-4 text-sm text-blue-800">Closing count not yet recorded. Enter and sync both closing balances before reviewing the result or closing the shift.</p>}
       </>)}
       {activeTab === 'close' && (<>
       {/* Accountability Summary Card */}
@@ -1318,8 +1313,8 @@ export default function ShiftDetail() {
 
       </>)}
       {activeTab === 'money' && (<>
+      {!hasClosingCount && !isCancelled && <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 mb-4 text-sm text-blue-800">Closing count not yet recorded. Enter and sync both closing balances before reviewing the result or closing the shift.</p>}
       {/* Sales Collections */}
-      {isClosed && <p className="text-xs text-gray-500 mb-2">Current financial records, including later corrections.</p>}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-700">{balanceBased ? 'Closing balances' : 'Sales Collections'}</h2>
@@ -1770,6 +1765,8 @@ export default function ShiftDetail() {
         {receiptListError && <p className="text-sm text-red-600 mt-2">{receiptListError}</p>}
       </div>
 
+      <ShiftFunds shift={shift} formatMoney={formatKES} canManage={!isCancelled} onCorrect={(recordType, target) => setCorrecting({ recordType, target })}
+        reconciliation={balanceBased && !isCancelled ? { expectedClosing, inferredCollections: hasClosingCount ? inferredCollections : undefined, expectedReceipts, payouts: businessPayouts } : undefined} />
       </>)}
       {activeTab === 'history' && (<>
       {/* Corrections posted after close */}

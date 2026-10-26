@@ -8,7 +8,10 @@ Last updated: 2026-10-26.
 
 ## Station PC
 
-- **Runs update #18**, installed 2026-10-26 (owner's report): `main` at
+- **Runs update #19**, installed 2026-10-26 (owner's report): `main` at
+  `c35dc4e` (shift page in tabs, one-press close, "Record my shift").
+  Latest migration `20261020_056_issued_invoice_money_notes` (from #18).
+- **Update #18**, installed 2026-10-26 (owner's report): `main` at
   `cea43f3`, latest migration `20261020_056_issued_invoice_money_notes`.
   It brought: the facelift (new colours, grouped menu, navy phone header,
   helper paragraphs and optional notes boxes removed from about 16 forms;
@@ -18,17 +21,17 @@ Last updated: 2026-10-26.
   drawer wage, `74ef1f7`) and #16 (A1–A4, B1).
 - The station is now on branch `main` and fast-forwards to pinned commits;
   it never `git pull`s.
-- **Pending station update #19** (owner yes, 2026-10-26): screen phase 1,
-  part 1. Desktop shift page in tabs (Readings, Money, Close, History; a
-  closed shift opens on Result), close with automatic checks instead of the
-  three tick boxes, and the attendant's phone home opens their open shift on
-  the readings ("Record my shift"). No migration, no new packages.
-  Installation not yet confirmed. Next after it: #20 (rest of phase 1: the
-  admin's phone shift page, Money tab order).
+- **Pending station update #20** (owner yes, 2026-10-26): screen phase 1,
+  part 2. The phone shift page gets the same four tabs as the desktop, and
+  the Money tab shows the cash/M-Pesa count first (opening funds and cash
+  in/out last; the attendant's debt note moves to Close). No migration, no
+  new packages. Installation not yet confirmed. Next after it: #21.
+- **Offered, not chosen (2026-10-26):** closing reading boxes starting empty
+  so every pump must be typed; the owner shipped #20 without it.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and update #18 (facelift).
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #20.
   Pushed 2026-10-26 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the
