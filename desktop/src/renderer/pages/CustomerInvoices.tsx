@@ -493,7 +493,6 @@ export default function CustomerInvoices() {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Customer Invoices</h1>
-          <p className="text-sm text-gray-500">Bill invoice-mode customers for litres taken on credit.</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -973,18 +972,6 @@ export default function CustomerInvoices() {
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Notes (optional)</label>
-                    <textarea
-                      value={payForm.notes}
-                      onChange={(e) => setPayForm({ ...payForm, notes: e.target.value })}
-                      rows={2}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded p-2">
-                    Payment will be auto-allocated FIFO across this customer's outstanding invoices, oldest first.
-                  </p>
                   {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
                 </div>
                 <div className="flex justify-end gap-2 p-4 border-t bg-gray-50">
@@ -1177,15 +1164,6 @@ export default function CustomerInvoices() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Notes (optional)</label>
-                <textarea
-                  value={genForm.notes}
-                  onChange={(e) => setGenForm({ ...genForm, notes: e.target.value })}
-                  rows={2}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
 
               {error && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
             </div>

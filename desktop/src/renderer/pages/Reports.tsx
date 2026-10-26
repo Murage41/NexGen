@@ -172,7 +172,6 @@ export default function Reports() {
       <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2 mb-6">
         <BarChart3 size={24} /> Reports
       </h1>
-      {['daily', 'monthly', 'cashflow'].includes(activeTab) && <p className="text-xs text-gray-500 mb-4">Current financial figures include later corrections. Original closes remain on each shift.</p>}
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b overflow-x-auto">
@@ -425,7 +424,6 @@ export default function Reports() {
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <div className="p-4 border-b bg-blue-50">
                     <h2 className="text-sm font-semibold text-blue-800 uppercase tracking-wide">Corrections Posted This Day</h2>
-                    <p className="text-xs text-blue-700 mt-1">Shifts above show current figures. These corrections are listed by posting date and name the shift they correct.</p>
                   </div>
                   <div className="px-4">
                     <ShiftCorrectionList corrections={dailyData.corrections} />
@@ -438,7 +436,6 @@ export default function Reports() {
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <div className="p-4 border-b bg-amber-50">
                     <h2 className="text-sm font-semibold text-amber-800 uppercase tracking-wide">Corrections Posted This Day</h2>
-                    <p className="text-xs text-amber-700 mt-1">Shifts above show current figures. These corrections are listed by posting date; full details are on the Corrections page.</p>
                   </div>
                   <ul className="px-4 py-2 text-sm divide-y divide-gray-100">
                     {dailyData.record_corrections.map((c: any) => (
@@ -1081,7 +1078,6 @@ export default function Reports() {
                     <PnLRow label="Invoice Payments (net)" value={cfData.inflows.invoice_payments_received} color="text-green-600" />
                     <PnLRow label="Direct Employee Debt Repayments" value={cfData.inflows.employee_debt_repayments || 0} color="text-green-600" />
                     <PnLRow label="Shift Payouts Added Back" value={cfData.inflows.drawer_payouts_already_reflected || 0} color="text-green-600" />
-                    <p className="text-xs text-gray-500 py-2">Balance shifts reconstruct collections from opening funds, closing counts and money movements, including payouts once. Legacy shift payouts are added back here before outflows. Station bank/safe transfers do not add inflows or outflows.</p>
                     {Number(cfData.uncounted_balance_shifts || 0) > 0 && <p className="text-xs text-amber-700 px-4 py-2">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
                     <PnLRow label="Total Inflows" value={cfData.inflows.total} bold border color="text-green-700" />
                   </div>
@@ -1153,7 +1149,6 @@ export default function Reports() {
             <div className="bg-white rounded-lg shadow overflow-hidden mb-6">
               <div className="p-4 border-b bg-gray-50">
                 <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Balance Moves</h2>
-                <p className="text-xs text-gray-500 mt-1">Mistakes found on closed shifts, fixed by moving an amount between accounts. The shifts themselves are unchanged. No money moved.</p>
               </div>
               {moveData.length === 0 ? (
                 <p className="p-6 text-center text-gray-400 text-sm">No balance moves in this period.</p>
@@ -1166,7 +1161,6 @@ export default function Reports() {
             <div className="bg-white rounded-lg shadow overflow-hidden">
               <div className="p-4 border-b bg-gray-50">
                 <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Corrections to Closed Shifts (before September 23, 2026)</h2>
-                <p className="text-xs text-gray-500 mt-1">Every correction, by the day it was posted: what changed, who approved it, and its effect on the attendant.</p>
               </div>
               {corrData.length === 0 ? (
                 <p className="p-6 text-center text-gray-400 text-sm">No corrections in this period.</p>

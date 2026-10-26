@@ -399,16 +399,6 @@ export default function TankDips() {
                 </select>
                 <p className="text-xs text-gray-400 mt-1">Classify any difference between book and physical stock.</p>
               </div>
-              <div>
-                <label className="text-sm text-gray-600 mb-1 block">Notes (optional)</label>
-                <textarea
-                  rows={2}
-                  className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Context (incident, weather, calibration...)"
-                  value={form.variance_notes}
-                  onChange={e => setForm({ ...form, variance_notes: e.target.value })}
-                />
-              </div>
               {warnings.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                   <div className="flex items-start gap-2">

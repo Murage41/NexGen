@@ -128,10 +128,6 @@ export function BalanceMoveForm({
   return (
     <div className="rounded-lg border border-gray-300 bg-white p-3 space-y-2 text-sm text-gray-800">
       <p className="font-semibold">Move balance</p>
-      <p className="text-xs text-gray-600">
-        For a mistake found on a closed shift. The shift stays as it was closed; this is dated today and no money moves.
-        The amount comes off <b>From</b> (they owe less) and goes onto <b>To</b> (they owe more).
-      </p>
       <details className="text-xs text-gray-600">
         <summary className="cursor-pointer">Examples</summary>
         <ul className="list-disc pl-5 mt-1 space-y-0.5">

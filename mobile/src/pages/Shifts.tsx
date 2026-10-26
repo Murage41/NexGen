@@ -1,4 +1,4 @@
-import { OpeningFundsFields, validOpeningAmount } from '../../../shared/ui/ShiftFunds';
+import { OpeningFundsFields, stationToday, validOpeningAmount } from '../../../shared/ui/ShiftFunds';
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -54,9 +54,9 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
-  const [openingCash, setOpeningCash] = useState('');
-  const [openingMpesa, setOpeningMpesa] = useState('');
-  const [openingNote, setOpeningNote] = useState('');
+  const [openingCash, setOpeningCash] = useState('0');
+  const [openingMpesa, setOpeningMpesa] = useState('0');
+  const [shiftDate, setShiftDate] = useState(stationToday());
   const [openingBusy, setOpeningBusy] = useState(false);
   const openingComplete = validOpeningAmount(openingCash) && validOpeningAmount(openingMpesa);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -197,7 +197,7 @@ export default function Shifts() {
         compensation_plan_id: Number(selectedPlan.id),
         opening_cash_amount: Number(openingCash),
         opening_mpesa_amount: Number(openingMpesa),
-        opening_note: openingNote.trim() || undefined,
+        shift_date: shiftDate,
       });
       setShowNew(false);
       setSelectedEmployee('');
@@ -296,7 +296,7 @@ export default function Shifts() {
             </button>
           )}
           {isAdmin && <button
-            onClick={() => { setNewShiftError(''); setSelectedEmployee(''); setOpeningCash(''); setOpeningMpesa(''); setOpeningNote(''); setShowNew(true); }}
+            onClick={() => { setNewShiftError(''); setSelectedEmployee(''); setOpeningCash('0'); setOpeningMpesa('0'); setShiftDate(stationToday()); setShowNew(true); }}
             className="bg-blue-600 text-white px-3 py-2 rounded-md text-sm flex items-center gap-1"
           >
             <Plus size={16} /> New
@@ -307,40 +307,29 @@ export default function Shifts() {
       {showNew && isAdmin && (
         <div className="mobile-modal-overlay flex items-end">
           <div className="mobile-bottom-sheet rounded-t-2xl p-5">
-            <h2 className="text-lg font-semibold mb-3">Open New Shift</h2>
+            <h2 className="text-lg font-semibold mb-3">Open shift</h2>
             <select
               value={selectedEmployee}
               onChange={(event) => setSelectedEmployee(event.target.value)}
               className="w-full border border-gray-300 rounded-md p-3 mb-3 text-base"
             >
-              <option value="">Select Employee</option>
+              <option value="">Attendant</option>
               {employees.map((employee: any) => (
                 <option key={employee.id} value={employee.id}>{employee.name}</option>
               ))}
             </select>
             {selectedEmployee && selectedPlan && (
-              <div className="mb-3 border border-blue-200 bg-blue-50 p-3 text-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-gray-800">{selectedPlan.name}</p>
-                    <p className="text-xs text-gray-600 mt-0.5">{selectedEmployeeRecord.compensation_summary}</p>
-                  </div>
-                  <span className="capitalize text-xs font-medium text-blue-700">{selectedPlan.pay_schedule}</span>
-                </div>
-                <p className="mt-2 text-xs text-gray-600">
-                  {selectedPlan.pay_schedule === 'daily'
-                    ? 'Shift earnings are finalized at close and may be paid directly from this shift.'
-                    : `Shift earnings accrue to ${selectedPlan.pay_schedule} payroll; no wage is taken from this shift drawer.`}
-                </p>
-                <p className="mt-1 text-xs text-gray-500">Effective from {selectedPlan.effective_from} · Plan v{selectedPlan.version}</p>
-              </div>
+              <p className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-gray-700">
+                <span>{selectedEmployeeRecord?.compensation_summary || selectedPlan.name}</span>
+                <span className="capitalize text-xs font-semibold text-blue-700">{selectedPlan.pay_schedule}</span>
+              </p>
             )}
             {selectedEmployee && !selectedPlan && (
               <p className="mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 This employee has no compensation plan for today.
               </p>
             )}
-            <OpeningFundsFields cash={openingCash} mpesa={openingMpesa} note={openingNote} onCash={setOpeningCash} onMpesa={setOpeningMpesa} onNote={setOpeningNote} />
+            <OpeningFundsFields cash={openingCash} mpesa={openingMpesa} date={shiftDate} onCash={setOpeningCash} onMpesa={setOpeningMpesa} onDate={setShiftDate} />
             {newShiftError && <p className="mb-3 text-sm text-red-600">{newShiftError}</p>}
             <div className="flex gap-2">
               <button

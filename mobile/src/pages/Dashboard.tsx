@@ -32,12 +32,12 @@ export default function Dashboard() {
   return (
     <div className="pb-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between -mx-4 -mt-4 mb-4 px-4 py-3.5 bg-gray-900 text-white">
         <div>
-          <p className="text-sm text-gray-500">Welcome back,</p>
-          <h1 className="text-xl font-bold text-gray-800">{user?.name}</h1>
+          <p className="text-xs text-gray-300">Welcome back,</p>
+          <h1 className="text-lg font-bold text-white">{user?.name}</h1>
         </div>
-        <button onClick={logout} className="p-2 text-gray-400 hover:text-red-500">
+        <button onClick={logout} className="p-2 text-gray-300 hover:text-white" aria-label="Sign out">
           <LogOut size={20} />
         </button>
       </div>

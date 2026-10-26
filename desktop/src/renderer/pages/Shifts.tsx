@@ -1,4 +1,4 @@
-import { OpeningFundsFields, validOpeningAmount } from '../../../../shared/ui/ShiftFunds';
+import { OpeningFundsFields, stationToday, validOpeningAmount } from '../../../../shared/ui/ShiftFunds';
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -57,9 +57,9 @@ export default function Shifts() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState('');
-  const [openingCash, setOpeningCash] = useState('');
-  const [openingMpesa, setOpeningMpesa] = useState('');
-  const [openingNote, setOpeningNote] = useState('');
+  const [openingCash, setOpeningCash] = useState('0');
+  const [openingMpesa, setOpeningMpesa] = useState('0');
+  const [shiftDate, setShiftDate] = useState(stationToday());
   const [openingBusy, setOpeningBusy] = useState(false);
   const openingComplete = validOpeningAmount(openingCash) && validOpeningAmount(openingMpesa);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -200,7 +200,7 @@ export default function Shifts() {
         compensation_plan_id: Number(selectedPlan.id),
         opening_cash_amount: Number(openingCash),
         opening_mpesa_amount: Number(openingMpesa),
-        opening_note: openingNote.trim() || undefined,
+        shift_date: shiftDate,
       });
       setShowNew(false);
       setSelectedEmployee('');
@@ -287,18 +287,17 @@ export default function Shifts() {
     <div>
       <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Shifts & Readings</h1>
-          <p className="text-sm text-gray-500 mt-1">Browse the complete shift history or narrow it by date and status.</p>
+          <h1 className="text-2xl font-bold text-gray-800">Shifts</h1>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleExport} disabled={exporting || invalidDateRange} className="flex items-center gap-2 border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50">
             <Download size={17} /> {exporting ? 'Exporting...' : 'Export CSV'}
           </button>
           <button
-            onClick={() => { setNewShiftError(''); setSelectedEmployee(''); setOpeningCash(''); setOpeningMpesa(''); setOpeningNote(''); setShowNew(true); }}
+            onClick={() => { setNewShiftError(''); setSelectedEmployee(''); setOpeningCash('0'); setOpeningMpesa('0'); setShiftDate(stationToday()); setShowNew(true); }}
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
           >
-            <Plus size={18} /> Open New Shift
+            <Plus size={18} /> Open shift
           </button>
         </div>
       </div>
@@ -306,8 +305,8 @@ export default function Shifts() {
       {showNew && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold mb-4">Open New Shift</h2>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Select Employee</label>
+            <h2 className="text-lg font-semibold mb-4">Open shift</h2>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Attendant</label>
             <select
               value={selectedEmployee}
               onChange={(event) => setSelectedEmployee(event.target.value)}
@@ -319,21 +318,10 @@ export default function Shifts() {
               ))}
             </select>
             {selectedEmployee && selectedPlan && (
-              <div className="mb-4 border border-blue-200 bg-blue-50 p-3 text-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-gray-800">{selectedPlan.name}</p>
-                    <p className="text-xs text-gray-600 mt-0.5">{selectedEmployeeRecord.compensation_summary}</p>
-                  </div>
-                  <span className="capitalize text-xs font-medium text-blue-700">{selectedPlan.pay_schedule}</span>
-                </div>
-                <p className="mt-2 text-xs text-gray-600">
-                  {selectedPlan.pay_schedule === 'daily'
-                    ? 'Shift earnings are finalized at close and may be paid directly from this shift.'
-                    : `Shift earnings accrue to ${selectedPlan.pay_schedule} payroll; no wage is taken from this shift drawer.`}
-                </p>
-                <p className="mt-1 text-xs text-gray-500">Effective from {selectedPlan.effective_from} · Plan v{selectedPlan.version}</p>
-              </div>
+              <p className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-gray-700">
+                <span>{selectedEmployeeRecord?.compensation_summary || selectedPlan.name}</span>
+                <span className="capitalize text-xs font-semibold text-blue-700">{selectedPlan.pay_schedule}</span>
+              </p>
             )}
             {selectedEmployee && !selectedPlan && (
               <p className="mb-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -343,7 +331,7 @@ export default function Shifts() {
             {employees.length === 0 && (
               <p className="text-sm text-red-500 mb-4">No employees found. Add employees first.</p>
             )}
-            <OpeningFundsFields cash={openingCash} mpesa={openingMpesa} note={openingNote} onCash={setOpeningCash} onMpesa={setOpeningMpesa} onNote={setOpeningNote} />
+            <OpeningFundsFields cash={openingCash} mpesa={openingMpesa} date={shiftDate} onCash={setOpeningCash} onMpesa={setOpeningMpesa} onDate={setShiftDate} />
             {newShiftError && <p className="text-sm text-red-600 mb-4">{newShiftError}</p>}
             <div className="flex gap-2 justify-end">
               <button

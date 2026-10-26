@@ -19,16 +19,23 @@ Last updated: 2026-10-24.
   was lost on reload. Daily plans now start at the shift's earnings,
   weekly/monthly at 0, and a typed wage stays in the device's shift draft.
   Suite: `test:shift-drawer-wage`.
-- **Next station update: #18.** Nothing is queued for it yet. B2 (`4f9b3b4`,
-  migration 056, money-only invoice notes) is on `main` but held back by the
-  owner until after the screen review. When it is approved, the station
-  fast-forwards from `74ef1f7` onto `main` (the merge `f10306b` makes that a
-  fast-forward). The station never `git pull`s.
+- **Next station update: #18 = the facelift** (owner yes, 2026-10-26),
+  built on branch `ui-facelift` from `main`, not committed yet: new colours
+  and grouped menu, navy phone header, 51 helper paragraphs and the
+  opening/close notes boxes removed, opening cash/M-Pesa start at 0, and a
+  date on the open-shift form (backend `shift_date`, suite
+  `test:shift-date`), and optional notes boxes removed from 16 forms
+  (payments, receipts, credit sales, shift expenses, dips, invoices, pay
+  plans; required reasons stay). Places and clicks unchanged; workflow
+  changes follow in the phases of the screen plan. **#18 also ships B2**
+  (`4f9b3b4`, migration 056, money-only invoice notes; owner, 2026-10-26).
+  The station fast-forwards from `74ef1f7` onto `main`; it never `git pull`s.
+  Installation not yet confirmed. Next update after it: #19.
 
 ## Development PC
 
-- `main` is at `f10306b` (B2 plus the #17 merge) with the docs cut on top.
-  **Not pushed yet** (push only when the owner asks). No worktrees; work in
+- `main` holds B2, the #17 merge, the docs cut and update #18 (facelift).
+  Pushed 2026-10-26 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the
   abandoned office-corrections design; its migration 055 clashes with the

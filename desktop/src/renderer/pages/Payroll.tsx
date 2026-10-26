@@ -334,7 +334,6 @@ export default function Payroll() {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><WalletCards size={24} /> Payroll</h1>
-          <p className="text-sm text-gray-500 mt-1">Calculate earnings, approve deductions, and record payments</p>
         </div>
         <button onClick={openCalculate} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
           <Calculator size={18} /> Calculate Payroll
@@ -534,7 +533,6 @@ export default function Payroll() {
                 })} />
               <span className="text-sm text-gray-700">Pay from open shift drawer {currentShift ? `#${currentShift.id}` : '(no open shift)'}</span>
             </label>
-            <Field label="Notes"><textarea className="input" rows={2} value={paymentForm.notes} onChange={(event) => setPaymentForm({ ...paymentForm, notes: event.target.value })} /></Field>
             {paymentError && <p className="text-sm text-red-600">{paymentError}</p>}
             <Actions busy={busy} onCancel={() => setShowPayment(false)} label="Record Payment" />
           </form>

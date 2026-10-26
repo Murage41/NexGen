@@ -100,9 +100,6 @@ export function InvoiceNoteForm({
             ? 'Add an amount the customer owes. The debit note is a separate bill linked to this invoice, due and payable like an invoice.'
             : 'Add an amount this customer owes as a separate bill. Enter the money owed and explain why.'}
       </p>
-      <p className="text-xs text-gray-600">
-        Dated today. Original fuel consumption, invoice documents and real payments stay on record. No change to shift money, tank stock or employee debt.
-      </p>
       {availableCreditCents !== null && <p className="text-xs text-gray-600">Available to credit {kes(availableCreditCents / 100)}</p>}
       <label className="block"><span className="text-xs text-gray-600">Amount (KES)</span>
         <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0.01" max="100000000" value={amount} disabled={busy} onChange={(e) => { operation.current = null; setAmount(e.target.value); }} />

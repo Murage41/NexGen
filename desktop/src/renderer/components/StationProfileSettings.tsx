@@ -119,10 +119,6 @@ export default function StationProfileSettings() {
   return (
     <div className="bg-white rounded-lg shadow p-6 mb-6">
       <h2 className="text-lg font-semibold text-gray-700 mb-1">Station profile</h2>
-      <p className="text-sm text-gray-500 mb-4">
-        Shown at the top and bottom of invoices, debit notes and credit notes. A document keeps the details it was
-        issued with; changes here apply to documents issued from now on.
-      </p>
       {carried && (
         <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-2 text-sm text-amber-800">
           The station name and address saved on this computer were carried into the form. Check them and press Save.

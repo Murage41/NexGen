@@ -196,11 +196,6 @@ export default function Suppliers() {
                 className="w-full border border-gray-300 rounded-lg p-2" />
               <p className="text-xs text-gray-400 mt-1">0 = Cash on Delivery</p>
             </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-              <textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
-            </div>
           </div>
           <div className="flex gap-2 justify-end pt-2">
             <button type="button" onClick={() => setSupplierModal({ open: false, editing: null })}
@@ -396,12 +391,6 @@ export default function Suppliers() {
                   <input type="text" value={payForm.reference}
                     onChange={e => setPayForm({ ...payForm, reference: e.target.value })}
                     className="w-full border border-gray-300 rounded-lg p-2" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                  <textarea rows={2} value={payForm.notes}
-                    onChange={e => setPayForm({ ...payForm, notes: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
                 </div>
                 <div className="flex gap-2 justify-end pt-2">
                   <button type="button" onClick={() => setPaymentModal(false)}

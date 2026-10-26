@@ -320,12 +320,6 @@ export function CorrectionForm({
         <p className="text-xs text-gray-600">{MISSING[recordType]} Shift #{shift?.id}{day(shift?.shift_date)}.</p>
       )}
 
-      {recordType === 'credit_sale' && (
-        <p className="text-xs text-gray-600">Correct the full credit sale, not its unpaid balance. Payments already received stay with the customer who paid and are reapplied or held as credit. Counted cash and M-Pesa stay as recorded.</p>
-      )}
-      {recordType === 'debt_receipt' && (
-        <p className="text-xs text-gray-600">This corrects the customer's payment record and what the shift was expected to hold. Add a missing payment only when money was actually received. Counted cash and M-Pesa stay as recorded; correct the closing totals separately if that count was wrong.</p>
-      )}
 
       {kinds.length > 1 && (
         <fieldset className="space-y-1">
@@ -342,7 +336,6 @@ export function CorrectionForm({
       {kind && kind !== 'duplicate' && kind !== 'wrong_method' && (
         <div className="grid grid-cols-2 gap-2">
           {needs.collectionTotals && <>
-            <p className="col-span-2 text-xs text-gray-600">Enter both correct full totals. To change one, leave the other at its current amount. Zero is valid; these amounts do not have to add up to the previous total.</p>
             <label className="block">{label(balanceBased ? 'Cash remaining (KES)' : 'Correct full cash received total (KES)')}
               <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0" max="100000000" required value={cashAmount} onChange={(e) => setCashAmount(e.target.value)} />
             </label>
@@ -520,10 +513,6 @@ export function CorrectionUndo({
 
   return (
     <div className="space-y-3 text-sm text-gray-800">
-      <p className="text-xs text-gray-600">
-        A new correction cancels {correction.number} exactly: the record it reversed comes back, the one it added is reversed, and
-        anything it did to the attendant is cancelled.
-      </p>
       <label className="block"><span className="text-xs text-gray-600">Why (at least 10 characters)</span>
         <textarea className={inputClassName} rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
       </label>
@@ -584,7 +573,6 @@ export function ShiftCorrectionsBanner({ corrections, asClosed }: { corrections:
         {laterNumbers.size > 0 ? `${laterNumbers.size} correction${laterNumbers.size === 1 ? '' : 's'} since close` : 'Recorded amendments included in the original close'}: result at close {result(asClosed)}; current result{' '}
         {result(Number(corrections.current_variance ?? corrections.corrected_variance ?? asClosed))}.
       </p>
-      <p className="text-xs text-gray-600">The original close is preserved. Current figures include the corrections recorded since.</p>
       <ul className="text-xs space-y-0.5">
         {byNumber.map(({ number, lines }: any) => {
           const change = lines.reduce((sum: number, l: any) => sum + Number(l.shift_effect || 0), 0);

@@ -146,9 +146,6 @@ function PaymentForm({ statement, repay, onDone, onCancel, inputClassName }: any
         <label className="block"><span className="text-gray-700">Into an open shift's drawer (shift #, optional)</span>
           <input className={inputClassName} type="number" inputMode="numeric" min="1" value={shiftId} onChange={(e) => setShiftId(e.target.value)} />
         </label>
-        <label className="block"><span className="text-gray-700">Note (optional)</span>
-          <input className={inputClassName} maxLength={500} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </label>
       </div>
       <p className="text-xs text-gray-500">
         Money handed into a drawer: enter that open shift and include it in the drawer count. Otherwise leave it blank.
@@ -173,9 +170,6 @@ function EarlierRecords({ debt }: { debt: any }) {
   return (
     <details className="border rounded-lg p-3 text-sm">
       <summary className="cursor-pointer font-medium">Earlier records (staff debt before this list started)</summary>
-      <p className="text-xs text-gray-500 mt-2">
-        Kept as they were. What is still owed from them is included in the list above.
-      </p>
       {debts.map((d) => (
         <p key={d.id} className="border-t mt-2 pt-2">
           Shift #{d.shift_id} · {String(d.created_at || '').slice(0, 10)} · shortage {kes(d.original_deficit)}
@@ -231,10 +225,6 @@ export function VarianceStatementView({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Shortages</h2>
-          <p className="text-xs text-gray-500 max-w-xl">
-            The shifts {self ? 'you' : 'they'} ran that were short, and what {self ? 'you have' : 'they have'} paid. Pay is
-            never reduced for it. A surplus belongs to the station and does not appear here.
-          </p>
         </div>
         <div className="text-right">
           {owes > 0 ? (

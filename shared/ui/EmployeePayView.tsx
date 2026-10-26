@@ -105,10 +105,6 @@ export function EmployeePayView({ load, admin = false, actions, approval }: {
           Earnings not yet included in payroll (
           {data.accrued_shift_details?.length || 0} entries)
         </summary>
-        <p className="text-xs text-gray-500 my-2">
-          Recorded shift payments and wage deductions are shown below. Remaining
-          compensation can be included in the appropriate payroll period.
-        </p>
         {data.accrued_shift_details?.map((row: any) => (
           <div key={row.key} className="border-t py-3 text-sm space-y-1">
             <p className="font-medium">

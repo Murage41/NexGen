@@ -18,17 +18,13 @@ export function FundsCollectionSummary({ data, formatMoney }: { data: any; forma
   return (
     <div className="space-y-1 text-sm py-2">
       <dl className="space-y-1">
-        {fundsSummaryRows(data).map((row) => (
+        {fundsSummaryRows(data).filter((row) => row.amount !== 0 || !['Money added', 'Money removed'].includes(row.label)).map((row) => (
           <div key={row.label} className="flex justify-between gap-3">
             <dt className="text-gray-500">{row.label}</dt>
             <dd className="font-medium text-right shrink-0">{formatMoney(row.amount)}</dd>
           </div>
         ))}
       </dl>
-      <p className="text-xs text-gray-500 pt-1">
-        These are combined shift totals. {data.collection_basis === 'mixed' ? 'Opening funds were not captured for legacy shifts. ' : ''}
-        Counted balances are holdings; opening funds and transfers do not add sales or profit.
-      </p>
       {Number(data.uncounted_balance_shifts || 0) > 0 && (
         <p className="text-xs text-amber-700">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>
       )}
@@ -57,23 +53,31 @@ export function FundsCloseReview({ opening, added, removed, payouts, expectedClo
   );
 }
 
-export function OpeningFundsFields({ cash, mpesa, note, onCash, onMpesa, onNote }: {
-  cash: string; mpesa: string; note: string;
-  onCash: (value: string) => void; onMpesa: (value: string) => void; onNote: (value: string) => void;
+// Today's date in Kenya (the station's day), as YYYY-MM-DD.
+export function stationToday(): string {
+  return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// Opening form: the shift's day (today unless a missed shift is entered on its
+// real day; the server refuses future days and days before the last close)
+// and the opening funds, which start at 0.
+export function OpeningFundsFields({ cash, mpesa, date, onCash, onMpesa, onDate }: {
+  cash: string; mpesa: string; date: string;
+  onCash: (value: string) => void; onMpesa: (value: string) => void; onDate: (value: string) => void;
 }) {
   return (
     <fieldset className="space-y-3 mb-4 text-sm">
-      <legend className="font-semibold text-gray-700 mb-1">Funds at opening</legend>
-      <p className="text-xs text-gray-500">Count the cash and check the M-Pesa balance for this shift. Enter both amounts; enter 0 when there are no funds.</p>
-      <label className="block">Opening cash float (KES)
-        <input className={input} type="number" min="0" step="0.01" inputMode="decimal" required value={cash} onChange={(e) => onCash(e.target.value)} />
+      <label className="block font-medium text-gray-700">Date
+        <input className={input} type="date" required max={stationToday()} value={date} onChange={(e) => onDate(e.target.value)} />
       </label>
-      <label className="block">Opening M-Pesa balance (KES)
-        <input className={input} type="number" min="0" step="0.01" inputMode="decimal" required value={mpesa} onChange={(e) => onMpesa(e.target.value)} />
-      </label>
-      <label className="block">Opening note (optional)
-        <textarea className={input} rows={2} maxLength={1000} value={note} onChange={(e) => onNote(e.target.value)} />
-      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block font-medium text-gray-700">Opening cash
+          <input className={input} type="number" min="0" step="0.01" inputMode="decimal" required value={cash} onFocus={(e) => e.target.select()} onChange={(e) => onCash(e.target.value)} />
+        </label>
+        <label className="block font-medium text-gray-700">Opening M-Pesa
+          <input className={input} type="number" min="0" step="0.01" inputMode="decimal" required value={mpesa} onFocus={(e) => e.target.select()} onChange={(e) => onMpesa(e.target.value)} />
+        </label>
+      </div>
     </fieldset>
   );
 }
@@ -91,12 +95,12 @@ export function ShiftFunds({ shift, formatMoney, canManage = false, onCorrect, r
   const added = active.filter((row) => row.direction === 'added').reduce((sum, row) => sum + Number(row.amount), 0);
   const removed = active.filter((row) => row.direction === 'removed').reduce((sum, row) => sum + Number(row.amount), 0);
   return <section className="bg-white rounded-lg border border-gray-200 p-4 mb-4 text-sm space-y-3">
-    <h2 className="font-semibold text-gray-800">Opening funds and money movements</h2>
+    <h2 className="font-semibold text-gray-800">Opening funds</h2>
     <dl className="space-y-1">
       {(['cash', 'mpesa'] as const).map((method) => <div key={method} className="flex items-center justify-between gap-2"><dt className="text-gray-500">{method === 'cash' ? 'Opening cash float' : 'Opening M-Pesa balance'}</dt><dd className="flex items-center gap-2">{formatMoney(method === 'cash' ? cash : mpesa)}{canManage && <button type="button" className="text-xs text-blue-700 underline" onClick={() => onCorrect?.('opening_funds', { payment_method: method, amount: method === 'cash' ? cash : mpesa, shift_id: shift.id })}>Correct</button>}</dd></div>)}
       <div className="flex justify-between font-medium"><dt>Opening total</dt><dd>{formatMoney(cash + mpesa)}</dd></div>
-      <div className="flex justify-between"><dt className="text-gray-500">Money added</dt><dd>{formatMoney(added)}</dd></div>
-      <div className="flex justify-between"><dt className="text-gray-500">Money removed</dt><dd>{formatMoney(removed)}</dd></div>
+      {added > 0 && <div className="flex justify-between"><dt className="text-gray-500">Money added</dt><dd>{formatMoney(added)}</dd></div>}
+      {removed > 0 && <div className="flex justify-between"><dt className="text-gray-500">Money removed</dt><dd>{formatMoney(removed)}</dd></div>}
     </dl>
     {shift.opening_note && <p className="text-xs text-gray-500">Opening note: {shift.opening_note}</p>}
     {reconciliation && <dl className="border-t pt-2 space-y-1">
@@ -105,7 +109,6 @@ export function ShiftFunds({ shift, formatMoney, canManage = false, onCorrect, r
       <div className="flex justify-between gap-3"><dt className="text-gray-500">Expected receipts</dt><dd>{formatMoney(reconciliation.expectedReceipts)}</dd></div>
       {reconciliation.inferredCollections !== undefined && <div className="flex justify-between gap-3"><dt className="text-gray-500">Collections inferred from counted funds</dt><dd>{formatMoney(reconciliation.inferredCollections)}</dd></div>}
     </dl>}
-    <p className="text-xs text-gray-500">Closing balances include the opening funds. Count what remains; do not subtract the opening amounts. Use the same M-Pesa account throughout the shift.</p>
     {canManage && <button type="button" className="text-sm rounded-lg border border-gray-300 px-3 py-2 text-gray-700" onClick={() => onCorrect?.('shift_funds')}>Money added / removed</button>}
     {movements.length > 0 && <details><summary className="text-xs text-blue-700 cursor-pointer">Money movement history ({movements.length})</summary><ul className="mt-2 space-y-2 text-xs">
       {movements.map((row) => <li key={row.id} className="border-t pt-2"><div className="flex justify-between gap-2"><span>{row.direction === 'removed' ? 'Removed' : 'Added'} · {row.method === 'mpesa' ? 'M-Pesa' : 'Cash'} · {formatMoney(Number(row.amount))}</span><span>{row.deleted_at ? 'Reversed' : 'Active'}</span></div><p className="text-gray-500">{row.source === 'station_bank_safe' ? 'Station bank / safe' : row.source === 'owner' ? 'Owner' : 'Other'} · {row.reference} · {String(row.created_at || '').slice(0, 16).replace('T', ' ')}</p><p className="text-gray-500 break-words">{row.description || row.reason}</p>{canManage && !row.deleted_at && <button type="button" className="text-blue-700 underline mt-1" onClick={() => onCorrect?.('shift_funds', row)}>Reverse movement</button>}</li>)}

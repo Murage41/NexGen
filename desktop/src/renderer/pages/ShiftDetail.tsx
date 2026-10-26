@@ -873,7 +873,6 @@ export default function ShiftDetail() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold text-gray-800 flex items-center gap-2"><ShieldCheck size={17} className="text-blue-600" /> Administrative Review</h2>
-              <p className="text-xs text-gray-500 mt-1">Financial close remains locked while this audit status can be updated independently.</p>
             </div>
             <span className={`px-2 py-1 text-xs font-semibold ${shift.review.review_status === 'flagged' ? 'bg-red-50 text-red-700' : shift.review.review_status === 'reviewed' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
               {shift.review.review_status === 'flagged' ? 'Flagged' : shift.review.review_status === 'reviewed' ? 'Reviewed' : 'Pending review'}
@@ -979,7 +978,7 @@ export default function ShiftDetail() {
             <DollarSign size={18} className="text-orange-600" />
             <div>
               <p className="text-sm font-semibold text-orange-800">Owes on variances</p>
-              <p className="text-xs text-orange-600">{shift.employee_name} owes {formatKES(totalOutstandingDebt)} from earlier shifts. It is repaid separately, never taken from pay.</p>
+              <p className="text-xs text-orange-600">{shift.employee_name} owes {formatKES(totalOutstandingDebt)} from earlier shifts.</p>
             </div>
           </div>
           <Link to={`/employees/${shift.employee_id}/variances`} className="text-sm text-orange-700 underline">Variances</Link>
@@ -1132,11 +1131,6 @@ export default function ShiftDetail() {
             <span className="text-gray-500">{isOpen ? 'Planned drawer payment' : shift.direct_wage_cash_amount == null ? 'Wage recorded at close' : 'Paid from shift drawer'}</span>
             <span className="font-medium">{formatKES(directDrawerPayment)}</span>
           </div>
-          {compensationPlan?.pay_schedule !== 'daily' && (
-            <p className="border-t pt-2 text-xs text-gray-500">
-              Shift earnings accrue to {compensationPlan?.pay_schedule} payroll. Periodic salary components are added by the payroll run.
-            </p>
-          )}
           {earningBreakdown.map((earning: any) => (
             <div key={earning.id || `${earning.component_id}-${earning.description}`} className="flex justify-between text-xs text-gray-500">
               <span>{earning.description}</span>
@@ -1187,9 +1181,6 @@ export default function ShiftDetail() {
               </div>
             )}
           </div>
-        )}
-        {isOpen && (
-          <p className="mb-2 text-xs text-gray-500">Closing inputs accept the digits showing on the pump display. The system handles meter rollovers automatically.</p>
         )}
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
@@ -1520,11 +1511,6 @@ export default function ShiftDetail() {
                 </>
               ) : (
                 <>
-                  <div className="flex-1">
-                    <label className="block text-xs text-gray-500 mb-1">Description (optional)</label>
-                    <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
-                      placeholder="Optional details" className="w-full border border-gray-300 rounded p-2 text-sm" />
-                  </div>
                   <div className="w-32">
                     <label className="block text-xs text-gray-500 mb-1">Amount</label>
                     <input type="number" step="0.01" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
@@ -1573,9 +1559,6 @@ export default function ShiftDetail() {
               </button>
             )}
           </div>
-          {isClosed && invoiceConsumption.length > 0 && (
-            <p className="text-xs text-gray-500 mb-2">As the shift closed. A mistake is corrected, never edited: the shift keeps these figures.</p>
-          )}
           {invoiceConsumption.length > 0 ? (
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
@@ -1686,11 +1669,6 @@ export default function ShiftDetail() {
                 {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1">Description</label>
-              <input value={newExpense.description} onChange={e => setNewExpense({ ...newExpense, description: e.target.value })}
-                placeholder="Details" className="w-full border border-gray-300 rounded p-2 text-sm" />
-            </div>
             <div className="w-32">
               <label className="block text-xs text-gray-500 mb-1">Amount</label>
               <input type="number" step="0.01" value={newExpense.amount} onChange={e => setNewExpense({ ...newExpense, amount: e.target.value })}
@@ -1765,7 +1743,6 @@ export default function ShiftDetail() {
       {corrections.length > 0 && (
         <div className="bg-white rounded-lg shadow p-4 mb-4 border-l-4 border-blue-400">
           <h2 className="text-lg font-semibold text-gray-700 mb-1">Corrections after close</h2>
-          <p className="text-xs text-gray-500 mb-2">Posted before closed shifts became unchangeable. Mistakes are now fixed on the customer's balance or the attendant's variances.</p>
           <ShiftCorrectionList corrections={corrections} />
         </div>
       )}
@@ -1773,7 +1750,6 @@ export default function ShiftDetail() {
       {(shift.balance_moves || []).length > 0 && (
         <div className="bg-white rounded-lg shadow p-4 mb-4 border-l-4 border-gray-400">
           <h2 className="text-lg font-semibold text-gray-700 mb-1">Mistakes fixed later</h2>
-          <p className="text-xs text-gray-500 mb-2">This shift is unchanged. These balance moves refer to it.</p>
           <BalanceMoveList moves={shift.balance_moves} />
         </div>
       )}
@@ -1799,10 +1775,6 @@ export default function ShiftDetail() {
       {isOpen && (
         <div className="bg-white rounded-lg shadow p-4">
           <h2 className="text-lg font-semibold text-gray-700 mb-3">Close Shift</h2>
-          <label className="block text-sm text-gray-600 mb-1">Notes (optional)</label>
-          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
-            className="w-full border border-gray-300 rounded-lg p-2 mb-3"
-            placeholder="Any notes about this shift..." />
           <button onClick={openCloseReview}
             disabled={balanceBased && !shift.collection_count_recorded} className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50">
             <Lock size={16} /> Close & Lock Shift
@@ -1864,9 +1836,6 @@ export default function ShiftDetail() {
                   onChange={e => { setWagePaid(e.target.value); writeShiftDraft(id!, { wage_paid: e.target.value }); }}
                   className="w-full border border-gray-300 rounded-lg p-2"
                 />
-                <p className="text-xs text-gray-400 mt-1">
-                  Pay the full wage. Shortages are paid separately under Employees, Shortages, never taken from pay.
-                </p>
               </div>
             ) : (
               <div className="mb-4 border-y border-gray-200 py-3 flex items-center justify-between">
@@ -1895,14 +1864,6 @@ export default function ShiftDetail() {
               </div>
             </div>
 
-            {/* The same notes as on the page, editable here so a variance can be
-                explained at the moment it is seen, without leaving the review. */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-              <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2}
-                placeholder={variance !== 0 ? `Anything that explains the ${variance < 0 ? 'shortage' : 'surplus'}, or other notes on this shift` : 'Any notes about this shift'}
-                className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
-            </div>
 
             {closeError && <p className="text-sm text-red-600 mb-3">{closeError}</p>}
             <div className="flex gap-2 justify-end mt-4">
@@ -1922,9 +1883,6 @@ export default function ShiftDetail() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <h2 className="text-lg font-semibold mb-4">Collect Debt Payment</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Record cash or M-Pesa received from a customer settling an outstanding balance.
-            </p>
 
             <div className="mb-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Customer Account</label>
@@ -1982,13 +1940,6 @@ export default function ShiftDetail() {
               </div>
             </div>
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-              <input value={receiptForm.notes}
-                onChange={e => setReceiptForm({ ...receiptForm, notes: e.target.value })}
-                placeholder="e.g. Partial payment on account"
-                className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
-            </div>
 
             {receiptError && <p className="text-sm text-red-600 mb-3">{receiptError}</p>}
             <div className="flex gap-2 justify-end">

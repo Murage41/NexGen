@@ -356,15 +356,6 @@ export default function Credits() {
                     <option value="mpesa">M-Pesa</option>
                   </select>
                 </div>
-                <div>
-                  <label className="text-sm text-gray-600 mb-1 block">Notes (optional)</label>
-                  <input
-                    className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Payment notes"
-                    value={paymentForm.notes}
-                    onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                  />
-                </div>
                 {paymentError && <p className="text-sm text-red-600">{paymentError}</p>}
                 <button
                   onClick={handlePayment}
@@ -406,12 +397,8 @@ export default function Credits() {
             <p className="text-2xl font-bold text-red-600">{fmt(totalOutstanding)}</p>
             <p className="text-xs text-gray-400 mt-1">{filtered.length} account{filtered.length !== 1 ? 's' : ''}</p>
           </div>
-
-          <p className="text-xs text-gray-500 mb-3">Employees' variances are kept under Employees.</p>
         </>
-      ) : (
-        <p className="text-xs text-gray-500 mb-3">Check a customer's credit before serving them on account.</p>
-      )}
+      ) : null}
 
       {/* Accounts list */}
       {filtered.length === 0 ? (

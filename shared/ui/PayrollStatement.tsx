@@ -93,10 +93,6 @@ export function PayrollStatement({ line, run }: any) {
           </details>
         ))}
       </div>
-      <p className="text-xs text-gray-500">
-        Payment allocations show which earnings a payment settles. Payment dates
-        below show when money was recorded as paid.
-      </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <p className="font-semibold mb-2">Deductions and debt origins</p>

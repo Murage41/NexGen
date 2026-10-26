@@ -793,11 +793,6 @@ export default function TankStock() {
       {activeTab === 'trends' && (
         <div className="bg-white rounded-lg shadow p-4">
           <h2 className="text-lg font-semibold text-gray-700 mb-1">Monthly Cumulative Variance</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            Each tank's dip variance, accumulated month to month, as a percentage of throughput. A
-            steady drift in one direction (not just noise around zero) is worth investigating —
-            meter drift, a leak, or a delivery-measurement issue.
-          </p>
           {trendChartData.length === 0 ? (
             <p className="text-gray-400 text-center py-8">No dip history yet.</p>
           ) : (
@@ -882,7 +877,6 @@ export default function TankStock() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
                 <input type="date" required max={today()} value={deliveryForm.date} onChange={e => setDeliveryForm({ ...deliveryForm, date: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg p-2" />
-                <p className="text-xs text-gray-500 mt-1">Delivery stock is effective from the start of this selected date.</p>
                 {deliveryForm.date < today() && (
                   <p className="text-xs text-amber-600 mt-1">Backdated delivery: tank stock and dips from this date forward will be recomputed.</p>
                 )}
@@ -926,7 +920,6 @@ export default function TankStock() {
                   <option value="">-- Select Supplier --</option>
                   {suppliersList.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">Deliveries must be tied to an existing supplier. Supplier debt is created when the price is entered.</p>
                 {suppliersList.length === 0 && (
                   <p className="text-xs text-red-500 mt-1">No suppliers are configured. Add the supplier account first.</p>
                 )}
@@ -943,7 +936,6 @@ export default function TankStock() {
                 {deliveryModal.editing?.invoice_file_name && !deliveryInvoiceFile && (
                   <p className="text-xs text-gray-500 mt-1">Current PDF: {deliveryModal.editing.invoice_file_name}</p>
                 )}
-                <p className="text-xs text-gray-400 mt-1">You can edit the delivery later to add the scanned invoice.</p>
               </div>
               {deliveryModal.editing && (
                 <p className="text-xs text-amber-600 bg-amber-50 rounded p-2">⚠️ Editing will adjust the tank's stock balance accordingly.</p>
@@ -994,12 +986,6 @@ export default function TankStock() {
                   className="w-full border border-gray-300 rounded-lg p-2">
                   {VARIANCE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">Classify any difference between book and physical stock for tracking shrinkage.</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <textarea rows={2} value={dipForm.variance_notes} onChange={e => setDipForm({ ...dipForm, variance_notes: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" placeholder="Optional context (incident, weather, calibration date...)" />
               </div>
               {dipWarnings.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">

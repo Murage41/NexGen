@@ -14,7 +14,9 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  font-family: 'Inter', 'Segoe UI', 'Roboto', system-ui, sans-serif;
+  background-color: #EEF4F7;
+  color: #13232E;
 }
 
 /* Custom scrollbar */

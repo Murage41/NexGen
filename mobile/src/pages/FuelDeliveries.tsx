@@ -297,7 +297,6 @@ export default function FuelDeliveries() {
                   value={form.date}
                   onChange={e => setForm({ ...form, date: e.target.value })}
                 />
-                <p className="text-xs text-gray-400 mt-1">Stock is effective from the start of this selected date.</p>
                 {form.date < today() && (
                   <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
                     <AlertTriangle size={12} /> Backdated delivery will recompute stock and dips from this date.
@@ -387,7 +386,6 @@ export default function FuelDeliveries() {
               )}
               {form.litres && !form.cost_per_litre && (
                 <div className="bg-amber-50 rounded-xl p-3">
-                  <p className="text-xs text-amber-700">Litres will be added to stock now. Supplier cost and debt stay pending until the invoice price is entered.</p>
                 </div>
               )}
               {editDelivery && (

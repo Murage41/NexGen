@@ -25,21 +25,29 @@ import EmployeePay from './pages/EmployeePay';
 import EmployeeVariances from './pages/EmployeeVariances';
 import Corrections from './pages/Corrections';
 
-const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/shifts', icon: Gauge, label: 'Shifts & Readings' },
-  { to: '/pumps', icon: Fuel, label: 'Pumps' },
-  { to: '/employees', icon: Users, label: 'Employees' },
-  { to: '/payroll', icon: WalletCards, label: 'Payroll' },
-  { to: '/fuel-pricing', icon: DollarSign, label: 'Fuel Pricing' },
-  { to: '/expenses', icon: Receipt, label: 'Expenses' },
-  { to: '/credit-accounts', icon: CreditCard, label: 'Credit Accounts' },
-  { to: '/customer-invoices', icon: FileSpreadsheet, label: 'Customer Invoices' },
-  { to: '/suppliers', icon: Truck, label: 'Suppliers' },
-  { to: '/tank-stock', icon: Droplets, label: 'Tank & Stock' },
-  { to: '/corrections', icon: ClipboardCheck, label: 'Corrections' },
-  { to: '/reports', icon: BarChart3, label: 'Reports' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
+const navGroups = [
+  { title: 'Daily', items: [
+    { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { to: '/shifts', icon: Gauge, label: 'Shifts' },
+    { to: '/expenses', icon: Receipt, label: 'Expenses' },
+    { to: '/credit-accounts', icon: CreditCard, label: 'Credit Accounts' },
+    { to: '/customer-invoices', icon: FileSpreadsheet, label: 'Customer Invoices' },
+  ] },
+  { title: 'Staff', items: [
+    { to: '/employees', icon: Users, label: 'Employees' },
+    { to: '/payroll', icon: WalletCards, label: 'Payroll' },
+  ] },
+  { title: 'Stock', items: [
+    { to: '/tank-stock', icon: Droplets, label: 'Tank & Stock' },
+    { to: '/pumps', icon: Fuel, label: 'Pumps' },
+    { to: '/fuel-pricing', icon: DollarSign, label: 'Fuel Pricing' },
+    { to: '/suppliers', icon: Truck, label: 'Suppliers' },
+  ] },
+  { title: 'Office', items: [
+    { to: '/reports', icon: BarChart3, label: 'Reports' },
+    { to: '/corrections', icon: ClipboardCheck, label: 'Corrections' },
+    { to: '/settings', icon: Settings, label: 'Settings' },
+  ] },
 ];
 
 const STALE_SHIFT_POLL_MS = 2 * 60 * 1000;
@@ -67,7 +75,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-gray-100">
       {/* Sidebar */}
       <aside className="w-56 bg-gray-900 text-white flex flex-col flex-shrink-0">
         <div className="p-3 border-b border-gray-700">
@@ -83,17 +91,20 @@ export default function App() {
             </div>
           )}
         </div>
-        <nav className="flex-1 py-2 overflow-y-auto">
-          {navItems.map(({ to, icon: Icon, label }) => (
+        <nav className="flex-1 py-2 px-2 overflow-y-auto">
+          {navGroups.map(({ title, items }) => (
+          <div key={title} className="mb-1">
+            <p className="px-3 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">{title}</p>
+          {items.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                   isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    ? 'bg-blue-600 text-white font-semibold'
+                    : 'text-gray-200 hover:bg-gray-800 hover:text-white'
                 }`
               }
             >
@@ -116,6 +127,8 @@ export default function App() {
                 </span>
               )}
             </NavLink>
+          ))}
+          </div>
           ))}
         </nav>
         <div className="p-3 border-t border-gray-700 text-xs text-gray-500">

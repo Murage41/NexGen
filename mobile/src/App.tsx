@@ -31,7 +31,7 @@ export default function App() {
   if (!user) return <Login />;
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-safe">
+    <div className="min-h-screen bg-gray-100 pb-safe">
       <div className="px-4 pt-4 pb-28">
         <Routes>
           <Route path="/" element={<Dashboard />} />

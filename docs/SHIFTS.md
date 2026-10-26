@@ -5,16 +5,16 @@ found after close are in [Corrections](CORRECTIONS.md).
 
 ## Open a shift
 
-Administrators open shifts (desktop **Shifts & Readings**, phone **Shifts**).
+Administrators open shifts (desktop and phone **Shifts → Open shift**).
 
 1. Choose the attendant. Their pay plan is shown.
-2. Count the cash in the till and check the M-Pesa balance of the account this
-   shift will use. Enter **Opening cash** and **Opening M-Pesa**; enter 0 when
-   there is none. Nothing is copied from the last shift.
-3. Open. Pump opening readings continue from the last closing readings.
-
-A new shift is always dated today. A missed shift cannot yet be entered on its
-real date (see the roadmap).
+2. **Date** starts at today. For a shift that was missed, pick its real day.
+   NexGen refuses a future day, a day before the last closed shift (the pump
+   readings must stay in order) and a day whose payroll is already calculated.
+3. Count the cash in the till and check the M-Pesa balance of the account this
+   shift will use. **Opening cash** and **Opening M-Pesa** start at 0; type
+   the real amounts. Nothing is copied from the last shift.
+4. Open. Pump opening readings continue from the last closing readings.
 
 ## During the shift
 

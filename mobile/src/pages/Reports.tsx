@@ -138,7 +138,6 @@ export default function Reports() {
   return (
     <div className="pb-6">
       <PageHeader title="Reports" back />
-      {isAdmin && ['daily', 'monthly', 'cashflow'].includes(tab) && <p className="px-4 text-xs text-gray-500 mb-3">Current financial figures include later corrections. Original closes remain on each shift.</p>}
 
       {/* Tabs */}
       <div className="flex bg-gray-100 rounded-xl p-1 mb-4 overflow-x-auto">
@@ -206,7 +205,6 @@ export default function Reports() {
       {/* ── DAILY / MONTHLY P&L ── */}
       {!loading && report && (tab === 'daily' || tab === 'monthly') && (
         <div className="space-y-4">
-          {report.has_balance_shifts && <p className="px-4 text-xs text-gray-500">Counted balances are holdings. Opening funds and transfers do not add sales or profit. {report.collection_basis === 'mixed' ? 'Opening funds were not captured for legacy shifts.' : ''}</p>}
           {Number(report.uncounted_balance_shifts || 0) > 0 && <p className="px-4 text-xs text-amber-700">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
           {/* P&L Card */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -542,7 +540,6 @@ export default function Reports() {
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Invoice Payments (net)</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.invoice_payments_received)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Employee Debt Repayments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.employee_debt_repayments)}</span></div>
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Shift Payouts Added Back</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.drawer_payouts_already_reflected)}</span></div>
-              <p className="text-xs text-gray-500 px-4 py-2">Balance shifts reconstruct collections from opening funds, closing counts and movements, including payouts once. Legacy shift payouts are added back before outflows. Station bank/safe transfers do not add inflows or outflows.</p>
             </div>
           </div>
 

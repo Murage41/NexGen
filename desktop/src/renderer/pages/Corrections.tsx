@@ -54,11 +54,6 @@ export default function Corrections() {
           <ClipboardCheck size={24} /> Corrections
         </h1>
       </div>
-      <p className="text-sm text-gray-600 mb-4">
-        Before a shift closes, fix mistakes on the shift. After it closes, correct them: the shift keeps what it closed with,
-        and each correction is recorded here with what it changed. Start a correction from the relevant record or
-        a closed shift's cash and M-Pesa totals.
-      </p>
       <div className="flex items-end gap-3 mb-4 text-sm">
         <label className="block"><span className="text-xs text-gray-500">From</span>
           <input type="date" className="block border border-gray-300 rounded-lg px-3 py-2" value={from} onChange={(e) => setFrom(e.target.value)} />

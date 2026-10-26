@@ -192,9 +192,6 @@ export default function CreditAccounts() {
           <Plus size={16} /> New Account
         </button>
       </div>
-      <p className="text-sm text-gray-500 mb-6">
-        Money-mode customers. Invoice-mode customers are managed from Customer Invoices, and employees' variances under Employees.
-      </p>
       {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
       {/* Summary Cards */}
@@ -482,16 +479,6 @@ export default function CreditAccounts() {
                   <option value="bank_transfer">Bank Transfer</option>
                   <option value="cheque">Cheque</option>
                 </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <input
-                  type="text"
-                  value={paymentForm.notes}
-                  onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2"
-                  placeholder="Optional notes"
-                />
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setShowPaymentModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">

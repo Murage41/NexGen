@@ -269,7 +269,6 @@ export default function Employees() {
           <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
             <Users size={24} /> Employees
           </h1>
-          <p className="text-sm text-gray-500 mt-1">Employment, access, compensation, and payroll position</p>
         </div>
         <button onClick={openCreate} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
           <Plus size={18} /> Add Employee
@@ -517,9 +516,6 @@ function PlanEditor({ plan, setPlan, updateComponent, allowEffectiveDate }: any)
           );
         })}
       </div>
-      <Field label="Notes">
-        <textarea rows={2} value={plan.notes} onChange={(event) => setPlan({ ...plan, notes: event.target.value })} className="input" />
-      </Field>
     </div>
   );
 }

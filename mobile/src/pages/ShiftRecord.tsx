@@ -779,7 +779,6 @@ export default function ShiftRecord() {
               })()}
             </div>
           ))}
-          <p className="text-xs text-gray-400 px-1">Closing accepts the digits showing on the pump display. Rollovers are detected automatically.</p>
           {readingError && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               <div>{readingError}</div>
@@ -1000,12 +999,6 @@ export default function ShiftRecord() {
                   ))}
                 </div>
 
-                <input
-                  value={newReceipt.notes}
-                  onChange={e => setNewReceipt({ ...newReceipt, notes: e.target.value })}
-                  placeholder="Notes (optional)"
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm"
-                />
 
                 {receiptError && <p className="text-sm text-red-600">{receiptError}</p>}
                 <button
@@ -1125,8 +1118,6 @@ export default function ShiftRecord() {
               </>
             ) : (
               <>
-                <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
-                  placeholder="Optional details" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
                 <input type="number" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
                   placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
                 <button onClick={handleAddCredit}
@@ -1183,8 +1174,6 @@ export default function ShiftRecord() {
               <option value="">Select category...</option>
               {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-            <input value={newExp.description} onChange={e => setNewExp({ ...newExp, description: e.target.value })}
-              placeholder="Description (optional)" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
             <input type="number" value={newExp.amount} onChange={e => setNewExp({ ...newExp, amount: e.target.value })}
               placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
             <button onClick={handleAddExpense}
