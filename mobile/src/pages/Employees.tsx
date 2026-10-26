@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   BadgeDollarSign,
   CirclePlus,
@@ -19,7 +19,12 @@ import {
   deleteEmployee,
   getEmployees,
   updateEmployee,
+  getEmployeePay,
+  getEmployeeVariances,
+  varianceActions,
 } from '../services/api';
+import { EmployeePayView } from '../../../shared/ui/EmployeePayView';
+import { EmployeeVariancesPage, describeVarianceTotals } from '../../../shared/ui/EmployeeVariances';
 
 type Component = {
   component_type: 'fixed_per_shift' | 'fixed_periodic' | 'sales_percentage' | 'litre_rate';
@@ -75,6 +80,9 @@ function normalizePlan(plan: ReturnType<typeof blankPlan>) {
 }
 
 export default function Employees() {
+  // Employees list, then one employee's own page (/employees/:id).
+  const { id: routeId } = useParams();
+  const navigate = useNavigate();
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -216,9 +224,19 @@ export default function Employees() {
   }
 
   if (loading) return <div className="text-center text-gray-400 mt-20">Loading...</div>;
+  const selected = employees.find((employee) => String(employee.id) === routeId) || null;
 
   return (
     <div className="pb-6">
+      {selected ? (
+        <EmployeeRecord
+          employee={selected}
+          onBack={() => navigate('/employees')}
+          onEdit={() => openEdit(selected)}
+          onPlan={() => openPlan(selected)}
+          onDeactivate={() => deactivate(selected)}
+        />
+      ) : (<>
       <PageHeader title="Employees" back right={
         <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl" title="Add employee"><Plus size={20} /></button>
       } />
@@ -232,7 +250,7 @@ export default function Employees() {
       ) : (
         <div className="space-y-3">
           {employees.map((employee) => (
-            <div key={employee.id} className={`bg-white border rounded-xl p-4 ${employee.active ? 'border-gray-100' : 'border-gray-200 opacity-70'}`}>
+            <div key={employee.id} onClick={() => navigate(`/employees/${employee.id}`)} className={`bg-white border rounded-xl p-4 cursor-pointer active:bg-gray-50 ${employee.active ? 'border-gray-100' : 'border-gray-200 opacity-70'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -245,7 +263,7 @@ export default function Employees() {
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">{employee.job_title || employee.employment_type || 'Employment details not set'}</p>
                 </div>
-                <div className="flex">
+                <div className="flex" onClick={(event) => event.stopPropagation()}>
                   <button onClick={() => openEdit(employee)} className="p-2 text-gray-400 hover:text-blue-600" title="Edit profile"><Pencil size={17} /></button>
                   <button onClick={() => openPlan(employee)} className="p-2 text-gray-400 hover:text-blue-600" title="Change compensation"><BadgeDollarSign size={18} /></button>
                   {Boolean(employee.active) && <button onClick={() => deactivate(employee)} className="p-2 text-gray-400 hover:text-red-600" title="Deactivate"><UserX size={18} /></button>}
@@ -259,14 +277,14 @@ export default function Employees() {
               <div className="grid grid-cols-3 gap-2 mt-3 text-center">
                 <Metric label="Earned" value={kes(employee.current_period_earnings)} />
                 <Metric label="Due" value={kes(employee.payroll_balance_due)} />
-                <Link to={`/employees/${employee.id}/variances`} className="block rounded-lg active:bg-gray-100">
-                  <VarianceMetric totals={employee.variance_totals} />
-                </Link>
+                <VarianceMetric totals={employee.variance_totals} />
               </div>
             </div>
           ))}
         </div>
       )}
+
+      </>)}
 
       {profileSheet && (
         <Sheet title={editing ? 'Edit Employee' : 'Add Employee'} onClose={() => setProfileSheet(false)}>
@@ -439,6 +457,63 @@ function Metric({ label, value, alert = false }: { label: string; value: string;
     <div>
       <p className="text-[10px] uppercase text-gray-400">{label}</p>
       <p className={`text-xs font-semibold mt-1 truncate ${alert ? 'text-red-600' : 'text-gray-700'}`}>{value}</p>
+    </div>
+  );
+}
+
+type RecordTab = 'pay' | 'shortages' | 'details';
+const RECORD_TABS: Array<{ id: RecordTab; label: string }> = [
+  { id: 'pay', label: 'Pay' }, { id: 'shortages', label: 'Shortages' }, { id: 'details', label: 'Pay plan & details' },
+];
+
+// One employee on the phone: what they owe, earn and are due on top, then a
+// tab for pay, shortages and their plan and details.
+function EmployeeRecord({ employee, onBack, onEdit, onPlan, onDeactivate }: {
+  employee: any; onBack: () => void; onEdit: () => void; onPlan: () => void; onDeactivate: () => void;
+}) {
+  const [tab, setTab] = useState<RecordTab>('pay');
+  const owed = describeVarianceTotals(employee.variance_totals);
+  const plan = employee.compensation_plan;
+  return (
+    <div>
+      <PageHeader title={employee.name} back onBack={onBack} />
+      <p className="text-sm text-gray-500 -mt-2 mb-3">{employee.compensation_summary || 'No pay plan'}{plan?.pay_schedule ? ` · paid ${plan.pay_schedule}` : ''}</p>
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="bg-white rounded-xl p-3 shadow-sm border-t-4 border-red-500"><p className="text-xs font-semibold text-gray-500">Shortages</p><p className={`text-sm font-bold mt-1 ${owed.tone === 'owes' ? 'text-red-600' : owed.tone === 'favour' ? 'text-green-700' : 'text-gray-800'}`}>{owed.text}</p></div>
+        <div className="bg-white rounded-xl p-3 shadow-sm border-t-4 border-blue-600"><p className="text-xs font-semibold text-gray-500">Earned</p><p className="text-sm font-bold mt-1">{kes(employee.current_period_earnings)}</p></div>
+        <div className="bg-white rounded-xl p-3 shadow-sm border-t-4 border-blue-600"><p className="text-xs font-semibold text-gray-500">Pay due</p><p className="text-sm font-bold mt-1">{kes(employee.payroll_balance_due)}</p></div>
+      </div>
+      <nav className="flex gap-2 overflow-x-auto pb-1 mb-3" aria-label="Employee sections">
+        {RECORD_TABS.map((item) => (
+          <button key={item.id} type="button" onClick={() => setTab(item.id)}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold border ${tab === item.id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`}>
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      {tab === 'pay' && (
+        <EmployeePayView key={`pay-${employee.id}`} load={() => getEmployeePay(Number(employee.id))} admin embedded actions={varianceActions} />
+      )}
+      {tab === 'shortages' && (
+        <EmployeeVariancesPage key={`short-${employee.id}`} employeeId={Number(employee.id)} load={getEmployeeVariances} actions={varianceActions} embedded
+          inputClassName="w-full border border-gray-300 rounded-xl px-3 py-3 bg-white text-gray-900 text-base" />
+      )}
+      {tab === 'details' && (
+        <div className="bg-white rounded-xl p-4 shadow-sm space-y-3 text-sm">
+          {[
+            ['Pay plan', employee.compensation_summary || 'None'], ['Paid', plan?.pay_schedule || '-'], ['Plan from', plan?.effective_from || '-'],
+            ['Role', employee.role || '-'], ['Job title', employee.job_title || '-'], ['Employment', employee.employment_type || '-'],
+            ['Started', employee.employment_start_date || '-'], ['Phone', employee.phone || '-'], ['Status', employee.active ? 'Active' : 'Inactive'],
+          ].map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-3"><span className="text-gray-500">{label}</span><span className="font-medium text-gray-800 text-right capitalize">{value}</span></div>
+          ))}
+          <div className="grid gap-2 pt-3 border-t border-gray-100">
+            <button type="button" onClick={onPlan} className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold">Change pay plan</button>
+            <button type="button" onClick={onEdit} className="w-full py-3 rounded-xl border border-gray-300 font-semibold text-gray-700">Edit details</button>
+            {Boolean(employee.active) && <button type="button" onClick={onDeactivate} className="w-full py-3 rounded-xl border border-red-200 font-semibold text-red-700">Deactivate</button>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

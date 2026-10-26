@@ -8,9 +8,10 @@ import { VarianceStatementView, describeVarianceTotals, type VarianceActions } f
 // Variances section (shared/ui/EmployeeVariances.tsx) is where an
 // administrator records repayments, write-offs and pay-backs. Employees see
 // their own, read-only.
-export function EmployeePayView({ load, admin = false, actions, approval }: {
+export function EmployeePayView({ load, admin = false, actions, approval, embedded = false }: {
   load: () => Promise<any>;
   admin?: boolean;
+  embedded?: boolean;
   actions?: VarianceActions;
   approval?: ApprovalApi;
 }) {
@@ -31,15 +32,15 @@ export function EmployeePayView({ load, admin = false, actions, approval }: {
   if (!data) return <p role="status">{error || 'Loading pay statement…'}</p>;
   return (
     <main className="max-w-5xl mx-auto space-y-5 text-gray-800 p-2">
-      <div className="flex flex-wrap justify-between gap-3">
-        <div>
+      <div className={`flex flex-wrap gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
+        {!embedded && <div>
           <h1 className="text-2xl font-bold">
             {admin ? data.employee.name : 'My Pay'}
           </h1>
           <p className="text-sm text-gray-500">
             {data.employee.name} · earnings, payments and variances
           </p>
-        </div>
+        </div>}
         <button
           onClick={() => window.print()}
           className="border rounded-lg px-4 py-2 bg-white print:hidden"

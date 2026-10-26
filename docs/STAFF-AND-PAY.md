@@ -8,6 +8,12 @@ Desktop **Employees**, phone **More → Employees** (administrators). Each
 employee has employment details, a role (admin or attendant) with a 4-digit
 PIN, and a pay plan.
 
+Click an employee to open their page: what they owe on shortages, earned
+this month and are due on top, then **Pay** (statement and payments),
+**Shortages** (with Record payment) and **Pay plan & details** (Change pay
+plan, Edit details, Deactivate). On the desktop the list stays on the left.
+Payroll's employee links open the same page.
+
 ## Pay plans
 
 A plan has one or more parts (up to eight):

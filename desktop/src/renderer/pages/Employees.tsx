@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   BadgeDollarSign,
   CirclePlus,
@@ -18,7 +18,13 @@ import {
   getCompensationPlans,
   getEmployees,
   updateEmployee,
+  getEmployeePay,
+  getEmployeeVariances,
+  varianceActions,
+  desktopApproval,
 } from '../services/api';
+import { EmployeePayView } from '../../../../shared/ui/EmployeePayView';
+import { EmployeeVariancesPage } from '../../../../shared/ui/EmployeeVariances';
 import { describeVarianceTotals } from '../../../../shared/ui/EmployeeVariances';
 
 type CompensationComponent = {
@@ -108,6 +114,9 @@ export default function Employees() {
   const [profileError, setProfileError] = useState('');
   const [planError, setPlanError] = useState('');
   const [listError, setListError] = useState('');
+  // Employees list, then one employee's own page (/employees/:id).
+  const { id: routeId } = useParams();
+  const navigate = useNavigate();
 
   useEffect(() => { loadEmployees(); }, []);
 
@@ -261,6 +270,7 @@ export default function Employees() {
   }), [employees]);
 
   if (loading) return <div className="text-gray-500">Loading employees...</div>;
+  const selected = employees.find((employee) => String(employee.id) === routeId) || null;
 
   return (
     <div>
@@ -276,6 +286,7 @@ export default function Employees() {
       </div>
       {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
+      {!selected && (<>
       <div className="grid grid-cols-4 gap-5 border-y border-gray-200 py-4 mb-5">
         <Metric label="Active employees" value={String(totals.active)} />
         <Metric label="Earnings this month" value={formatKES(totals.earnings)} />
@@ -299,7 +310,7 @@ export default function Employees() {
           </thead>
           <tbody>
             {employees.map((employee) => (
-              <tr key={employee.id} className="border-t border-gray-100 hover:bg-gray-50">
+              <tr key={employee.id} onClick={() => navigate(`/employees/${employee.id}`)} className="border-t border-gray-100 hover:bg-gray-50 cursor-pointer">
                 <td className="p-3">
                   <p className="font-medium text-gray-900">{employee.name}</p>
                   <p className="text-xs text-gray-500">{employee.job_title || 'No job title'} - {employee.role}</p>
@@ -316,7 +327,7 @@ export default function Employees() {
                 </td>
                 <td className="p-3 text-right tabular-nums">{formatKES(employee.current_period_earnings)}</td>
                 <td className="p-3 text-right tabular-nums">{formatKES(employee.payroll_balance_due)}</td>
-                <td className="p-3 text-right">
+                <td className="p-3 text-right" onClick={(event) => event.stopPropagation()}>
                   <VarianceCell employee={employee} />
                 </td>
                 <td className="p-3">
@@ -324,7 +335,7 @@ export default function Employees() {
                     {employee.active ? 'Active' : 'Inactive'}
                   </span>
                 </td>
-                <td className="p-3">
+                <td className="p-3" onClick={(event) => event.stopPropagation()}>
                   <div className="flex justify-end gap-1">
                     <IconButton title="Edit profile" onClick={() => openEdit(employee)}><Pencil size={16} /></IconButton>
                     <IconButton title="Change compensation" onClick={() => openCompensation(employee)}><BadgeDollarSign size={17} /></IconButton>
@@ -342,6 +353,19 @@ export default function Employees() {
           </tbody>
         </table>
       </div>
+
+      </>)}
+
+      {selected && (
+        <EmployeeRecord
+          employee={selected}
+          employees={employees}
+          onOpen={(employeeId) => navigate(`/employees/${employeeId}`)}
+          onEdit={() => openEdit(selected)}
+          onPlan={() => openCompensation(selected)}
+          onDeactivate={() => deactivate(selected)}
+        />
+      )}
 
       {profileModal && (
         <Modal title={editing ? 'Edit Employee' : 'Add Employee'} onClose={() => setProfileModal(false)} wide={!editing}>
@@ -521,11 +545,108 @@ function PlanEditor({ plan, setPlan, updateComponent, allowEffectiveDate }: any)
 }
 
 // What the employee owes on their shortages, or their credit; opens the list.
+type RecordTab = 'pay' | 'shortages' | 'plan';
+const RECORD_TABS: Array<{ id: RecordTab; label: string }> = [
+  { id: 'pay', label: 'Pay' }, { id: 'shortages', label: 'Shortages' }, { id: 'plan', label: 'Pay plan & details' },
+];
+
+// One employee: the list stays on the left, their page on the right with
+// what they owe, earn and are due on top and a tab for each part.
+function EmployeeRecord({ employee, employees, onOpen, onEdit, onPlan, onDeactivate }: {
+  employee: any; employees: any[];
+  onOpen: (employeeId: number) => void; onEdit: () => void; onPlan: () => void; onDeactivate: () => void;
+}) {
+  const [tab, setTab] = useState<RecordTab>('pay');
+  const owed = describeVarianceTotals(employee.variance_totals);
+  const plan = employee.compensation_plan;
+  return (
+    <div className="flex gap-5 items-start">
+      <aside className="w-60 shrink-0 bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <Link to="/employees" className="block px-4 py-3 text-sm text-blue-700 border-b border-gray-100">← All employees</Link>
+        {employees.map((item) => {
+          const tone = describeVarianceTotals(item.variance_totals).tone;
+          const on = item.id === employee.id;
+          return (
+            <button key={item.id} type="button" onClick={() => onOpen(item.id)}
+              className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left text-sm border-b border-gray-100 ${on ? 'bg-blue-50 font-semibold text-blue-800' : 'hover:bg-gray-50'} ${item.active ? '' : 'text-gray-400'}`}>
+              <span className="truncate">{item.name}</span>
+              {tone === 'owes' && <span className="h-2 w-2 rounded-full bg-red-500" aria-label="Owes on shortages" />}
+            </button>
+          );
+        })}
+      </aside>
+      <section className="flex-1 min-w-0 space-y-4">
+        <header className="bg-white border border-gray-200 rounded-lg p-5 flex flex-wrap items-center gap-8">
+          <div className="flex-1 min-w-[220px]">
+            <h2 className="text-xl font-bold text-gray-800">{employee.name}</h2>
+            <p className="text-sm text-gray-500 mt-0.5">{employee.compensation_summary || 'No pay plan'}{plan?.pay_schedule ? ` · paid ${plan.pay_schedule}` : ''}</p>
+          </div>
+          <Fact label="Shortages" value={owed.text} tone={owed.tone === 'owes' ? 'text-red-600' : owed.tone === 'favour' ? 'text-green-700' : 'text-gray-800'} />
+          <Fact label="Earned this month" value={formatKES(employee.current_period_earnings)} />
+          <Fact label="Pay due" value={formatKES(employee.payroll_balance_due)} />
+        </header>
+        <nav className="flex gap-1 border-b border-gray-200" aria-label="Employee sections">
+          {RECORD_TABS.map((item) => (
+            <button key={item.id} type="button" onClick={() => setTab(item.id)}
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px ${tab === item.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        {tab === 'pay' && (
+          <EmployeePayView key={`pay-${employee.id}`} load={() => getEmployeePay(Number(employee.id))} admin embedded approval={desktopApproval} actions={varianceActions} />
+        )}
+        {tab === 'shortages' && (
+          <EmployeeVariancesPage key={`short-${employee.id}`} employeeId={Number(employee.id)} load={getEmployeeVariances} actions={varianceActions} approval={desktopApproval} embedded />
+        )}
+        {tab === 'plan' && (
+          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4 text-sm">
+            <dl className="grid grid-cols-2 gap-x-8 gap-y-3">
+              <Detail label="Pay plan" value={employee.compensation_summary || 'None'} />
+              <Detail label="Paid" value={plan?.pay_schedule || '-'} />
+              <Detail label="Plan from" value={plan?.effective_from || '-'} />
+              <Detail label="Role" value={employee.role || '-'} />
+              <Detail label="Job title" value={employee.job_title || '-'} />
+              <Detail label="Employment" value={employee.employment_type || '-'} />
+              <Detail label="Started" value={employee.employment_start_date || '-'} />
+              <Detail label="Phone" value={employee.phone || '-'} />
+              <Detail label="Status" value={employee.active ? 'Active' : 'Inactive'} />
+            </dl>
+            <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-100">
+              <button type="button" onClick={onPlan} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"><BadgeDollarSign size={16} /> Change pay plan</button>
+              <button type="button" onClick={onEdit} className="flex items-center gap-2 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50"><Pencil size={16} /> Edit details</button>
+              {Boolean(employee.active) && <button type="button" onClick={onDeactivate} className="flex items-center gap-2 border border-red-200 text-red-700 px-4 py-2 rounded-lg hover:bg-red-50"><UserX size={16} /> Deactivate</button>}
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Fact({ label, value, tone = 'text-gray-800' }: { label: string; value: string; tone?: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold text-gray-500">{label}</p>
+      <p className={`text-xl font-bold tabular-nums ${tone}`}>{value}</p>
+    </div>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-semibold text-gray-500">{label}</dt>
+      <dd className="text-gray-800 capitalize">{value}</dd>
+    </div>
+  );
+}
+
 function VarianceCell({ employee }: { employee: any }) {
   const { text, tone } = describeVarianceTotals(employee.variance_totals);
   const colour = tone === 'owes' ? 'text-red-600' : tone === 'favour' ? 'text-green-700' : 'text-gray-500';
   return (
-    <Link to={`/employees/${employee.id}/variances`} className={`tabular-nums hover:underline ${colour}`}>
+    <Link to={`/employees/${employee.id}`} className={`tabular-nums hover:underline ${colour}`}>
       {text}
     </Link>
   );

@@ -289,7 +289,7 @@ export default function Payroll() {
                   <Metric label="Paid" value={kes(payrollLine.paid_amount)} small />
                   <Metric label="Due" value={kes(payrollLine.balance_due)} small />
                 </div>
-                <Link to={`/employee-pay/${payrollLine.employee_id}`} className="text-blue-700 underline text-sm inline-block mt-3">Full pay and debt statement</Link>
+                <Link to={`/employees/${payrollLine.employee_id}`} className="text-blue-700 underline text-sm inline-block mt-3">Full pay and debt statement</Link>
                 <details className="mt-3" open={run.status === 'calculated'}><summary className="font-medium cursor-pointer py-2">Shifts and rates</summary><PayrollStatement line={payrollLine} run={run} /></details>
                 {['approved', 'partially_paid'].includes(run.status) && Number(payrollLine.balance_due) > 0 && (
                   <button onClick={() => openPayment(payrollLine)}

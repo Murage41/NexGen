@@ -423,7 +423,7 @@ export default function Payroll() {
                     <tr className={`border-t border-gray-100 ${selectedLine?.id === line.id ? 'bg-blue-50' : ''}`}>
                       <td className="p-3">
                         <button onClick={() => setSelectedLine(selectedLine?.id === line.id ? null : line)}
-                          className="font-medium text-gray-900 hover:text-blue-700">{line.employee_name}</button><p className="text-xs text-gray-500 mt-1">{line.shift_count} shifts</p><Link to={`/employee-pay/${line.employee_id}`} className="text-xs text-blue-700 underline">Full statement</Link>
+                          className="font-medium text-gray-900 hover:text-blue-700">{line.employee_name}</button><p className="text-xs text-gray-500 mt-1">{line.shift_count} shifts</p><Link to={`/employees/${line.employee_id}`} className="text-xs text-blue-700 underline">Full statement</Link>
                       </td>
                       <td className="p-3 text-right tabular-nums">{kes(line.gross_earnings)}</td>
                       <td className="p-3 text-right tabular-nums">{kes(line.total_deductions)}</td>

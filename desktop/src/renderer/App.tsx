@@ -145,6 +145,7 @@ export default function App() {
             <Route path="/shifts/:id" element={<ShiftDetail />} />
             <Route path="/pumps" element={<Pumps />} />
             <Route path="/employees" element={<Employees />} />
+            <Route path="/employees/:id" element={<Employees />} />
             <Route path="/employees/:id/variances" element={<EmployeeVariances />} />
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/employee-pay/:id" element={<EmployeePay />} />

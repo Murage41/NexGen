@@ -371,11 +371,13 @@ export function EmployeeVariancesPage({
   actions,
   approval,
   inputClassName,
+  embedded = false,
 }: {
   employeeId: number;
   load: (id: number) => Promise<any>;
   actions?: VarianceActions;
   approval?: ApprovalApi;
+  embedded?: boolean;
   inputClassName?: string;
 }) {
   const [statement, setStatement] = useState<any>(null);
@@ -395,14 +397,14 @@ export function EmployeeVariancesPage({
   if (!statement) return <p role="status" className="p-4">{error || 'Loading shortages…'}</p>;
   return (
     <main className="max-w-5xl mx-auto space-y-4 p-2 text-gray-800">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
+      <div className={`flex flex-wrap items-end gap-2 ${embedded ? 'justify-end' : 'justify-between'}`}>
+        {!embedded && <div>
           <Link to="/employees" className="text-sm text-blue-700 underline print:hidden">Employees</Link>
           <h1 className="text-2xl font-bold">{statement.employee.name}</h1>
           <p className="text-sm text-gray-500">
             Shortages{statement.started_on ? ` · kept this way since ${statement.started_on}` : ''}
           </p>
-        </div>
+        </div>}
         <button type="button" onClick={() => window.print()} className="border rounded-lg px-4 py-2 bg-white print:hidden">Print</button>
       </div>
       {error && <p role="alert" className="bg-red-50 text-red-700 p-3">{error}</p>}

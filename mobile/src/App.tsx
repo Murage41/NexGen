@@ -44,6 +44,7 @@ export default function App() {
               <Route path="/credits" element={<Credits />} />
               <Route path="/more" element={<More />} />
               <Route path="/employees" element={<Employees />} />
+              <Route path="/employees/:id" element={<Employees />} />
               <Route path="/employees/:id/variances" element={<EmployeeVariances />} />
               <Route path="/payroll" element={<Payroll />} />
               <Route path="/employee-pay/:id" element={<EmployeePay />} />
