@@ -608,9 +608,15 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
 // POST open a new shift
 router.post('/', requireAdmin, validate(openShiftSchema), async (req: any, res) => {
   try {
-    const { employee_id, compensation_plan_id, opening_cash_amount, opening_mpesa_amount, opening_note } = req.body;
+    const { employee_id, compensation_plan_id, opening_cash_amount, opening_mpesa_amount, opening_note, shift_date } = req.body;
     const today = getKenyaDate();
-    const resolvedDate = today;
+    // Today by default. A missed shift may take an earlier day, but never a
+    // future one or one before the last closed shift: openings continue the
+    // last closed meter readings, so dates must stay in that order.
+    const resolvedDate = shift_date || today;
+    if (resolvedDate > today) {
+      return res.status(400).json({ success: false, error: 'A shift cannot be dated in the future.' });
+    }
 
     // Phase 12: wrap the "at most one open shift" check + insert in a single
     // SQLite transaction so a near-simultaneous second POST cannot win the
@@ -623,6 +629,13 @@ router.post('/', requireAdmin, validate(openShiftSchema), async (req: any, res) 
       const openShift = await trx('shifts').where({ status: 'open' }).first();
       if (openShift) {
         const err: any = new Error('There is already an open shift. Close it first.');
+        err.httpStatus = 400;
+        throw err;
+      }
+
+      const lastClosed = await trx('shifts').where({ status: 'closed' }).max({ date: 'shift_date' }).first();
+      if (lastClosed?.date && resolvedDate < String(lastClosed.date)) {
+        const err: any = new Error(`The shift date cannot be before the last closed shift (${lastClosed.date}).`);
         err.httpStatus = 400;
         throw err;
       }

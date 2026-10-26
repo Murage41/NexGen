@@ -146,6 +146,13 @@ export const openShiftSchema = z.object({
   opening_cash_amount: z.number({ error: 'Enter the opening cash float (zero is allowed).' }).finite().min(0).max(100000000).multipleOf(0.01),
   opening_mpesa_amount: z.number({ error: 'Enter the opening M-Pesa balance (zero is allowed).' }).finite().min(0).max(100000000).multipleOf(0.01),
   opening_note: z.string().trim().max(2000).nullish().optional(),
+  // A missed shift can be entered on its real day; the route checks the range.
+  shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Shift date must be YYYY-MM-DD')
+    .refine((value) => {
+      const parsed = new Date(`${value}T00:00:00Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    }, 'Enter a real date')
+    .optional(),
 });
 
 export const closeShiftSchema = z.object({
