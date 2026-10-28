@@ -386,7 +386,6 @@ export default function TankDips() {
                   value={form.measured_litres}
                   onChange={e => setForm({ ...form, measured_litres: e.target.value })}
                 />
-                <p className="text-xs text-gray-400 mt-1">Enter the physical measurement from the dip stick</p>
               </div>
               <div>
                 <label className="text-sm text-gray-600 mb-1 block">Variance Category</label>
@@ -397,7 +396,6 @@ export default function TankDips() {
                 >
                   {VARIANCE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">Classify any difference between book and physical stock.</p>
               </div>
               {warnings.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">

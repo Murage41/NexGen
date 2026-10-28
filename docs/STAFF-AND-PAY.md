@@ -83,6 +83,9 @@ the attendant's credit and pays their next shortage. It is never paid out.
 
 ## What employees see
 
-**My Pay** on the phone: their own shifts, earnings by part, payments,
-shortages and payments towards them, and **Print statement**. Never anyone
-else's.
+**My Pay** on the phone, never anyone else's: three figures on top (earned
+but not yet paid, pay due, shortages in red when owed), the pay plan in one
+line, shifts not yet in payroll (earned, taken from the till, left), payroll
+runs (tap for details) and their shortages. The admin's Pay tab on an
+employee's page shows the same, without repeating the figures and shortages
+that page already has.

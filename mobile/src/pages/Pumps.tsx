@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Fuel } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
+import { notify, errorText } from '../../../shared/ui/Notify';
 import { getPumps, createPump, getTanks } from '../services/api';
 
 // Readings are stored as running totals that keep counting past a rollover;
@@ -51,8 +52,9 @@ export default function Pumps() {
       setShowAdd(false);
       setForm({ label: '', nozzle_label: '', fuel_type: 'petrol', tank_id: tanks.length > 0 ? String(tanks[0].id) : '', initial_litres: '', initial_amount: '' });
       loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      notify('error', errorText(err, 'Pump not saved.'));
     } finally {
       setSubmitting(false);
     }
@@ -166,7 +168,7 @@ export default function Pumps() {
               </div>
               <div className="border-t border-gray-200 pt-3 mt-1">
                 <p className="text-sm font-medium text-gray-700 mb-1">Current Meter Readings</p>
-                <p className="text-xs text-gray-400 mb-2">Enter the readings currently showing on the pump's totalizer.</p>
+                <p className="text-xs text-gray-400 mb-2">The readings the pump shows now.</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-gray-500 mb-1 block">Litres Reading</label>

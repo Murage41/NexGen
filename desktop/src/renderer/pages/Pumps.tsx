@@ -181,7 +181,7 @@ export default function Pumps() {
               </div>
               <div className="border-t border-gray-200 pt-4 mt-2">
                 <p className="text-sm font-medium text-gray-700 mb-2">Current Meter Readings</p>
-                <p className="text-xs text-gray-400 mb-3">Enter the current readings on the pump's totalizer. These will be used as the starting point for the first shift.</p>
+                <p className="text-xs text-gray-400 mb-3">The readings the pump shows now.</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Litres Reading</label>
@@ -209,12 +209,6 @@ export default function Pumps() {
               </div>
               <div className="border-t border-gray-200 pt-4 mt-2">
                 <p className="text-sm font-medium text-gray-700 mb-2">Meter Rollover</p>
-                <p className="text-xs text-gray-400 mb-3">
-                  How many whole digits the pump shows before the decimal point. When the
-                  display passes this it wraps back to zero, and NexGen has to add the wrap
-                  back on. Count the digits on the pump face — they can differ between the
-                  litre and shilling counters on the same pump.
-                </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Litre display digits</label>

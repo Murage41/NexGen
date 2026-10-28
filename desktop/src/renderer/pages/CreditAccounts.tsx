@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useState, useEffect, Fragment } from 'react';
 import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, balanceMoveApi, desktopApproval } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
@@ -32,6 +32,17 @@ export default function CreditAccounts() {
   useEffect(() => {
     loadAccounts();
   }, []);
+
+  // Opened from the Customers page: show that customer, or the new-customer form.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (loading) return;
+    const wanted = Number(searchParams.get('account'));
+    const target = wanted ? accounts.find((account: any) => account.id === wanted) : null;
+    if (target && expandedId !== target.id) { setSearchQuery(target.name); toggleExpand(target); }
+    if (searchParams.get('new') === '1') openNewAccount();
+    if (searchParams.has('account') || searchParams.has('new')) setSearchParams({}, { replace: true });
+  }, [loading]);
 
   async function loadAccounts() {
     try {

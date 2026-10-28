@@ -88,13 +88,14 @@ received instead of opening and closing balances.
 
 Bottom bar: **Home, My Shift, My Pay, Credits, More**.
 
-- Home: whether a shift is open, and "Fuel is low" warnings.
+- Home: whether a shift is open, each tank's level as a bar (red when low),
+  and "Fuel is low" warnings. Admins see the same tanks on their home screen.
 - Home: **Record my shift** opens their open shift on the readings.
 - My Shift: their own shifts. An open shift is **blind**: they record readings,
   money, credits and expenses but see no expected total or shortage until an
   administrator closes it. The pump's own money meter still shows its sales.
 - My Pay: their pay, payments and shortages.
-- Credits: money customers' names, balances and limits (no phone numbers or
+- Credits: money customers, who owes most first, with balances and limits (no phone numbers or
   statements). Invoice customers appear by name only, to record fuel.
 - More: pumps, tanks, today's prices.
 

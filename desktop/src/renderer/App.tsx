@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import {
   LayoutDashboard, Gauge, Users, Fuel, DollarSign,
-  CreditCard, Receipt, BarChart3, Settings, Droplets, Truck, FileSpreadsheet,
+  CreditCard, Receipt, BarChart3, Settings, Droplets, Truck,
   WalletCards, ClipboardCheck,
 } from 'lucide-react';
 import { getStaleShifts, getTanks, stationLogoUrl } from './services/api';
 import { isLowStock } from '../../../shared/ui/TankLowStock';
+import { Notifications } from '../../../shared/ui/Notify';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
 import ShiftDetail from './pages/ShiftDetail';
@@ -24,14 +25,14 @@ import Payroll from './pages/Payroll';
 import EmployeePay from './pages/EmployeePay';
 import EmployeeVariances from './pages/EmployeeVariances';
 import Corrections from './pages/Corrections';
+import Customers from './pages/Customers';
 
 const navGroups = [
   { title: 'Daily', items: [
     { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/shifts', icon: Gauge, label: 'Shifts' },
     { to: '/expenses', icon: Receipt, label: 'Expenses' },
-    { to: '/credit-accounts', icon: CreditCard, label: 'Credit Accounts' },
-    { to: '/customer-invoices', icon: FileSpreadsheet, label: 'Customer Invoices' },
+    { to: '/customers', icon: CreditCard, label: 'Customers' },
   ] },
   { title: 'Staff', items: [
     { to: '/employees', icon: Users, label: 'Employees' },
@@ -76,6 +77,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-gray-100">
+      <Notifications />
       {/* Sidebar */}
       <aside className="w-56 bg-gray-900 text-white flex flex-col flex-shrink-0">
         <div className="p-3 border-b border-gray-700">
@@ -102,7 +104,7 @@ export default function App() {
               end={to === '/'}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive
+                  isActive || (to === '/customers' && /^\/(credit-accounts|customer-invoices)/.test(location.pathname))
                     ? 'bg-blue-600 text-white font-semibold'
                     : 'text-gray-200 hover:bg-gray-800 hover:text-white'
                 }`
@@ -151,6 +153,7 @@ export default function App() {
             <Route path="/employee-pay/:id" element={<EmployeePay />} />
             <Route path="/fuel-pricing" element={<FuelPricing />} />
             <Route path="/expenses" element={<Expenses />} />
+            <Route path="/customers" element={<Customers />} />
             <Route path="/credit-accounts" element={<CreditAccounts />} />
             <Route path="/credits" element={<Navigate to="/credit-accounts" replace />} />
             <Route path="/invoices" element={<Navigate to="/customer-invoices" replace />} />

@@ -3,6 +3,7 @@ import { Plus, Trash2, Receipt, TrendingUp, TrendingDown } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { getExpenseSummary, getExpenseCategories, createExpense, deleteExpense } from '../services/api';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
+import { notify, errorText } from '../../../shared/ui/Notify';
 import { useAuth } from '../context/AuthContext';
 
 const PREDEFINED_CATEGORIES = [
@@ -58,8 +59,9 @@ export default function Expenses() {
       setShowAdd(false);
       setForm({ category: '', description: '', amount: '', date: getKenyaDate() });
       loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      notify('error', errorText(err, 'Expense not saved.'));
     } finally {
       setSubmitting(false);
     }
@@ -71,7 +73,7 @@ export default function Expenses() {
     try {
       await deleteExpense(exp.id);
       loadData();
-    } catch (err) { console.error(err); }
+    } catch (err: any) { console.error(err); notify('error', errorText(err, 'Expense not deleted.')); }
   }
 
   function applyFilter(cat: string) {

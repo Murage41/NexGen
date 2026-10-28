@@ -149,7 +149,7 @@ export default function Settings() {
             <Gauge size={20} className="text-orange-500" /> Set Opening Readings
           </h2>
           <p className="text-sm text-gray-500 mb-4">
-            Set initial meter readings for the current open shift. Use this when the system is fresh and needs starting values.
+            Starting meter readings (new systems only).
           </p>
 
           <div className="overflow-x-auto">
@@ -257,7 +257,6 @@ export default function Settings() {
               <span className="text-sm text-gray-500">hours</span>
               <button type="button" onClick={saveOperationalSettings} className="p-2 rounded-md bg-blue-600 text-white" title="Save warning threshold" aria-label="Save warning threshold"><Save size={17} /></button>
             </div>
-            <p className="text-xs text-gray-500 mt-2">Open shifts older than this are highlighted for review.</p>
             {operationsSaved && <p className="text-xs text-green-700 mt-1">Threshold saved.</p>}
             {operationsError && <p className="text-xs text-red-600 mt-1">{operationsError}</p>}
           </div>
@@ -289,7 +288,6 @@ export default function Settings() {
             >
               <HardDrive size={18} /> {backingUp ? 'Creating...' : 'Create Backup'}
             </button>
-            <p className="text-xs text-gray-500 mt-2">Creates a consistent local copy in the server backup folder.</p>
             {backupMessage && <p className="text-xs text-green-700 mt-1 break-all">{backupMessage}</p>}
             {backupError && <p className="text-xs text-red-600 mt-1">{backupError}</p>}
           </div>

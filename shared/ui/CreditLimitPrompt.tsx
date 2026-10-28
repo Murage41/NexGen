@@ -64,9 +64,6 @@ export function CreditLimitPrompt({
         </ul>
       </div>
       <ApproverFields state={approver} inputClassName={inputClassName} />
-      {!approver.enabled && (
-        <p className="text-xs text-amber-800">Approving records you as the administrator who allowed this.</p>
-      )}
       {error && <p className="text-red-700">{error}</p>}
       <div className="flex gap-2 justify-end">
         <button type="button" onClick={onCancel} className="px-3 py-2 rounded-lg text-gray-700 hover:bg-amber-100">

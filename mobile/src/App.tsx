@@ -23,6 +23,7 @@ import InvoiceCustomerDetail from './pages/InvoiceCustomerDetail';
 import More from './pages/More';
 import Payroll from './pages/Payroll';
 import EmployeePay from './pages/EmployeePay';
+import { Notifications } from '../../shared/ui/Notify';
 import EmployeeVariances from './pages/EmployeeVariances';
 
 export default function App() {
@@ -32,6 +33,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-100 pb-safe">
+      <Notifications placement="bottom" />
       <div className="px-4 pt-4 pb-28">
         <Routes>
           <Route path="/" element={<Dashboard />} />

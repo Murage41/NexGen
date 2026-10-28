@@ -1,14 +1,15 @@
 import { FundsCollectionSummary } from '../../../shared/ui/ShiftFunds';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDashboard } from '../services/api';
+import { getDashboard, getTanks } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { LowStockNotice } from '../../../shared/ui/TankLowStock';
+import { LowStockNotice, TankLevels } from '../../../shared/ui/TankLowStock';
 import { Fuel, DollarSign, TrendingUp, TrendingDown, Gauge, LogOut, AlertTriangle } from 'lucide-react';
 
 export default function Dashboard() {
   const { user, isAdmin, logout } = useAuth();
   const [data, setData] = useState<any>(null);
+  const [tanks, setTanks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -18,6 +19,8 @@ export default function Dashboard() {
     try {
       const res = await getDashboard();
       setData(res.data.data);
+      // Tank levels for everyone (attendants see levels only).
+      getTanks().then((tankRes) => setTanks(tankRes.data.data || [])).catch(() => {});
     } catch (err) {
       console.error(err);
     } finally {
@@ -83,8 +86,9 @@ export default function Dashboard() {
         )}
       </div>
 
+      <TankLevels tanks={tanks} onOpen={() => navigate('/tanks')} />
+
       {/* Today's figures are the owner's; attendants get the shift status only. */}
-      {isAdmin && data && <p className="text-xs text-gray-500 mb-2">Current financial figures, including later corrections.</p>}
       {isAdmin && data && (
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div className="bg-white rounded-xl p-3 shadow-sm">

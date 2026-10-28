@@ -342,7 +342,7 @@ export function CorrectionForm({
             <label className="block">{label(balanceBased ? 'M-Pesa balance at close (KES)' : 'Correct full M-Pesa received total (KES)')}
               <input className={inputClassName} type="number" inputMode="decimal" step="0.01" min="0" max="100000000" required value={mpesaAmount} onChange={(e) => setMpesaAmount(e.target.value)} />
             </label>
-            {(!validCollectionTotal(cashAmount) || !validCollectionTotal(mpesaAmount)) && <p className="col-span-2 text-xs text-gray-600">Both totals are required: 0 to 100,000,000 KES, with at most two decimal places.</p>}
+            {(!validCollectionTotal(cashAmount) || !validCollectionTotal(mpesaAmount)) && <p className="col-span-2 text-xs text-gray-600">Enter both totals: 0 or more, up to two decimals.</p>}
             {!totalsChanged && <p className="col-span-2 text-xs text-gray-500">Change at least one total to see the correction preview.</p>}
           </>}
           {needs.fuel && (

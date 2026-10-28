@@ -945,7 +945,7 @@ export default function ShiftDetail() {
           <OriginalCloseFigures figures={shift.original_financials} formatMoney={formatKES} />
           {corrections.length > 0 && (
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">
-              After {corrections.length} earlier correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>. The original close above is preserved; current figures are below.
+              After {corrections.length} earlier correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>.
             </p>
           )}
           {shift.close_reconciliation.variance_reason && (
@@ -1313,7 +1313,7 @@ export default function ShiftDetail() {
 
       </>)}
       {activeTab === 'money' && (<>
-      {!hasClosingCount && !isCancelled && <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 mb-4 text-sm text-blue-800">Closing count not yet recorded. Enter and sync both closing balances before reviewing the result or closing the shift.</p>}
+      {!hasClosingCount && !isCancelled && <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 mb-4 text-sm text-blue-800">Enter the cash and M-Pesa count to close this shift.</p>}
       {/* Sales Collections */}
       <div className="bg-white rounded-lg shadow p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
@@ -1537,6 +1537,11 @@ export default function ShiftDetail() {
                 </>
               ) : (
                 <>
+                  <div className="flex-1">
+                    <label className="block text-xs text-gray-500 mb-1">Description</label>
+                    <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
+                      placeholder="Details of the debt" className="w-full border border-gray-300 rounded p-2 text-sm" />
+                  </div>
                   <div className="w-32">
                     <label className="block text-xs text-gray-500 mb-1">Amount</label>
                     <input type="number" step="0.01" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
@@ -1694,6 +1699,11 @@ export default function ShiftDetail() {
                 <option value="">Select category...</option>
                 {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs text-gray-500 mb-1">Description</label>
+              <input value={newExpense.description} onChange={e => setNewExpense({ ...newExpense, description: e.target.value })}
+                placeholder="What it was for" className="w-full border border-gray-300 rounded p-2 text-sm" />
             </div>
             <div className="w-32">
               <label className="block text-xs text-gray-500 mb-1">Amount</label>

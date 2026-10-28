@@ -277,7 +277,7 @@ export default function Reports() {
                     {dailyData.unrecovered_losses > 0 && (
                       <div className="mx-4 mt-3 p-2 bg-amber-50 rounded border border-amber-200">
                         <p className="text-xs text-amber-700 font-medium">
-                          Unrecovered losses: {kes(dailyData.unrecovered_losses)} (shortages attendants still owe)
+                          Shortages still owed: {kes(dailyData.unrecovered_losses)}
                         </p>
                       </div>
                     )}
@@ -588,7 +588,7 @@ export default function Reports() {
                     )}
                     {monthlyData.attendant_variances && (
                       <div className="border-t border-gray-200 mt-3 pt-1">
-                        <p className="px-4 pt-2 text-xs font-semibold uppercase text-gray-500">Attendant shortages (paid separately, not from pay)</p>
+                        <p className="px-4 pt-2 text-xs font-semibold uppercase text-gray-500">Attendant shortages</p>
                         <PnLRow label="Shortages" value={monthlyData.attendant_variances.shortages} indent color="text-red-600" />
                         <PnLRow label="Shift surpluses (the station's, not set against shortages)" value={monthlyData.attendant_variances.surpluses} indent color="text-green-700" />
                         {Number(monthlyData.attendant_variances.corrections || 0) !== 0 && (
@@ -1108,7 +1108,7 @@ export default function Reports() {
               {/* Outstanding Receivables */}
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                 <p className="text-sm text-amber-700 font-medium">
-                  Outstanding Receivables (not yet collected): {kes(cfData.outstanding_receivables)}
+                  Customers still owe: {kes(cfData.outstanding_receivables)}
                 </p>
                 <p className="text-xs text-amber-600 mt-0.5">
                   Money credits {kes(cfData.outstanding_money_receivables || 0)} · Customer invoices {kes(cfData.outstanding_invoice_receivables || 0)}

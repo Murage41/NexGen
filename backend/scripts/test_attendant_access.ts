@@ -90,7 +90,7 @@ async function main() {
     const list = await get('/credit-accounts', attendant);
     assert.equal(list.status, 200);
     const byName = new Map(list.body.data.map((a: any) => [a.name, a]));
-    assert.deepEqual(list.body.data.map((a: any) => a.name), ['Customer A', 'Customer B', 'Customer C', 'Invoice Co'], 'customers only, by name');
+    assert.deepEqual(list.body.data.map((a: any) => a.name), ['Customer B', 'Customer A', 'Customer C', 'Invoice Co'], 'customers only, who owes most first');
     const moneyFields = ['id', 'name', 'type', 'billing_mode', 'outstanding_balance', 'credit_on_account', 'credit_limit', 'credit_age_limit_days', 'available_credit', 'credit_check'];
     for (const name of ['Customer A', 'Customer C', 'Customer B']) onlyKeys(byName.get(name), moneyFields, name);
     assert.deepEqual(Object.keys(byName.get('Invoice Co') as any).sort(), ['billing_mode', 'id', 'name', 'type'], 'an invoice customer is a name to choose, nothing more');

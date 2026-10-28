@@ -9,9 +9,14 @@ Two kinds of customer take fuel on account:
 
 Never record the same fuel both ways.
 
+On the desktop, **Customers** lists every customer of both kinds, with what
+each owes and any Over limit / Overdue / Draft invoice flag. Click one to open
+their account (credit) or their fuel, invoices and payments (invoice).
+**Invoices** and **Invoice payments** at the top list all of them.
+
 ## Adding a customer
 
-Administrators only: desktop **Credit Accounts → New Account**, phone
+Administrators only: desktop **Customers → New customer**, phone
 **Credits → Add**. Shift screens cannot create customers.
 
 - Name (unique), phone (required), KRA PIN (optional, e.g. `A012345678Z`).

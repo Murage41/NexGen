@@ -418,9 +418,6 @@ export default function Credits() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-semibold text-gray-800">{a.name}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeBadge(a.type)}`}>
-                    {a.type}
-                  </span>
                 </div>
                 {a.phone && (
                   <div className="flex items-center gap-1 text-xs text-gray-400">

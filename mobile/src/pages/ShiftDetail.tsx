@@ -395,7 +395,7 @@ export default function ShiftDetail() {
           <OriginalCloseFigures figures={shift.original_financials} formatMoney={fmt} />
           {corrections.length > 0 && (
             <p className="mt-3 border-t pt-2 text-sm text-gray-700">
-              After {corrections.length} earlier correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>. The original close above is preserved; current figures are below.
+              After {corrections.length} earlier correction{corrections.length === 1 ? '' : 's'}: <span className="font-semibold">{describeShiftBalance(corrections[0].variance_after)}</span>.
             </p>
           )}
           {shift.close_reconciliation.variance_reason && (
@@ -528,7 +528,7 @@ export default function ShiftDetail() {
 
         {blind || !hasClosingCount ? (
           <p className="border-t border-gray-200 pt-2 mt-2 text-xs text-gray-500">
-            {!hasClosingCount ? 'Closing count not yet recorded. Enter and sync both closing balances in Record Shift before closing.' : 'The shift’s result is worked out when an administrator closes it.'}
+            {!hasClosingCount ? 'Enter the cash and M-Pesa count to close this shift.' : 'The shift’s result is worked out when an administrator closes it.'}
           </p>
         ) : (
           <>

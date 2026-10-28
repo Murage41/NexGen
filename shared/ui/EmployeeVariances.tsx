@@ -148,7 +148,7 @@ function PaymentForm({ statement, repay, onDone, onCancel, inputClassName }: any
         </label>
       </div>
       <p className="text-xs text-gray-500">
-        Money handed into a drawer: enter that open shift and include it in the drawer count. Otherwise leave it blank.
+        Only if the money went into an open shift's till.
       </p>
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       <div className="flex gap-2 justify-end">
@@ -257,6 +257,7 @@ export function VarianceStatementView({
         <BalanceMoveForm api={actions.move} approval={approval} initialFrom={{ kind: 'employee', id: statement.employee.id }} onDone={done} onCancel={() => setForm('')} inputClassName={inputClassName} />
       )}
 
+      {(statement.rows || []).length > 0 && (<>
       <div className="flex flex-wrap items-end gap-2 text-sm print:hidden">
         <label className="block"><span className="text-gray-600 text-xs">From</span>
           <input type="date" className="border rounded-lg px-2 py-1 bg-white" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -300,6 +301,7 @@ export function VarianceStatementView({
           )}
         </table>
       </div>
+      </>)}
 
       {(statement.events || []).length > 0 && (
         <div className="space-y-1">

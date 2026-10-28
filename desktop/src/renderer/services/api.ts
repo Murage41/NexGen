@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { notify, doneMessageFor, errorText } from '../../../../shared/ui/Notify';
 
 const baseURL = import.meta.env.VITE_API_URL ||
   localStorage.getItem('nexgen_api_url') ||
@@ -11,6 +12,20 @@ const api = axios.create({
   timeout: 30000,
   headers: desktopKey ? { 'x-desktop-key': desktopKey } : undefined,
 });
+
+// Messages (shared/ui/Notify): "done" after saves that matter; an error when
+// NexGen cannot be reached or the server fails. Form errors stay on the form.
+api.interceptors.response.use(
+  (response) => {
+    const done = doneMessageFor(response.config.method, response.config.url);
+    if (done) notify('success', done);
+    return response;
+  },
+  (error) => {
+    if (!error?.response || error.response.status >= 500) notify('error', errorText(error));
+    return Promise.reject(error);
+  },
+);
 
 export function createOperationKey(prefix: string) {
   const random = globalThis.crypto?.randomUUID?.()

@@ -114,6 +114,16 @@ cache instead of recomputing; computing at event time and never updating.
 
 ## 4. Code conventions
 
+- **Messages on screen** (`shared/ui/Notify.tsx`, owner 2026-10-27: "just what
+  is needed"). A short green "done" comes from the API layer for writes listed
+  in its `DONE` table (open/close a shift, money in or out, invoices, notes,
+  corrections, deliveries, dips, staff, payroll); add a line there for a new
+  action of that kind, never for autosaves or where the page already shows
+  its own result. Lost connection and server failures show a red message
+  automatically; form errors stay on the form; a catch that would otherwise
+  fail silently calls `notify('error', errorText(err))`. No helper paragraphs:
+  only warnings, errors, confirmations and empty-list lines.
+
 - **Logging.** Every route handler logs its entry, and every catch logs the
   error, tagged `[file:functionOrRoute]`:
   `console.log('[shifts:close]', { shiftId, body })`,

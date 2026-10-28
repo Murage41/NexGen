@@ -73,3 +73,34 @@ export function OrderLevelField({
     </div>
   );
 }
+
+// Each tank's fuel now as a bar (home screens, everyone). Red when below its
+// order level, amber under a quarter full, teal otherwise.
+export function TankLevels({ tanks, onOpen }: { tanks: any[] | undefined; onOpen?: () => void }) {
+  if (!tanks || tanks.length === 0) return null;
+  return (
+    <button type="button" onClick={onOpen} className="w-full text-left bg-white rounded-xl p-4 shadow-sm mb-4">
+      <p className="font-semibold text-gray-700 mb-3">Tanks</p>
+      <div className="space-y-3">
+        {tanks.map((tank) => {
+          const capacity = Number(tank.capacity_litres || 0);
+          const now = Number(tank.stock_now_litres ?? tank.current_stock_litres ?? 0);
+          const share = capacity > 0 ? Math.max(0, Math.min(100, (now / capacity) * 100)) : 0;
+          const low = isLowStock(tank);
+          const colour = low ? 'bg-red-500' : share < 25 ? 'bg-amber-500' : 'bg-blue-600';
+          return (
+            <div key={tank.id}>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-gray-700">{tank.label}</span>
+                <span className={low ? 'font-semibold text-red-600' : 'text-gray-800'}>{litres(now)}{low ? ' · Low' : ''}</span>
+              </div>
+              <div className="h-2.5 rounded-full bg-gray-200 overflow-hidden">
+                <div className={`h-full ${colour}`} style={{ width: `${share}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </button>
+  );
+}

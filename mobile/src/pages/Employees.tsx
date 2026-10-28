@@ -492,7 +492,7 @@ function EmployeeRecord({ employee, onBack, onEdit, onPlan, onDeactivate }: {
         ))}
       </nav>
       {tab === 'pay' && (
-        <EmployeePayView key={`pay-${employee.id}`} load={() => getEmployeePay(Number(employee.id))} admin embedded actions={varianceActions} />
+        <EmployeePayView key={`pay-${employee.id}`} load={() => getEmployeePay(Number(employee.id))} admin embedded inRecord actions={varianceActions} />
       )}
       {tab === 'shortages' && (
         <EmployeeVariancesPage key={`short-${employee.id}`} employeeId={Number(employee.id)} load={getEmployeeVariances} actions={varianceActions} embedded

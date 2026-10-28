@@ -978,7 +978,6 @@ export default function TankStock() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Measured Litres *</label>
                 <input type="number" required step="0.01" min="0" value={dipForm.measured_litres} onChange={e => setDipForm({ ...dipForm, measured_litres: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg p-2" placeholder="0.00" />
-                <p className="text-xs text-gray-400 mt-1">Enter the physical dip stick measurement</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Variance Category</label>

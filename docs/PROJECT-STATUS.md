@@ -26,14 +26,24 @@ Last updated: 2026-10-26.
   employees. Clicking an employee opens their own page (desktop keeps the
   list on the left): owed, earned this month and pay due on top, tabs Pay,
   Shortages and Pay plan & details; Payroll's names open the same page. No
-  migration, no new packages. Installation not yet confirmed. Next: #22
-  (phase 3: one Customers page).
+  migration, no new packages. Installation not yet confirmed.
+- **Pending station update #22** (owner yes, 2026-10-28; branch
+  `update-22`): one desktop **Customers** list (credit and invoice customers,
+  owes, flags) opening each customer's own records; on-screen messages
+  (`shared/ui/Notify.tsx`: short "done" after saves that matter, errors for
+  lost connection/server failures and three silent phone saves); about 20
+  more explanation lines cut; description boxes back on credit sales and
+  shift expenses; My Pay redone (figures, short tables, colour); phone home
+  shows tank levels for everyone; attendants' Credits sorted by who owes
+  most, like the admin's (backend sort, `test:attendant-access`) (owner,
+  2026-10-28). No migration, no new packages. Phone Credits
+  and Invoice Customers stay separate for now.
 - **Offered, not chosen (2026-10-26):** closing reading boxes starting empty
   so every pump must be typed; the owner shipped #20 without it.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and updates #18 to #21.
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #22.
   Pushed 2026-10-26 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the

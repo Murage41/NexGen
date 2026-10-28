@@ -1118,6 +1118,8 @@ export default function ShiftRecord() {
               </>
             ) : (
               <>
+                <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
+                  placeholder="Details of the debt" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
                 <input type="number" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
                   placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
                 <button onClick={handleAddCredit}
@@ -1174,6 +1176,8 @@ export default function ShiftRecord() {
               <option value="">Select category...</option>
               {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            <input value={newExp.description} onChange={e => setNewExp({ ...newExp, description: e.target.value })}
+              placeholder="What it was for" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
             <input type="number" value={newExp.amount} onChange={e => setNewExp({ ...newExp, amount: e.target.value })}
               placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
             <button onClick={handleAddExpense}

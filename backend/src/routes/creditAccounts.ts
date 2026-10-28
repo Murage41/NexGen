@@ -121,7 +121,11 @@ router.get('/', async (req, res) => {
       }
     }
     if (!isAdmin) {
-      const visible = accounts.map(attendantView).sort((a: any, b: any) => a.name.localeCompare(b.name));
+      // Same order as the admin list: who owes most first; invoice customers
+      // (name only) after the money customers, by name.
+      const owed = (row: any) => (row.billing_mode === 'invoice' ? -1 : Number(row.outstanding_balance || 0));
+      const visible = accounts.map(attendantView)
+        .sort((a: any, b: any) => owed(b) - owed(a) || a.name.localeCompare(b.name));
       return res.json({ success: true, data: visible });
     }
     res.json({ success: true, data: accounts });

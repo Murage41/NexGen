@@ -594,7 +594,7 @@ function EmployeeRecord({ employee, employees, onOpen, onEdit, onPlan, onDeactiv
           ))}
         </nav>
         {tab === 'pay' && (
-          <EmployeePayView key={`pay-${employee.id}`} load={() => getEmployeePay(Number(employee.id))} admin embedded approval={desktopApproval} actions={varianceActions} />
+          <EmployeePayView key={`pay-${employee.id}`} load={() => getEmployeePay(Number(employee.id))} admin embedded inRecord approval={desktopApproval} actions={varianceActions} />
         )}
         {tab === 'shortages' && (
           <EmployeeVariancesPage key={`short-${employee.id}`} employeeId={Number(employee.id)} load={getEmployeeVariances} actions={varianceActions} approval={desktopApproval} embedded />

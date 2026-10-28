@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { InvoiceNoteForm, InvoiceNoteReverse } from '../../../../shared/ui/InvoiceNote';
 import {
   getCustomerInvoices,
@@ -124,7 +125,12 @@ export default function CustomerInvoices() {
   const [reversingNote, setReversingNote] = useState<any | null>(null);
 
   // Phase 3D — Payments
-  const [tab, setTab] = useState<'customers' | 'invoices' | 'payments'>('customers');
+  // Opened from the Customers page: a tab (?tab=) or one customer's records (?customer=ID).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState<'customers' | 'invoices' | 'payments'>(() => {
+    const wanted = searchParams.get('tab');
+    return wanted === 'invoices' || wanted === 'payments' ? wanted : 'customers';
+  });
   const [payments, setPayments] = useState<any[]>([]);
   const [showReceive, setShowReceive] = useState(false);
   const [payForm, setPayForm] = useState({
@@ -156,6 +162,14 @@ export default function CustomerInvoices() {
     loadInvoices();
     loadPayments();
   }, [statusFilter, accountFilter]);
+
+  useEffect(() => {
+    if (!monitor) return;
+    const wanted = Number(searchParams.get('customer'));
+    const target = wanted ? (monitor.customers || []).find((customer) => customer.id === wanted) : null;
+    if (target) setWorkspaceCustomer(target);
+    if (searchParams.has('customer') || searchParams.has('tab')) setSearchParams({}, { replace: true });
+  }, [monitor]);
 
   async function loadMonitor() {
     try {
@@ -1023,7 +1037,7 @@ export default function CustomerInvoices() {
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
                       <p className="font-semibold text-amber-800">Unallocated: {fmt(payResult.unallocated_amount)}</p>
                       <p className="text-xs text-amber-700 mt-0.5">
-                        The customer overpaid. The excess sits on the payment record and can be applied later when new invoices are issued.
+                        Overpaid: the extra is held for the next invoice.
                       </p>
                     </div>
                   )}

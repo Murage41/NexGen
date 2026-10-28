@@ -127,7 +127,7 @@ export default function Tanks() {
       {isAdmin && hasOpenShift && (
         <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
           <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
-          <p className="text-xs text-amber-700">A shift is currently open. A tank's name, fuel and size wait until it closes. Order levels can change any time.</p>
+          <p className="text-xs text-amber-700">A shift is open: only order levels can change now.</p>
         </div>
       )}
 

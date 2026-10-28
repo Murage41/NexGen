@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { notify, doneMessageFor, errorText } from '../../../shared/ui/Notify';
 
 // When running under Vite dev server (5173/5174), call the local backend on :3001.
 // Otherwise (served from backend directly, or via ngrok) use same origin.
@@ -34,10 +35,17 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Messages (shared/ui/Notify): "done" after saves that matter; an error when
+// NexGen cannot be reached or the server fails. Form errors stay on the form.
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const done = doneMessageFor(response.config.method, response.config.url);
+    if (done) notify('success', done);
+    return response;
+  },
   (error) => {
     const status = error?.response?.status;
+    if (!error?.response || status >= 500) notify('error', errorText(error));
     const url = String(error?.config?.url || '');
     if (status === 401 && !url.includes('/auth/login')) {
       localStorage.removeItem('nexgen_token');

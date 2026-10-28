@@ -81,7 +81,6 @@ export default function Dashboard() {
       )}
 
       {/* Row 1: Today's Summary */}
-      <p className="text-xs text-gray-500 mb-2">Current financial figures, including later corrections.</p>
       <div className="grid grid-cols-4 gap-4 mb-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
