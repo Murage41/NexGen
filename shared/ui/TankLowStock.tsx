@@ -68,7 +68,7 @@ export function OrderLevelField({
         placeholder="Empty: no warning"
       />
       <p className="mt-1 text-xs text-gray-500">
-        {hints.length > 0 ? hints.join(' · ') : 'Everyone sees a warning when the fuel in the tank falls below this.'}
+        {hints.join(' · ')}
       </p>
     </div>
   );

@@ -115,7 +115,7 @@ export default function Tanks() {
   return (
     <div className="pb-6">
       <PageHeader
-        title="Tanks & Stock"
+        title="Stock"
         back
         right={isAdmin ? (
           <button onClick={openAdd} className="p-2 bg-blue-600 text-white rounded-xl">
@@ -152,7 +152,8 @@ export default function Tanks() {
             const stock = Number(tank.stock_now_litres ?? tank.current_stock_litres ?? 0);
             const low = isLowStock(tank);
             return (
-              <div key={tank.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <div key={tank.id} onClick={isAdmin ? () => navigate(`/tanks/${tank.id}/dips`) : undefined}
+                className={`bg-white rounded-xl shadow-sm overflow-hidden ${isAdmin ? 'cursor-pointer active:bg-gray-50' : ''}`}>
                 <div className="p-4">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -168,7 +169,7 @@ export default function Tanks() {
                       {/* The order level can change during a shift; the rest waits. */}
                       {isAdmin && (
                         <button
-                          onClick={() => openEdit(tank)}
+                          onClick={(e) => { e.stopPropagation(); openEdit(tank); }}
                           className="p-2 text-gray-400 hover:text-blue-600 rounded-lg"
                         >
                           <Pencil size={16} />
@@ -176,12 +177,13 @@ export default function Tanks() {
                       )}
                       {isAdmin && !hasOpenShift && (
                         <button
-                          onClick={() => setDeleteTarget(tank)}
+                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(tank); }}
                           className="p-2 text-gray-400 hover:text-red-500 rounded-lg"
                         >
                           <Trash2 size={16} />
                         </button>
                       )}
+                      {isAdmin && <ChevronRight size={18} className="text-gray-300" />}
                     </div>
                   </div>
 
@@ -205,17 +207,6 @@ export default function Tanks() {
                     )}
                   </div>
                 </div>
-
-                {/* Dips link */}
-                {isAdmin && (
-                  <button
-                    onClick={() => navigate(`/tanks/${tank.id}/dips`)}
-                    className="w-full border-t border-gray-100 px-4 py-2.5 flex items-center justify-between text-sm text-blue-600 hover:bg-blue-50 active:bg-blue-50"
-                  >
-                    <span>View Dips & Stock History</span>
-                    <ChevronRight size={16} />
-                  </button>
-                )}
               </div>
             );
           })}
@@ -234,11 +225,10 @@ export default function Tanks() {
             )}
             <div className="space-y-3">
               <div>
-                <label className="text-sm text-gray-600 mb-1 block">Tank Label</label>
+                <label className="text-sm text-gray-600 mb-1 block">Name</label>
                 <input
                   disabled={!!editTank && hasOpenShift}
                   className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                  placeholder="e.g. Tank A — Petrol"
                   value={form.label}
                   onChange={e => setForm({ ...form, label: e.target.value })}
                 />

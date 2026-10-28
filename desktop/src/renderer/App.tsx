@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Gauge, Users, Fuel, DollarSign,
+  LayoutDashboard, Gauge, Users, DollarSign,
   CreditCard, Receipt, BarChart3, Settings, Droplets, Truck,
   WalletCards, ClipboardCheck,
 } from 'lucide-react';
@@ -39,10 +39,9 @@ const navGroups = [
     { to: '/payroll', icon: WalletCards, label: 'Payroll' },
   ] },
   { title: 'Stock', items: [
-    { to: '/tank-stock', icon: Droplets, label: 'Tank & Stock' },
-    { to: '/pumps', icon: Fuel, label: 'Pumps' },
-    { to: '/fuel-pricing', icon: DollarSign, label: 'Fuel Pricing' },
+    { to: '/tank-stock', icon: Droplets, label: 'Stock' },
     { to: '/suppliers', icon: Truck, label: 'Suppliers' },
+    { to: '/fuel-pricing', icon: DollarSign, label: 'Prices' },
   ] },
   { title: 'Office', items: [
     { to: '/reports', icon: BarChart3, label: 'Reports' },
@@ -104,7 +103,9 @@ export default function App() {
               end={to === '/'}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive || (to === '/customers' && /^\/(credit-accounts|customer-invoices)/.test(location.pathname))
+                  isActive
+                    || (to === '/customers' && /^\/(credit-accounts|customer-invoices)/.test(location.pathname))
+                    || (to === '/settings' && location.pathname.startsWith('/pumps'))
                     ? 'bg-blue-600 text-white font-semibold'
                     : 'text-gray-200 hover:bg-gray-800 hover:text-white'
                 }`
@@ -159,7 +160,9 @@ export default function App() {
             <Route path="/invoices" element={<Navigate to="/customer-invoices" replace />} />
             <Route path="/customer-invoices" element={<CustomerInvoices />} />
             <Route path="/suppliers" element={<Suppliers />} />
+            <Route path="/suppliers/:id" element={<Suppliers />} />
             <Route path="/tank-stock" element={<TankStock />} />
+            <Route path="/tank-stock/:id" element={<TankStock />} />
             <Route path="/corrections" element={<Corrections />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<SettingsPage />} />

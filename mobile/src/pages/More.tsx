@@ -16,7 +16,7 @@ const menuItems: MenuItem[] = [
   { label: 'Employees', path: '/employees', icon: Users, color: 'text-purple-500', bg: 'bg-purple-50', adminOnly: true },
   { label: 'Payroll', path: '/payroll', icon: WalletCards, color: 'text-emerald-600', bg: 'bg-emerald-50', adminOnly: true },
   { label: 'Pumps', path: '/pumps', icon: Fuel, color: 'text-blue-500', bg: 'bg-blue-50' },
-  { label: 'Tanks & Stock', path: '/tanks', icon: Droplets, color: 'text-cyan-500', bg: 'bg-cyan-50' },
+  { label: 'Stock', path: '/tanks', icon: Droplets, color: 'text-cyan-500', bg: 'bg-cyan-50' },
   { label: 'Fuel Deliveries', path: '/deliveries', icon: Truck, color: 'text-orange-500', bg: 'bg-orange-50', adminOnly: true },
   { label: 'Suppliers', path: '/suppliers', icon: Truck, color: 'text-teal-500', bg: 'bg-teal-50', adminOnly: true },
   { label: 'Invoice Customers', path: '/invoice-customers', icon: FileText, color: 'text-indigo-500', bg: 'bg-indigo-50', adminOnly: true },

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Truck, Pencil, Trash2, FileText, AlertTriangle } from 'lucide-react';
+import { Plus, Truck, Pencil, Trash2, FileText } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import {
   getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
@@ -243,7 +243,7 @@ export default function FuelDeliveries() {
                   <p className="text-sm text-gray-600 ml-6">{d.tank_label}</p>
                   {(d.supplier_name || d.supplier) && <p className="text-xs text-gray-400 ml-6">Supplier: {d.supplier_name || d.supplier}</p>}
                   <div className="flex items-center gap-2 ml-6 mt-1">
-                    <p className="text-xs text-gray-400">Invoice: {d.invoice_number || (isPendingPrice(d) ? 'Pending' : '-')}</p>
+                    {d.invoice_number && <p className="text-xs text-gray-400">Invoice: {d.invoice_number}</p>}
                     {isAdmin && d.invoice_file_path && (
                       <button
                         type="button"
@@ -297,11 +297,6 @@ export default function FuelDeliveries() {
                   value={form.date}
                   onChange={e => setForm({ ...form, date: e.target.value })}
                 />
-                {form.date < today() && (
-                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                    <AlertTriangle size={12} /> Backdated delivery will recompute stock and dips from this date.
-                  </p>
-                )}
               </div>
               <div>
                 <label className="text-sm text-gray-600 mb-1 block">Tank</label>
@@ -333,16 +328,15 @@ export default function FuelDeliveries() {
                 )}
               </div>
               <div>
-                <label className="text-sm text-gray-600 mb-1 block">Invoice Number (optional)</label>
+                <label className="text-sm text-gray-600 mb-1 block">Invoice number</label>
                 <input
                   className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Supplier invoice number"
                   value={form.invoice_number}
                   onChange={e => setForm({ ...form, invoice_number: e.target.value })}
                 />
               </div>
               <div>
-                <label className="text-sm text-gray-600 mb-1 block">Invoice PDF (optional)</label>
+                <label className="text-sm text-gray-600 mb-1 block">Invoice PDF</label>
                 <input
                   type="file"
                   accept="application/pdf,.pdf"
@@ -366,7 +360,7 @@ export default function FuelDeliveries() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-gray-600 mb-1 block">Cost per Litre (KES, optional)</label>
+                  <label className="text-sm text-gray-600 mb-1 block">Cost per litre (KES)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -386,11 +380,7 @@ export default function FuelDeliveries() {
               )}
               {form.litres && !form.cost_per_litre && (
                 <div className="bg-amber-50 rounded-xl p-3">
-                </div>
-              )}
-              {editDelivery && (
-                <div className="bg-amber-50 rounded-xl p-3">
-                  <p className="text-xs text-amber-700">⚠️ Editing a delivery will adjust the tank stock balance accordingly.</p>
+                  <p className="text-sm text-amber-700">No price: no supplier bill yet.</p>
                 </div>
               )}
               <button

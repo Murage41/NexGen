@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   getTanks, createTank, updateTank, deleteTank,
   getFuelDeliveries, createFuelDelivery, updateFuelDelivery, deleteFuelDelivery,
@@ -7,8 +8,8 @@ import {
   getCurrentShift, getTankLedger, getSuppliers, getTankAdjustments, createTankAdjustment,
   getTankDipTrends,
 } from '../services/api';
-import { Plus, Database, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, BookOpen, SlidersHorizontal, FileText } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Plus, X, Truck, Droplets, Pencil, Trash2, AlertTriangle, SlidersHorizontal, FileText } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { getKenyaDate } from '../utils/timezone';
 import { OrderLevelField, isLowStock } from '../../../../shared/ui/TankLowStock';
 
@@ -85,12 +86,12 @@ export default function TankStock() {
   const [suppliersList, setSuppliersList] = useState<any[]>([]);
   const [hasOpenShift, setHasOpenShift] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'tanks' | 'deliveries' | 'dips' | 'adjustments' | 'ledger' | 'trends'>('tanks');
+  const { id: tankParam } = useParams();
+  const navigate = useNavigate();
+  const [tankTab, setTankTab] = useState<'ledger' | 'dips' | 'deliveries' | 'adjustments'>('ledger');
   const [ledgerData, setLedgerData] = useState<any[]>([]);
-  const [ledgerTankId, setLedgerTankId] = useState<string>('');
-  const [adjustmentTankId, setAdjustmentTankId] = useState<string>('');
   const [trendsData, setTrendsData] = useState<any[]>([]);
-  const [trendsLoaded, setTrendsLoaded] = useState(false);
+  const selectedTank = tanks.find((t: any) => String(t.id) === tankParam) || null;
 
   // Modal state
   const [tankModal, setTankModal] = useState<{ open: boolean; editing: any | null }>({ open: false, editing: null });
@@ -112,9 +113,28 @@ export default function TankStock() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+    getTankDipTrends(6).then(res => setTrendsData(res.data.data || [])).catch(() => setTrendsData([]));
+  }, []);
+
+  useEffect(() => {
+    setTankTab('ledger');
+    if (tankParam) loadTank(tankParam);
+  }, [tankParam]);
+
+  // The open tank's ledger and adjustments (per tank on the server).
+  async function loadTank(tankId: string) {
+    const [ledgerRes, adjustmentsRes] = await Promise.all([
+      getTankLedger(parseInt(tankId)).catch(() => null),
+      getTankAdjustments(parseInt(tankId)).catch(() => null),
+    ]);
+    setLedgerData(ledgerRes?.data.data || []);
+    setAdjustments(adjustmentsRes?.data.data || []);
+  }
 
   async function loadData() {
+    if (tankParam) loadTank(tankParam);
     try {
       const [tanksRes, deliveriesRes, dipsRes, shiftRes, suppliersRes] = await Promise.all([
         getTanks(),
@@ -174,7 +194,8 @@ export default function TankStock() {
 
   // ── Deliveries ─────────────────────────────────────
   function openAddDelivery() {
-    setDeliveryForm({ ...emptyDeliveryForm, tank_id: tanks.length > 0 ? String(tanks[0].id) : '', date: today() });
+    const tank = selectedTank || tanks[0];
+    setDeliveryForm({ ...emptyDeliveryForm, tank_id: tank ? String(tank.id) : '', date: today() });
     setDeliveryInvoiceFile(null);
     setError('');
     setDeliveryWarnings([]);
@@ -247,8 +268,8 @@ export default function TankStock() {
   }
 
   // ── Dips ───────────────────────────────────────────
-  function openAddDip() {
-    setDipForm({ ...emptyDipForm, tank_id: tanks.length > 0 ? String(tanks[0].id) : '', dip_date: today() });
+  function openAddDip(tank?: any) {
+    setDipForm({ ...emptyDipForm, tank_id: tank ? String(tank.id) : tanks.length > 0 ? String(tanks[0].id) : '', dip_date: today() });
     setError('');
     setDipWarnings([]);
     setDipModal({ open: true, editing: null });
@@ -292,22 +313,9 @@ export default function TankStock() {
     } finally { setSaving(false); }
   }
 
-  // ── Delete ─────────────────────────────────────────
-  async function loadAdjustments(tankId: string) {
-    if (!tankId) {
-      setAdjustments([]);
-      return;
-    }
-    try {
-      const res = await getTankAdjustments(parseInt(tankId));
-      setAdjustments(res.data.data || []);
-    } catch {
-      setAdjustments([]);
-    }
-  }
-
+  // ── Adjustments ────────────────────────────────────
   function openAddAdjustment() {
-    const tankId = adjustmentTankId || (tanks.length > 0 ? String(tanks[0].id) : '');
+    const tankId = selectedTank ? String(selectedTank.id) : (tanks.length > 0 ? String(tanks[0].id) : '');
     setAdjustmentForm({ ...emptyAdjustmentForm, tank_id: tankId });
     setAdjustmentWarnings([]);
     setError('');
@@ -343,8 +351,7 @@ export default function TankStock() {
       const res = await createTankAdjustment(parseInt(adjustmentForm.tank_id), payload);
       setAdjustmentWarnings(res.data.warnings || []);
       setAdjustmentModal({ open: false });
-      setAdjustmentTankId(adjustmentForm.tank_id);
-      await Promise.all([loadData(), loadAdjustments(adjustmentForm.tank_id)]);
+      await loadData();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to post adjustment');
     } finally { setSaving(false); }
@@ -354,7 +361,7 @@ export default function TankStock() {
     if (!deleteConfirm) return;
     setSaving(true); setError('');
     try {
-      if (deleteConfirm.type === 'tank') await deleteTank(deleteConfirm.item.id);
+      if (deleteConfirm.type === 'tank') { await deleteTank(deleteConfirm.item.id); navigate('/tank-stock'); }
       if (deleteConfirm.type === 'delivery') await deleteFuelDelivery(deleteConfirm.item.id);
       if (deleteConfirm.type === 'dip') await deleteTankDip(deleteConfirm.item.id);
       setDeleteConfirm(null);
@@ -367,6 +374,7 @@ export default function TankStock() {
 
   const formatKES = (n: number) => `KES ${Number(n).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
   const fmt = (n: any) => Number(n || 0).toLocaleString('en-KE', { maximumFractionDigits: 0 });
+  const litres1 = (n: any) => Number(n || 0).toLocaleString('en-KE', { maximumFractionDigits: 1 });
   const isPendingDeliveryPrice = (d: any) => d.pricing_status === 'pending_price' || Number(d.cost_per_litre || 0) <= 0;
   const deliveryCostLabel = (d: any) => isPendingDeliveryPrice(d) ? 'Pending' : formatKES(Number(d.cost_per_litre));
   const deliveryTotalLabel = (d: any) => isPendingDeliveryPrice(d) ? 'Pending' : formatKES(Number(d.total_cost));
@@ -382,36 +390,78 @@ export default function TankStock() {
     : adjustmentChange < 0
       ? NEGATIVE_ADJUSTMENT_REASONS
       : [];
-  const adjustmentProjectedStock = selectedAdjustmentDip ? Number(selectedAdjustmentDip.measured_litres || 0) : null;
   const adjustmentNotesRequired = adjustmentForm.reason === 'other_gain' || adjustmentForm.reason === 'other_loss';
-
-  const TREND_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#0ea5e9'];
-  const trendMonths = Array.from(new Set(trendsData.flatMap((t: any) => t.series.map((s: any) => s.month)))).sort();
-  const trendChartData = trendMonths.map((month) => {
-    const row: any = { month };
-    for (const tank of trendsData) {
-      row[tank.tank_label] = tank.series.find((s: any) => s.month === month)?.cumulative_variance_pct ?? null;
-    }
-    return row;
-  });
 
   if (loading) return <div className="text-gray-500">Loading...</div>;
 
+  const tankTone = (tank: any) => {
+    const stock = Number(tank.stock_now_litres ?? tank.current_stock_litres ?? 0);
+    const pct = Math.min(100, Math.max(0, (stock / Math.max(1, Number(tank.capacity_litres || 1))) * 100));
+    return { stock, pct, low: isLowStock(tank), bar: isLowStock(tank) || stock < 0 ? 'bg-red-500' : pct <= 25 ? 'bg-amber-400' : 'bg-blue-600' };
+  };
+  const fuelPill = (fuel: string) => (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${fuel === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{fuel}</span>
+  );
+  const LEDGER_EVENTS: Record<string, string> = { delivery: 'Delivery', shift_sale: 'Shift sales', stock_adjustment: 'Adjustment', adjustment: 'Adjustment' };
+
+  const deliveriesTable = (rows: any[], showTank: boolean) => (
+    <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="text-left p-3 font-semibold text-gray-600">Date</th>
+            {showTank && <th className="text-left p-3 font-semibold text-gray-600">Tank</th>}
+            <th className="text-right p-3 font-semibold text-gray-600">Litres</th>
+            <th className="text-right p-3 font-semibold text-gray-600">Cost/L</th>
+            <th className="text-right p-3 font-semibold text-gray-600">Total</th>
+            <th className="text-left p-3 font-semibold text-gray-600">Supplier</th>
+            <th className="text-left p-3 font-semibold text-gray-600">Invoice</th>
+            <th className="p-3 w-20"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((d: any) => (
+            <tr key={d.id} className="border-t hover:bg-gray-50">
+              <td className="p-3 whitespace-nowrap">{fmtDate(d.date)}</td>
+              {showTank && <td className="p-3 font-medium">{d.tank_label || `Tank #${d.tank_id}`}</td>}
+              <td className="p-3 text-right tabular-nums">{fmt(d.litres)}</td>
+              <td className={`p-3 text-right tabular-nums whitespace-nowrap ${isPendingDeliveryPrice(d) ? 'text-amber-600 font-medium' : ''}`}>{deliveryCostLabel(d)}</td>
+              <td className={`p-3 text-right tabular-nums whitespace-nowrap font-medium ${isPendingDeliveryPrice(d) ? 'text-amber-600' : ''}`}>{deliveryTotalLabel(d)}</td>
+              <td className="p-3 text-gray-600">{d.supplier_name || d.supplier || '—'}</td>
+              <td className="p-3 text-gray-600">
+                <div className="flex items-center gap-2">
+                  {d.invoice_number && <span>{d.invoice_number}</span>}
+                  {d.invoice_file_path && (
+                    <button type="button" onClick={() => handleOpenDeliveryInvoice(d)} className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800">
+                      <FileText size={13} /> PDF
+                    </button>
+                  )}
+                </div>
+              </td>
+              <td className="p-3">
+                <div className="flex gap-1 justify-end">
+                  <button onClick={() => openEditDelivery(d)} className="p-1 text-gray-400 hover:text-blue-600 rounded" title="Edit delivery"><Pencil size={14} /></button>
+                  <button onClick={() => setDeleteConfirm({ type: 'delivery', item: d })} className="p-1 text-gray-400 hover:text-red-500 rounded" title="Delete delivery"><Trash2 size={14} /></button>
+                </div>
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 && <tr><td colSpan={showTank ? 8 : 7} className="p-8 text-center text-gray-400">No deliveries yet.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  // The tank on screen (from /tank-stock/:id); without one the page lists all deliveries.
+  const tankDips = selectedTank ? dips.filter((d: any) => d.tank_id === selectedTank.id) : [];
+  const tankDeliveries = selectedTank ? deliveries.filter((d: any) => d.tank_id === selectedTank.id) : deliveries;
+  const lastDip = tankDips[0];
+  const lastDipRaw = lastDip?.variance_litres != null ? Number(lastDip.variance_litres) : null;
+  const lastDipVariance = lastDipRaw != null && Math.abs(lastDipRaw) < 0.05 ? 0 : lastDipRaw;
+  const tankTrend = selectedTank ? (trendsData.find((t: any) => t.tank_id === selectedTank.id)?.series || []) : [];
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-          <Database size={24} /> Tank Stock Management
-        </h1>
-      </div>
-
-      {hasOpenShift && (
-        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2 text-sm text-amber-700">
-          <AlertTriangle size={16} className="flex-shrink-0" />
-          A shift is currently open. A tank's name, fuel and size, and recording dips, wait until it closes. Order levels can change any time.
-        </div>
-      )}
-
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-600">{error}</div>
       )}
@@ -428,391 +478,244 @@ export default function TankStock() {
         </div>
       )}
 
-      {/* Stock Summary Cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {tanks.map((tank: any) => {
-          // The fuel in the tank now: book stock less the open shift's sales.
-          const stock = Number(tank.stock_now_litres ?? tank.current_stock_litres ?? 0);
-          const book = parseFloat(tank.current_stock_litres || 0);
-          const capacity = parseFloat(tank.capacity_litres || 1);
-          const pct = Math.min(100, Math.max(0, (stock / capacity) * 100));
-          const low = isLowStock(tank);
-          return (
-            <div key={tank.id} className={`bg-white rounded-lg shadow p-4 border-l-4 ${low ? 'border-red-500' : tank.fuel_type === 'petrol' ? 'border-blue-500' : 'border-amber-500'}`}>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-gray-800">{tank.label}</h3>
-                <span className={`px-2 py-0.5 rounded text-xs font-medium ${tank.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                  {tank.fuel_type}
-                </span>
-              </div>
-              <p className="text-sm text-gray-500 mb-2">Capacity: {fmt(tank.capacity_litres)} L</p>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-500">In the tank now:</span>
-                <span className={`font-bold ${stock < 0 || low ? 'text-red-600' : 'text-gray-800'}`}>{fmt(stock)} L</span>
-              </div>
-              {Math.abs(book - stock) >= 0.01 && (
-                <p className="text-xs text-gray-400 mb-1">Book stock {fmt(book)} L, less the open shift's sales so far</p>
-              )}
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className={`h-2 rounded-full ${pct <= 15 ? 'bg-red-500' : pct <= 30 ? 'bg-amber-400' : tank.fuel_type === 'petrol' ? 'bg-blue-500' : 'bg-amber-500'}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-400 mt-1">{pct.toFixed(1)}% full</p>
-              <p className={`text-xs mt-1 ${low ? 'font-semibold text-red-600' : 'text-gray-500'}`}>
-                {tank.reorder_level_litres == null
-                  ? 'No order level set'
-                  : `${low ? 'Order more: below ' : 'Order more at '}${fmt(tank.reorder_level_litres)} L`}
-              </p>
-            </div>
-          );
-        })}
-        {tanks.length === 0 && (
-          <div className="col-span-3 bg-white rounded-lg shadow p-6 text-gray-400 text-center">
-            No tanks configured. Add a tank to get started.
-          </div>
-        )}
-      </div>
-
-      {/* Tabs + Actions */}
-      <div className="flex items-center justify-between border-b mb-4">
-        <div className="flex gap-1">
-          {(['tanks', 'deliveries', 'dips', 'adjustments', 'ledger', 'trends'] as const).map(tab => (
-            <button
-              key={tab}
-              onClick={() => {
-                setActiveTab(tab);
-                if (tab === 'trends' && !trendsLoaded) {
-                  setTrendsLoaded(true);
-                  getTankDipTrends(6).then(res => setTrendsData(res.data.data || [])).catch(() => setTrendsData([]));
-                }
-              }}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition capitalize ${activeTab === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-            >
-              {tab === 'dips' ? 'Tank Dips' : tab === 'ledger' ? 'Stock Ledger' : tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
-        </div>
-        <div>
-          {activeTab === 'tanks' && (
-            <button onClick={openAddTank} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm">
-              <Plus size={16} /> Add Tank
-            </button>
-          )}
-          {activeTab === 'deliveries' && (
+      <div className="flex gap-5 items-start">
+        {/* Tanks list */}
+        <aside className="w-64 shrink-0 bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 flex items-center justify-between gap-2 border-b border-gray-100">
+            <h1 className="text-xl font-bold text-gray-800">Stock</h1>
             <button
               onClick={openAddDelivery}
               disabled={tanks.length === 0 || suppliersList.length === 0}
-              title={suppliersList.length === 0 ? 'Create a supplier account first' : undefined}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50"
+              title={suppliersList.length === 0 ? 'Add a supplier first' : undefined}
+              className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 text-sm font-semibold disabled:opacity-50"
             >
-              <Truck size={16} /> Record Delivery
+              <Truck size={15} /> Record delivery
             </button>
-          )}
-          {activeTab === 'dips' && (
-            <button onClick={openAddDip} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm">
-              <Droplets size={16} /> Record Dip
-            </button>
-          )}
-          {activeTab === 'adjustments' && (
-            <button onClick={openAddAdjustment} disabled={hasOpenShift || tanks.length === 0} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50">
-              <SlidersHorizontal size={16} /> Post Adjustment
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Tanks Tab */}
-      {activeTab === 'tanks' && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-3 font-medium text-gray-600">Label</th>
-                <th className="text-left p-3 font-medium text-gray-600">Fuel Type</th>
-                <th className="text-right p-3 font-medium text-gray-600">Capacity (L)</th>
-                <th className="text-right p-3 font-medium text-gray-600">Book Stock (L)</th>
-                <th className="text-right p-3 font-medium text-gray-600">In Tank Now (L)</th>
-                <th className="text-right p-3 font-medium text-gray-600">Order At (L)</th>
-                <th className="p-3 font-medium text-gray-600 w-20"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {tanks.map((tank: any) => (
-                <tr key={tank.id} className="border-t hover:bg-gray-50">
-                  <td className="p-3 font-medium">{tank.label}</td>
-                  <td className="p-3">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${tank.fuel_type === 'petrol' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {tank.fuel_type}
-                    </span>
-                  </td>
-                  <td className="p-3 text-right">{fmt(tank.capacity_litres)}</td>
-                  <td className={`p-3 text-right font-medium ${parseFloat(tank.current_stock_litres) < 0 ? 'text-red-600' : ''}`}>
-                    {fmt(tank.current_stock_litres)}
-                  </td>
-                  <td className={`p-3 text-right font-medium ${isLowStock(tank) ? 'text-red-600' : ''}`}>{fmt(tank.stock_now_litres)}</td>
-                  <td className="p-3 text-right">{tank.reorder_level_litres == null ? '-' : fmt(tank.reorder_level_litres)}</td>
-                  <td className="p-3">
-                    <div className="flex gap-1 justify-end">
-                      {/* The order level can change during a shift; the rest waits. */}
-                      <button onClick={() => openEditTank(tank)} className="p-1 text-gray-400 hover:text-blue-600 rounded" title="Edit tank"><Pencil size={14} /></button>
-                      {!hasOpenShift && (
-                        <button onClick={() => setDeleteConfirm({ type: 'tank', item: tank })} className="p-1 text-gray-400 hover:text-red-500 rounded"><Trash2 size={14} /></button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {tanks.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-gray-400">No tanks configured.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Deliveries Tab */}
-      {activeTab === 'deliveries' && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          {suppliersList.length === 0 && (
-            <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 flex items-center gap-1">
-              <AlertTriangle size={12} /> Create a supplier account before recording fuel deliveries.
-            </div>
-          )}
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-3 font-medium text-gray-600">Date</th>
-                <th className="text-left p-3 font-medium text-gray-600">Tank</th>
-                <th className="text-right p-3 font-medium text-gray-600">Litres</th>
-                <th className="text-right p-3 font-medium text-gray-600">Cost/L</th>
-                <th className="text-right p-3 font-medium text-gray-600">Total Cost</th>
-                <th className="text-left p-3 font-medium text-gray-600">Supplier</th>
-                <th className="text-left p-3 font-medium text-gray-600">Invoice</th>
-                <th className="p-3 w-20"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {deliveries.map((d: any) => (
-                <tr key={d.id} className="border-t hover:bg-gray-50">
-                  <td className="p-3">{fmtDate(d.date)}</td>
-                  <td className="p-3 font-medium">{d.tank_label || `Tank #${d.tank_id}`}</td>
-                  <td className="p-3 text-right">{fmt(d.litres)}</td>
-                  <td className={`p-3 text-right ${isPendingDeliveryPrice(d) ? 'text-amber-600 font-medium' : ''}`}>{deliveryCostLabel(d)}</td>
-                  <td className={`p-3 text-right font-medium ${isPendingDeliveryPrice(d) ? 'text-amber-600' : ''}`}>{deliveryTotalLabel(d)}</td>
-                  <td className="p-3 text-gray-600">{d.supplier_name || d.supplier || '—'}</td>
-                  <td className="p-3 text-gray-600">
-                    <div className="flex items-center gap-2">
-                      <span>{d.invoice_number || (isPendingDeliveryPrice(d) ? 'Pending' : '-')}</span>
-                      {d.invoice_file_path && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDeliveryInvoice(d)}
-                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
-                        >
-                          <FileText size={13} /> PDF
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                  <td className="p-3">
-                    <div className="flex gap-1 justify-end">
-                      <button onClick={() => openEditDelivery(d)} className="p-1 text-gray-400 hover:text-blue-600 rounded"><Pencil size={14} /></button>
-                      <button onClick={() => setDeleteConfirm({ type: 'delivery', item: d })} className="p-1 text-gray-400 hover:text-red-500 rounded"><Trash2 size={14} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {deliveries.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">No deliveries recorded.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Dips Tab */}
-      {activeTab === 'dips' && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          {hasOpenShift && (
-            <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 flex items-center gap-1">
-              <AlertTriangle size={12} /> Book stock does not include current shift sales until the shift is closed.
-            </div>
-          )}
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-3 font-medium text-gray-600">Dip Date</th>
-                <th className="text-left p-3 font-medium text-gray-600">Tank</th>
-                <th className="text-right p-3 font-medium text-gray-600">Measured (L)</th>
-                <th className="text-right p-3 font-medium text-gray-600">Book Stock (L)</th>
-                <th className="text-right p-3 font-medium text-gray-600">Variance (L)</th>
-                <th className="text-left p-3 font-medium text-gray-600">Category</th>
-                <th className="text-left p-3 font-medium text-gray-600">Recorded At</th>
-                <th className="p-3 w-20"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {dips.map((d: any) => {
-                const v = d.variance_litres != null ? parseFloat(d.variance_litres) : null;
-                const cat = d.variance_category || 'unclassified';
-                return (
-                  <tr key={d.id} className={`border-t hover:bg-gray-50 ${v !== null && Math.abs(v) > 0 ? (v < -50 ? 'bg-red-50' : '') : ''}`}>
-                    <td className="p-3 font-medium">{fmtDate(d.dip_date)}</td>
-                    <td className="p-3">{d.tank_label || `Tank #${d.tank_id}`}</td>
-                    <td className="p-3 text-right font-medium">{fmt(d.measured_litres)}</td>
-                    <td className="p-3 text-right text-gray-500">{d.book_stock_at_dip != null ? fmt(d.book_stock_at_dip) : '—'}</td>
-                    <td className={`p-3 text-right font-medium ${v !== null ? (v < 0 ? 'text-red-600' : v > 0 ? 'text-green-600' : 'text-gray-600') : ''}`}>
-                      {v !== null ? `${v >= 0 ? '+' : ''}${v.toFixed(1)} L` : '—'}
-                    </td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${variancePillClass(cat)}`}>{varianceLabel(cat)}</span>
-                      {d.variance_notes && <p className="text-xs text-gray-400 mt-1 truncate max-w-[180px]" title={d.variance_notes}>{d.variance_notes}</p>}
-                    </td>
-                    <td className="p-3 text-gray-500 text-xs">{d.timestamp ? new Date(d.timestamp).toLocaleString('en-KE') : '—'}</td>
-                    <td className="p-3">
-                      <div className="flex gap-1 justify-end">
-                        <button onClick={() => openEditDip(d)} className="p-1 text-gray-400 hover:text-blue-600 rounded"><Pencil size={14} /></button>
-                        <button onClick={() => setDeleteConfirm({ type: 'dip', item: d })} className="p-1 text-gray-400 hover:text-red-500 rounded"><Trash2 size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {dips.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">No dip readings recorded.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Adjustments Tab */}
-      {activeTab === 'adjustments' && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          {hasOpenShift && (
-            <div className="p-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-700 flex items-center gap-1">
-              <AlertTriangle size={12} /> Stock adjustments are disabled while a shift is open.
-            </div>
-          )}
-          <div className="p-4 border-b flex items-center gap-3">
-            <select value={adjustmentTankId} onChange={async (e) => {
-              setAdjustmentTankId(e.target.value);
-              await loadAdjustments(e.target.value);
-            }} className="border border-gray-300 rounded-lg p-2 text-sm">
-              <option value="">Select a tank...</option>
-              {tanks.map((t: any) => <option key={t.id} value={t.id}>{t.label} ({t.fuel_type})</option>)}
-            </select>
           </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-3 font-medium text-gray-600">Date</th>
-                <th className="text-left p-3 font-medium text-gray-600">Reference Dip</th>
-                <th className="text-left p-3 font-medium text-gray-600">Reason</th>
-                <th className="text-right p-3 font-medium text-gray-600">Change (L)</th>
-                <th className="text-right p-3 font-medium text-gray-600">Cost/L</th>
-                <th className="text-left p-3 font-medium text-gray-600">Notes</th>
-                <th className="text-left p-3 font-medium text-gray-600">By</th>
-              </tr>
-            </thead>
-            <tbody>
-              {adjustments.map((a: any) => (
-                <tr key={a.id} className="border-t hover:bg-gray-50">
-                  <td className="p-3">{fmtDate(a.adjustment_date)}</td>
-                  <td className="p-3 text-xs text-gray-500">
-                    {a.reference_dip_id ? (
-                      <>
-                        <span className="font-medium text-gray-700">Dip #{a.reference_dip_id}</span>
-                        <span className="block">{fmt(a.reference_dip_litres)} L {a.reference_dip_date ? `on ${fmtDate(a.reference_dip_date)}` : ''}</span>
-                      </>
-                    ) : (
-                      'Legacy/manual'
-                    )}
-                  </td>
-                  <td className="p-3">{ADJUSTMENT_REASONS.find(r => r.value === a.reason)?.label || a.reason}</td>
-                  <td className={`p-3 text-right font-medium ${Number(a.litres_change) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {Number(a.litres_change) >= 0 ? '+' : ''}{Number(a.litres_change).toFixed(1)}
-                  </td>
-                  <td className="p-3 text-right">{a.cost_per_litre != null ? formatKES(Number(a.cost_per_litre)) : '—'}</td>
-                  <td className="p-3 text-xs text-gray-500">{a.notes}</td>
-                  <td className="p-3 text-xs text-gray-500">{a.created_by_name || 'System'}</td>
-                </tr>
-              ))}
-              {adjustments.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-gray-400">{adjustmentTankId ? 'No adjustments posted for this tank.' : 'Select a tank to view adjustments.'}</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
+          {tanks.map((tank: any) => {
+            const t = tankTone(tank);
+            const on = selectedTank?.id === tank.id;
+            return (
+              <button key={tank.id} type="button" onClick={() => navigate(`/tank-stock/${tank.id}`)}
+                className={`w-full block px-4 py-3 text-left text-sm border-b border-gray-100 ${on ? 'bg-blue-50 font-semibold text-blue-800' : 'hover:bg-gray-50'}`}>
+                <span className="flex justify-between gap-2">
+                  <span className="truncate">{tank.label}</span>
+                  <span className={`tabular-nums ${t.low || t.stock < 0 ? 'text-red-600 font-semibold' : ''}`}>{fmt(t.stock)} L</span>
+                </span>
+                <span className="mt-1.5 block h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                  <span className={`block h-full ${t.bar}`} style={{ width: `${t.pct}%` }} />
+                </span>
+              </button>
+            );
+          })}
+          <button type="button" onClick={() => navigate('/tank-stock')}
+            className={`w-full block px-4 py-3 text-left text-sm border-b border-gray-100 ${!selectedTank ? 'bg-blue-50 font-semibold text-blue-800' : 'text-blue-700 hover:bg-gray-50'}`}>
+            All deliveries
+          </button>
+          <button type="button" onClick={openAddTank} className="w-full flex items-center gap-1.5 px-4 py-3 text-left text-sm text-gray-500 hover:bg-gray-50">
+            <Plus size={14} /> Add tank
+          </button>
+        </aside>
 
-      {/* Ledger Tab */}
-      {activeTab === 'ledger' && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="p-4 border-b flex items-center gap-3">
-            <select value={ledgerTankId} onChange={async (e) => {
-              setLedgerTankId(e.target.value);
-              if (e.target.value) {
-                try { const res = await getTankLedger(parseInt(e.target.value)); setLedgerData(res.data.data || []); }
-                catch { setLedgerData([]); }
-              } else { setLedgerData([]); }
-            }} className="border border-gray-300 rounded-lg p-2 text-sm">
-              <option value="">Select a tank...</option>
-              {tanks.map((t: any) => <option key={t.id} value={t.id}>{t.label} ({t.fuel_type})</option>)}
-            </select>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-3 font-medium text-gray-600">Date/Time</th>
-                <th className="text-left p-3 font-medium text-gray-600">Event</th>
-                <th className="text-right p-3 font-medium text-gray-600">Change (L)</th>
-                <th className="text-right p-3 font-medium text-gray-600">Balance (L)</th>
-                <th className="text-left p-3 font-medium text-gray-600">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ledgerData.map((entry: any) => (
-                <tr key={entry.id} className="border-t hover:bg-gray-50">
-                  <td className="p-3 text-xs text-gray-500">{new Date(entry.created_at).toLocaleString('en-KE')}</td>
-                  <td className="p-3">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                      entry.event_type === 'delivery' ? 'bg-green-100 text-green-700' :
-                      entry.event_type === 'shift_sale' ? 'bg-red-100 text-red-700' :
-                      'bg-amber-100 text-amber-700'
-                    }`}>{entry.event_type.replace('_', ' ')}</span>
-                  </td>
-                  <td className={`p-3 text-right font-medium ${parseFloat(entry.litres_change) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {parseFloat(entry.litres_change) >= 0 ? '+' : ''}{parseFloat(entry.litres_change).toFixed(1)}
-                  </td>
-                  <td className="p-3 text-right font-medium">{parseFloat(entry.balance_after).toFixed(1)}</td>
-                  <td className="p-3 text-xs text-gray-500">{entry.notes || '—'}</td>
-                </tr>
-              ))}
-              {ledgerData.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-gray-400">{ledgerTankId ? 'No ledger entries yet.' : 'Select a tank to view its stock ledger.'}</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
+        <section className="flex-1 min-w-0 space-y-4">
+          {!selectedTank && (
+            <>
+              <h2 className="text-xl font-bold text-gray-800">All deliveries</h2>
+              {suppliersList.length === 0 && (
+                <p className="text-sm text-amber-700">Add a supplier before recording deliveries.</p>
+              )}
+              {deliveriesTable(deliveries, true)}
+            </>
+          )}
 
-      {/* Trends Tab */}
-      {activeTab === 'trends' && (
-        <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="text-lg font-semibold text-gray-700 mb-1">Monthly Cumulative Variance</h2>
-          {trendChartData.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">No dip history yet.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={320}>
-              <LineChart data={trendChartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" tickFormatter={(m: string) => new Date(`${m}-01`).toLocaleDateString('en-KE', { month: 'short', year: '2-digit' })} />
-                <YAxis tickFormatter={(v: number) => `${v}%`} />
-                <Tooltip
-                  formatter={(value: number) => [value == null ? '—' : `${value}%`, 'Cumulative variance']}
-                  labelFormatter={(m: string) => new Date(`${m}-01`).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })} />
-                <Legend />
-                {trendsData.map((tank: any, i: number) => (
-                  <Line key={tank.tank_id} type="monotone" dataKey={tank.tank_label} stroke={TREND_COLORS[i % TREND_COLORS.length]} connectNulls dot={{ r: 3 }} />
+          {selectedTank && (
+            <>
+              <header className="bg-white border border-gray-200 rounded-lg p-5 flex flex-wrap items-center gap-8">
+                <div className="flex-1 min-w-[200px]">
+                  <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">{selectedTank.label} {fuelPill(selectedTank.fuel_type)}</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">{fmt(selectedTank.capacity_litres)} L · {tankTone(selectedTank).pct.toFixed(0)}% full</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500">In the tank now</p>
+                  <p className={`text-xl font-bold tabular-nums ${tankTone(selectedTank).low ? 'text-red-600' : 'text-gray-800'}`}>{fmt(tankTone(selectedTank).stock)} L</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500">Order at</p>
+                  <p className="text-xl font-bold tabular-nums text-gray-800">{selectedTank.reorder_level_litres == null ? '—' : `${fmt(selectedTank.reorder_level_litres)} L`}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500">Last dip{lastDip ? ` · ${fmtDate(lastDip.dip_date)}` : ''}</p>
+                  <p className={`text-xl font-bold tabular-nums ${lastDipVariance == null ? 'text-gray-400' : lastDipVariance < 0 ? 'text-red-600' : lastDipVariance > 0 ? 'text-green-600' : 'text-gray-800'}`}>
+                    {lastDipVariance == null ? '—' : `${lastDipVariance > 0 ? '+' : ''}${litres1(lastDipVariance)} L`}
+                  </p>
+                </div>
+              </header>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {hasOpenShift
+                  ? <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-3 py-1 text-xs font-semibold text-amber-700"><AlertTriangle size={13} /> Shift open: adjustments wait until it closes</span>
+                  : <span />}
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => openAddDip(selectedTank)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold">
+                    <Droplets size={16} /> Record dip
+                  </button>
+                  <button onClick={openAddAdjustment} disabled={hasOpenShift} className="flex items-center gap-2 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50">
+                    <SlidersHorizontal size={16} /> Adjust
+                  </button>
+                  <button onClick={() => openEditTank(selectedTank)} className="flex items-center gap-2 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm">
+                    <Pencil size={16} /> Edit
+                  </button>
+                  {!hasOpenShift && (
+                    <button onClick={() => setDeleteConfirm({ type: 'tank', item: selectedTank })} className="p-2 text-gray-400 hover:text-red-500 rounded-lg" title="Delete tank"><Trash2 size={16} /></button>
+                  )}
+                </div>
+              </div>
+
+              <nav className="flex gap-1 border-b border-gray-200" aria-label="Tank sections">
+                {([['ledger', 'Stock ledger'], ['dips', 'Dips'], ['deliveries', 'Deliveries'], ['adjustments', 'Adjustments']] as const).map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => setTankTab(id)}
+                    className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px ${tankTab === id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'}`}>
+                    {label}
+                  </button>
                 ))}
-              </LineChart>
-            </ResponsiveContainer>
+              </nav>
+
+              {tankTab === 'ledger' && (
+                <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left p-3 font-semibold text-gray-600">When</th>
+                        <th className="text-left p-3 font-semibold text-gray-600">What</th>
+                        <th className="text-right p-3 font-semibold text-gray-600">Litres</th>
+                        <th className="text-right p-3 font-semibold text-gray-600">Balance</th>
+                        <th className="text-left p-3 font-semibold text-gray-600">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ledgerData.map((entry: any) => {
+                        const change = parseFloat(entry.litres_change);
+                        return (
+                          <tr key={entry.id} className="border-t hover:bg-gray-50">
+                            <td className="p-3 text-gray-500 whitespace-nowrap">{new Date(entry.created_at).toLocaleString('en-KE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+                            <td className="p-3 font-medium">{LEDGER_EVENTS[entry.event_type] || entry.event_type.replace(/_/g, ' ')}</td>
+                            <td className={`p-3 text-right tabular-nums font-medium ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>{change >= 0 ? '+' : ''}{litres1(change)}</td>
+                            <td className="p-3 text-right tabular-nums font-medium">{litres1(entry.balance_after)}</td>
+                            <td className="p-3 text-xs text-gray-500">{entry.notes || ''}</td>
+                          </tr>
+                        );
+                      })}
+                      {ledgerData.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-gray-400">Nothing yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {tankTab === 'dips' && (
+                <>
+                  {tankTrend.length > 1 && tankTrend.some((s: any) => Number(s.cumulative_variance_pct) !== 0) && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-4">
+                      <p className="text-sm font-semibold text-gray-700 mb-2">Variance by month (%)</p>
+                      <ResponsiveContainer width="100%" height={180}>
+                        <LineChart data={tankTrend}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="month" tickFormatter={(m: string) => new Date(`${m}-01`).toLocaleDateString('en-KE', { month: 'short' })} />
+                          <YAxis tickFormatter={(v: number) => `${v}%`} width={48} />
+                          <Tooltip
+                            formatter={(value: number) => [value == null ? '—' : `${value}%`, 'Variance']}
+                            labelFormatter={(m: string) => new Date(`${m}-01`).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' })} />
+                          <Line type="monotone" dataKey="cumulative_variance_pct" stroke="#087F8C" connectNulls dot={{ r: 3 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  {hasOpenShift && <p className="text-xs text-amber-700">Book stock leaves out the open shift's sales until it closes.</p>}
+                  <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="text-left p-3 font-semibold text-gray-600">Date</th>
+                          <th className="text-right p-3 font-semibold text-gray-600">Measured</th>
+                          <th className="text-right p-3 font-semibold text-gray-600">Book</th>
+                          <th className="text-right p-3 font-semibold text-gray-600">Difference</th>
+                          <th className="text-left p-3 font-semibold text-gray-600">Reason</th>
+                          <th className="p-3 w-20"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tankDips.map((d: any) => {
+                          const v = d.variance_litres != null ? parseFloat(d.variance_litres) : null;
+                          const cat = d.variance_category || 'unclassified';
+                          return (
+                            <tr key={d.id} className="border-t hover:bg-gray-50">
+                              <td className="p-3 font-medium">{fmtDate(d.dip_date)}</td>
+                              <td className="p-3 text-right tabular-nums font-medium">{fmt(d.measured_litres)}</td>
+                              <td className="p-3 text-right tabular-nums text-gray-500">{d.book_stock_at_dip != null ? fmt(d.book_stock_at_dip) : '—'}</td>
+                              <td className={`p-3 text-right tabular-nums font-medium ${v !== null && Math.abs(v) >= 0.05 ? (v < 0 ? 'text-red-600' : 'text-green-600') : 'text-gray-400'}`}>
+                                {v === null ? '—' : Math.abs(v) < 0.05 ? '0 L' : `${v > 0 ? '+' : ''}${v.toFixed(1)} L`}
+                              </td>
+                              <td className="p-3">
+                                {cat !== 'unclassified' && <span className={`px-2 py-0.5 rounded text-xs font-medium ${variancePillClass(cat)}`}>{varianceLabel(cat)}</span>}
+                                {d.variance_notes && <p className="text-xs text-gray-400 mt-1 truncate max-w-[220px]" title={d.variance_notes}>{d.variance_notes}</p>}
+                              </td>
+                              <td className="p-3">
+                                <div className="flex gap-1 justify-end">
+                                  <button onClick={() => openEditDip(d)} className="p-1 text-gray-400 hover:text-blue-600 rounded" title="Edit dip"><Pencil size={14} /></button>
+                                  <button onClick={() => setDeleteConfirm({ type: 'dip', item: d })} className="p-1 text-gray-400 hover:text-red-500 rounded" title="Delete dip"><Trash2 size={14} /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {tankDips.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-gray-400">No dips yet.</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {tankTab === 'deliveries' && deliveriesTable(tankDeliveries, false)}
+
+              {tankTab === 'adjustments' && (
+                <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left p-3 font-semibold text-gray-600">Date</th>
+                        <th className="text-left p-3 font-semibold text-gray-600">Dip</th>
+                        <th className="text-left p-3 font-semibold text-gray-600">Reason</th>
+                        <th className="text-right p-3 font-semibold text-gray-600">Litres</th>
+                        <th className="text-right p-3 font-semibold text-gray-600">Cost/L</th>
+                        <th className="text-left p-3 font-semibold text-gray-600">By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adjustments.map((a: any) => (
+                        <tr key={a.id} className="border-t hover:bg-gray-50">
+                          <td className="p-3">{fmtDate(a.adjustment_date)}</td>
+                          <td className="p-3 text-gray-500">
+                            {a.reference_dip_id ? `${fmt(a.reference_dip_litres)} L${a.reference_dip_date ? ` on ${fmtDate(a.reference_dip_date)}` : ''}` : '—'}
+                          </td>
+                          <td className="p-3">
+                            {ADJUSTMENT_REASONS.find(r => r.value === a.reason)?.label || a.reason}
+                            {a.notes && <p className="text-xs text-gray-400 mt-0.5">{a.notes}</p>}
+                          </td>
+                          <td className={`p-3 text-right tabular-nums font-medium ${Number(a.litres_change) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {Number(a.litres_change) >= 0 ? '+' : ''}{Number(a.litres_change).toFixed(1)}
+                          </td>
+                          <td className="p-3 text-right tabular-nums">{a.cost_per_litre != null ? formatKES(Number(a.cost_per_litre)) : '—'}</td>
+                          <td className="p-3 text-gray-500">{a.created_by_name || 'System'}</td>
+                        </tr>
+                      ))}
+                      {adjustments.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-gray-400">No adjustments.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
-        </div>
-      )}
+        </section>
+      </div>
 
       {/* Tank Modal */}
       {tankModal.open && (
@@ -825,12 +728,12 @@ export default function TankStock() {
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
             <form onSubmit={handleSaveTank} className="space-y-4">
               {lockTankDetails && (
-                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">A shift is open: only the order level can change now.</p>
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">Shift open: only the order level can change.</p>
               )}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Label *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
                 <input type="text" required disabled={lockTankDetails} value={tankForm.label} onChange={e => setTankForm({ ...tankForm, label: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" placeholder="e.g. Tank A — Petrol" />
+                  className="w-full border border-gray-300 rounded-lg p-2 disabled:bg-gray-100" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fuel Type *</label>
@@ -877,9 +780,6 @@ export default function TankStock() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
                 <input type="date" required max={today()} value={deliveryForm.date} onChange={e => setDeliveryForm({ ...deliveryForm, date: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg p-2" />
-                {deliveryForm.date < today() && (
-                  <p className="text-xs text-amber-600 mt-1">Backdated delivery: tank stock and dips from this date forward will be recomputed.</p>
-                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tank *</label>
@@ -908,7 +808,7 @@ export default function TankStock() {
               )}
               {deliveryForm.litres && !deliveryForm.cost_per_litre && (
                 <div className="bg-amber-50 rounded-lg p-2 text-sm text-amber-700">
-                  Litres will be added to stock now. Supplier cost and debt stay pending until the invoice price is entered.
+                  No price: no supplier bill yet.
                 </div>
               )}
               <div>
@@ -920,26 +820,20 @@ export default function TankStock() {
                   <option value="">-- Select Supplier --</option>
                   {suppliersList.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
-                {suppliersList.length === 0 && (
-                  <p className="text-xs text-red-500 mt-1">No suppliers are configured. Add the supplier account first.</p>
-                )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Number (optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Invoice number</label>
                 <input type="text" value={deliveryForm.invoice_number} onChange={e => setDeliveryForm({ ...deliveryForm, invoice_number: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2" placeholder="Supplier invoice number" />
+                  className="w-full border border-gray-300 rounded-lg p-2" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Invoice PDF (optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Invoice PDF</label>
                 <input type="file" accept="application/pdf,.pdf" onChange={e => setDeliveryInvoiceFile(e.target.files?.[0] || null)}
                   className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
                 {deliveryModal.editing?.invoice_file_name && !deliveryInvoiceFile && (
                   <p className="text-xs text-gray-500 mt-1">Current PDF: {deliveryModal.editing.invoice_file_name}</p>
                 )}
               </div>
-              {deliveryModal.editing && (
-                <p className="text-xs text-amber-600 bg-amber-50 rounded p-2">⚠️ Editing will adjust the tank's stock balance accordingly.</p>
-              )}
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setDeliveryModal({ open: false, editing: null })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
                 <button type="submit" disabled={saving || !deliveryForm.supplier_id} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
@@ -962,7 +856,7 @@ export default function TankStock() {
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
             <form onSubmit={handleSaveDip} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Dip Date *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
                 <input type="date" required max={today()} value={dipForm.dip_date} onChange={e => setDipForm({ ...dipForm, dip_date: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg p-2" />
               </div>
@@ -975,12 +869,12 @@ export default function TankStock() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Measured Litres *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Litres measured *</label>
                 <input type="number" required step="0.01" min="0" value={dipForm.measured_litres} onChange={e => setDipForm({ ...dipForm, measured_litres: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg p-2" placeholder="0.00" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Variance Category</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason for difference</label>
                 <select value={dipForm.variance_category} onChange={e => setDipForm({ ...dipForm, variance_category: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg p-2">
                   {VARIANCE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -1042,7 +936,6 @@ export default function TankStock() {
                     );
                   })}
                 </select>
-                <p className="text-xs text-gray-400 mt-1">Take a dip first. The adjustment amount is calculated from the selected dip.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Reason *</label>
@@ -1052,11 +945,6 @@ export default function TankStock() {
                   <option value="">-- Select reason --</option>
                   {adjustmentReasonOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
-                {selectedAdjustmentDip && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    Showing {adjustmentChange > 0 ? 'positive stock gain' : adjustmentChange < 0 ? 'negative stock loss' : 'no-change'} reasons only.
-                  </p>
-                )}
               </div>
               {selectedAdjustmentDip && (
                 <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm">
@@ -1072,24 +960,23 @@ export default function TankStock() {
                     <span>Adjustment to post</span>
                     <span>{adjustmentChange >= 0 ? '+' : ''}{adjustmentChange.toFixed(2)} L</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">After posting, book stock at this dip becomes {fmt(adjustmentProjectedStock)} L.</p>
                 </div>
               )}
               {adjustmentChange > 0 && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Cost per Litre (optional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cost per litre</label>
                   <input type="number" step="0.01" min="0" value={adjustmentForm.cost_per_litre}
                     onChange={e => setAdjustmentForm({ ...adjustmentForm, cost_per_litre: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="Leave blank to use latest batch cost" />
+                    className="w-full border border-gray-300 rounded-lg p-2" placeholder="Latest cost" />
                 </div>
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Reason Details {adjustmentNotesRequired ? '*' : '(optional)'}
+                  Details {adjustmentNotesRequired ? '*' : ''}
                 </label>
                 <textarea rows={3} required={adjustmentNotesRequired} value={adjustmentForm.notes}
                   onChange={e => setAdjustmentForm({ ...adjustmentForm, notes: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" placeholder="Physical dip result, incident reference, approval note..." />
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm" />
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setAdjustmentModal({ open: false })} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>

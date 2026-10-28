@@ -11,9 +11,9 @@ analyses stay in `D:\NexGen\.claude\plans\`.
 
 ## Now
 
-1. **Screens: workflow and look (plan below).** Step 0, the facelift of
-   every screen without moving anything (owner yes, 2026-10-26), is built on
-   branch `ui-facelift` as station update #18; then the phases below.
+1. **Screens: workflow and look (plan below).** Facelift #18, shifts #19/#20,
+   employees #21, customers list #22 are on the station. Phase 4 (stock and
+   suppliers, below) agreed 2026-10-28 and built as update #23. Then phase 5.
 2. **Edit history for open shifts.** Every save of readings, cash/M-Pesa and
    the wage on an open shift adds who, when, old and new value; a plain
    **History** list on the shift; no restore button (re-enter through the
@@ -21,13 +21,11 @@ analyses stay in `D:\NexGen\.claude\plans\`.
    (https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_158644279544.html).
    Today readings are overwritten; the 2026-10-23 recovery relied on leftover
    SQLite WAL frames.
-3. **Shift date.** Agreed 2026-10-24 (see the screen plan's decisions);
-   backend done on branch `shift-date`, screen field with phase 1.
-4. **The owner's other issues** (bugs from over-complication): each with due
+3. **The owner's other issues** (bugs from over-complication): each with due
    diligence before code.
-5. **B2 decision.** Money-only invoice credit/debit notes (`4f9b3b4`,
-   migration 056) are on `main` but held back from the station until the owner
-   decides after the screen review.
+
+Done: shift date on the open-shift form and B2 (money-only invoice notes)
+both went to the station with #18.
 
 ## Screen review plan (item 1)
 
@@ -124,6 +122,32 @@ that screen's phase.
   (openings continue its meter readings); calculated payroll still blocks
   its days. Backend built on branch `shift-date` (`shift_date` on
   `POST /shifts`, suite `test:shift-date`); the form field comes with phase 1.
+
+**Phase 4 proposal (stock and suppliers), 2026-10-28; mockups on the board
+above, row "Phase 4". Frontend only; no backend change.**
+- Found today (scratch copy, admin, desktop and phone): Tank & Stock shows
+  the tanks twice (cards and a table) and six station-wide tabs; Stock Ledger
+  and Adjustments make you pick a tank from a dropdown first. The supplier
+  page stacks every bill and every payment on one long page; its "Date"
+  column is really the due date and nothing marks late bills; bills don't
+  say which delivery (tank, litres) they are for. Phone: **Suppliers → +**
+  opens "Supplier not found" (`mobile/src/pages/Suppliers.tsx:32` goes to
+  `/suppliers/new`, which no page handles); every delivery prints
+  "Invoice: -".
+- **Stock (renamed from Tank & Stock):** tanks list on the left (level bar
+  coloured by order level), **All deliveries** under them, **Record
+  delivery** on top; a tank opens its own page: header (in the tank now,
+  % full, order level, last dip and its variance), buttons Record dip, Adjust,
+  Edit, and tabs **Stock ledger · Dips · Deliveries · Adjustments** (the
+  variance trend sits at the top of Dips). One short line when a shift is open.
+- **Supplier page:** header (we owe, overdue, paid this month), Record
+  payment, Edit; tabs **Bills · Payments · Details**. Bills show delivered
+  date, tank and litres (from the delivery), amount, still owed, due date with
+  "N days late" / "Due today", Unpaid first with an All filter.
+- **Prices** stays as it is. **Pumps** moves into Settings (set up once, not
+  daily work); the phone keeps Pumps under More for attendants.
+- Phone: the same tank and supplier pages with chips; Add supplier fixed;
+  empty invoice numbers hidden.
 
 ## Later, in order
 

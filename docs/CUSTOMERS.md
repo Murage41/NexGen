@@ -76,10 +76,6 @@ the customer. The customer list shows **Over limit** and **Overdue**.
   bill is voided.
 - Wrong customer: credit note on the wrong one, debit bill on the right one.
 
-The money-only notes above are update B2, which is on `main` but **not yet on
-the station**. Until it is installed, the station keeps its earlier invoice
-notes.
-
 ## Documents
 
 Invoices, debit notes and credit notes are PDFs with the station's logo and

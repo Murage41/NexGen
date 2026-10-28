@@ -1,7 +1,13 @@
 # Stock
 
-Tanks, deliveries, dips and the low-fuel warning. Desktop **Tank & Stock**,
-phone **More → Tanks & Stock**.
+Tanks, deliveries, dips, suppliers and the low-fuel warning. Desktop
+**Stock**, phone **More → Stock**.
+
+**Stock** lists the tanks with their level, then **All deliveries**. Click a
+tank for its own page: litres in the tank now, order level and last dip, the
+buttons **Record dip**, **Adjust** and **Edit**, and the tabs **Stock ledger**
+(every litre in and out), **Dips**, **Deliveries** and **Adjustments**.
+Adjustments wait while a shift is open.
 
 ## How stock moves
 
@@ -12,7 +18,7 @@ phone **More → Tanks & Stock**.
 
 ## Record a delivery
 
-**Tank & Stock → Deliveries → Record Fuel Delivery:** date, tank, litres,
+**Stock → Record delivery:** date, tank, litres,
 supplier, cost per litre, invoice number, and the supplier's PDF if you have
 it. If the tank would go over its size, NexGen saves it and warns you to check
 the litres and take a dip.
@@ -40,8 +46,17 @@ level.
 It is a calculation, not a measurement: losses not yet found by a dip make it
 late. It sends no messages and places no orders.
 
+## Suppliers
+
+Each priced delivery is a bill from its supplier, due after the supplier's
+payment days. **Suppliers** → a supplier shows what we owe, how much is
+overdue and what was paid this month, with tabs **Bills** (unpaid first; date
+delivered, tank, litres, still owed, "N days late"), **Payments** and
+**Details**. **Record payment** pays a chosen bill or the oldest bills first.
+
 ## Pumps and prices
 
-- Pumps are set per tank, with the meter rollover point of each display.
-- **Fuel Pricing** holds the pump prices. They are the owner's: EPRA's
+- **Settings → Pumps:** pumps are set per tank, with the meter rollover point
+  of each display.
+- **Prices** holds the pump prices. They are the owner's: EPRA's
   published price plus the station's transport cost.

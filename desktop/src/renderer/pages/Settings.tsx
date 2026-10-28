@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Settings2, Users, Fuel, Database, DollarSign, Save, HardDrive, ChevronRight, Gauge, ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Settings2, Fuel, Save, HardDrive, ChevronRight, Gauge, ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
 import { backupDatabase, getCurrentShift, getActivePumps, getOperationalSettings, runOperationalIntegrity, setOpeningReadings, updateOperationalSettings } from '../services/api';
 import StationProfileSettings from '../components/StationProfileSettings';
 
@@ -130,10 +130,7 @@ export default function Settings() {
   }
 
   const navItems = [
-    { label: 'Manage Pumps', icon: Fuel, path: '/pumps', description: 'Configure fuel pumps and nozzles' },
-    { label: 'Manage Tanks', icon: Database, path: '/tank-stock', description: 'Tank configuration and stock levels' },
-    { label: 'Manage Employees', icon: Users, path: '/employees', description: 'Employee details and wages' },
-    { label: 'Fuel Prices', icon: DollarSign, path: '/fuel-pricing', description: 'Set and manage fuel pricing' },
+    { label: 'Pumps', icon: Fuel, path: '/pumps', description: 'Pumps, nozzles and their tanks' },
   ];
 
   return (
@@ -227,7 +224,7 @@ export default function Settings() {
 
       {/* Quick Links */}
       <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-700 mb-4">Configuration</h2>
+        <h2 className="text-lg font-semibold text-gray-700 mb-4">Station setup</h2>
         <div className="grid grid-cols-2 gap-3">
           {navItems.map(item => (
             <button

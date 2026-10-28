@@ -4,14 +4,15 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-10-26.
+Last updated: 2026-10-28.
 
 ## Station PC
 
-- **Runs update #20**, installed 2026-10-26 (owner's report): `main` at
-  `90e3022` (phone shift page in tabs, cash count first in Money). Before it
-  #19 `c35dc4e` (desktop shift page in tabs, one-press close, "Record my
-  shift"). Latest migration `20261020_056_issued_invoice_money_notes` (#18).
+- **Runs update #22** (`cdca8fa`, see below), on top of #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
+  Shortages, Pay plan & details). Before it #20 `90e3022` (phone shift page
+  in tabs, cash count first in Money) and #19 `c35dc4e` (desktop shift page
+  in tabs, one-press close, "Record my shift"). Latest migration
+  `20261020_056_issued_invoice_money_notes` (#18).
 - **Update #18**, installed 2026-10-26 (owner's report): `main` at
   `cea43f3`, latest migration `20261020_056_issued_invoice_money_notes`.
   It brought: the facelift (new colours, grouped menu, navy phone header,
@@ -22,13 +23,8 @@ Last updated: 2026-10-26.
   drawer wage, `74ef1f7`) and #16 (A1–A4, B1).
 - The station is now on branch `main` and fast-forwards to pinned commits;
   it never `git pull`s.
-- **Pending station update #21** (owner yes, 2026-10-26): screen phase 2,
-  employees. Clicking an employee opens their own page (desktop keeps the
-  list on the left): owed, earned this month and pay due on top, tabs Pay,
-  Shortages and Pay plan & details; Payroll's names open the same page. No
-  migration, no new packages. Installation not yet confirmed.
-- **Pending station update #22** (owner yes, 2026-10-28; branch
-  `update-22`): one desktop **Customers** list (credit and invoice customers,
+- **Update #22 installed 2026-10-28** (owner's report; station now at
+  `cdca8fa`, no migration; next update number #23): one desktop **Customers** list (credit and invoice customers,
   owes, flags) opening each customer's own records; on-screen messages
   (`shared/ui/Notify.tsx`: short "done" after saves that matter, errors for
   lost connection/server failures and three silent phone saves); about 20
@@ -38,13 +34,21 @@ Last updated: 2026-10-26.
   most, like the admin's (backend sort, `test:attendant-access`) (owner,
   2026-10-28). No migration, no new packages. Phone Credits
   and Invoice Customers stay separate for now.
+- **Pending station update #23** (owner yes 2026-10-28; pushed to `main`
+  2026-10-28 in the commit after `cdca8fa`; next update number #24): screen
+  phase 4. Desktop **Stock** (tank list, tank page with
+  Stock ledger / Dips / Deliveries / Adjustments), supplier page with Bills
+  (delivery, still owed, days late) / Payments / Details, menu Stock ·
+  Suppliers · Prices with Pumps under Settings; phone tank and supplier pages
+  the same way, phone Add supplier fixed, last-dip figure now against the
+  book at that dip. Frontend only; no migration, no new packages.
 - **Offered, not chosen (2026-10-26):** closing reading boxes starting empty
   so every pump must be typed; the owner shipped #20 without it.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and updates #18 to #22.
-  Pushed 2026-10-26 (owner asked). No worktrees; work in
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #23.
+  Pushed 2026-10-28 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the
   abandoned office-corrections design; its migration 055 clashes with the
@@ -80,7 +84,8 @@ Last updated: 2026-10-26.
 
 ## Open items for the owner
 
-- **Screen proposal** awaiting approval (`ROADMAP.md` item 1).
+- **Screen phase 5** (dashboard, expenses, reports, corrections, settings):
+  proposal next (`ROADMAP.md` item 1).
 - **Public repository:** the tracked spreadsheets `NEXGENLTRS (Autosaved).xlsx`
   and `NexGen_Litres_Tracker.xlsx` may hold station figures; staff names remain
   in pushed migrations 018/023 and one-off `backend/scripts/repair_*`, `fix_*`
