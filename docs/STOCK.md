@@ -56,7 +56,7 @@ delivered, tank, litres, still owed, "N days late"), **Payments** and
 
 ## Pumps and prices
 
-- **Settings → Pumps:** pumps are set per tank, with the meter rollover point
+- **Settings → Pumps** tab: pumps are set per tank, with the meter rollover point
   of each display.
 - **Prices** holds the pump prices. They are the owner's: EPRA's
   published price plus the station's transport cost.

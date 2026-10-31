@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Receipt, TrendingUp, TrendingDown } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Trash2, Receipt } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { getExpenseSummary, getExpenseCategories, createExpense, deleteExpense } from '../services/api';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
@@ -21,7 +22,8 @@ export default function Expenses() {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ category: '', description: '', amount: '', date: getKenyaDate() });
   const [categories, setCategories] = useState<string[]>(PREDEFINED_CATEGORIES);
-  const [filterCat, setFilterCat] = useState('');
+  const [view, setView] = useState<'expenses' | 'wages'>('expenses');
+  const navigate = useNavigate();
 
   const fmt = (n: number) => `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
@@ -34,9 +36,7 @@ export default function Expenses() {
       const res = await getExpenseSummary({ from: monthStart, to: today });
       const data = res.data.data;
       setSummary(data);
-      let filtered = data.expenses || [];
-      if (filterCat) filtered = filtered.filter((e: any) => e.category === filterCat);
-      setExpenses(filtered);
+      setExpenses(data.expenses || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -76,14 +76,10 @@ export default function Expenses() {
     } catch (err: any) { console.error(err); notify('error', errorText(err, 'Expense not deleted.')); }
   }
 
-  function applyFilter(cat: string) {
-    setFilterCat(cat);
-    if (summary) {
-      let filtered = summary.expenses || [];
-      if (cat) filtered = filtered.filter((e: any) => e.category === cat);
-      setExpenses(filtered);
-    }
-  }
+  const rows = expenses.filter((e: any) => (view === 'wages' ? e.source === 'payroll' : e.source !== 'payroll'));
+  const bars = Object.entries(rows.reduce((m: Record<string, number>, e: any) => ({ ...m, [e.category]: (m[e.category] || 0) + e.amount }), {}))
+    .sort((a: any, b: any) => b[1] - a[1]) as Array<[string, number]>;
+  const chip = (on: boolean) => `px-4 py-2 rounded-full text-sm font-semibold border ${on ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`;
 
   if (loading) return <div className="text-center text-gray-400 mt-20">Loading...</div>;
 
@@ -99,108 +95,55 @@ export default function Expenses() {
         }
       />
 
-      {/* Summary Card */}
-      {summary && (
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <p className="text-xs text-gray-500">This Month's Expenses</p>
-              <p className="text-xl font-bold text-red-600">{fmt(summary.total_expenses)}</p>
-            </div>
-            {summary.change_percent !== null && (
-              <div className={`flex items-center gap-1 text-sm font-semibold ${summary.change_percent <= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {summary.change_percent <= 0 ? <TrendingDown size={16} /> : <TrendingUp size={16} />}
-                {Math.abs(summary.change_percent).toFixed(0)}%
-              </div>
-            )}
-          </div>
-          {summary.top_category && (
-            <p className="text-xs text-gray-400 mt-1">Top: {summary.top_category}</p>
-          )}
-          <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100">
-            <div>
-              <p className="text-xs text-gray-400">Operating</p>
-              <p className="text-sm font-semibold text-gray-700">{fmt(summary.total_operating_expenses)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Payroll</p>
-              <p className="text-sm font-semibold text-gray-700">{fmt(summary.total_payroll_expense)}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Category breakdown bars */}
-      {summary && summary.by_category && summary.by_category.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
-          <p className="text-xs font-semibold text-gray-500 mb-3 uppercase">By Category</p>
-          <div className="space-y-2">
-            {summary.by_category.slice(0, 5).map((cat: any, i: number) => (
-              <div key={i}>
-                <div className="flex justify-between text-xs mb-0.5">
-                  <span className="text-gray-700 font-medium">{cat.category}</span>
-                  <span className="text-gray-500">{fmt(cat.total)} ({cat.pct.toFixed(0)}%)</span>
-                </div>
-                <div className="w-full bg-gray-100 rounded-full h-2">
-                  <div className="bg-red-400 h-2 rounded-full" style={{ width: `${Math.min(cat.pct, 100)}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Category filter chips */}
-      <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
-        <button onClick={() => applyFilter('')}
-          className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${!filterCat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
-          All
-        </button>
-        <button onClick={() => applyFilter('Payroll')}
-          className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${filterCat === 'Payroll' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
-          Payroll
-        </button>
-        {categories.slice(0, 8).map(c => (
-          <button key={c} onClick={() => applyFilter(c)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${filterCat === c ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
-            {c}
-          </button>
-        ))}
+      <div className="flex gap-2 mb-4">
+        <button type="button" className={chip(view === 'expenses')} onClick={() => setView('expenses')}>Expenses</button>
+        <button type="button" className={chip(view === 'wages')} onClick={() => setView('wages')}>Wages</button>
       </div>
 
-      {/* Expenses list */}
-      {expenses.length === 0 ? (
+      {summary && (
+        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
+          <p className="text-xs text-gray-500">{view === 'wages' ? 'Wages this month' : 'This month'}</p>
+          <p className="text-xl font-bold text-gray-800 tabular-nums">{fmt(view === 'wages' ? summary.total_payroll_expense : summary.total_operating_expenses)}</p>
+          {bars.length > 0 && (
+            <div className="space-y-2 mt-3 pt-3 border-t border-gray-100">
+              {bars.slice(0, 5).map(([cat, amt]) => (
+                <div key={cat}>
+                  <div className="flex justify-between text-xs mb-0.5">
+                    <span className="text-gray-700 font-medium">{cat}</span>
+                    <span className="text-gray-500 tabular-nums">{fmt(amt)}</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-2">
+                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${(amt / bars[0][1]) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {rows.length === 0 ? (
         <div className="text-center mt-10">
           <Receipt size={48} className="mx-auto text-gray-300 mb-3" />
-          <p className="text-gray-400">No expenses found</p>
+          <p className="text-gray-400">Nothing this month</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {expenses.map((e: any, i: number) => (
-            <div key={`${e.source}-${e.id}-${i}`} className="bg-white rounded-xl p-4 shadow-sm flex items-center justify-between">
+        <div className="space-y-2">
+          {rows.map((e: any, i: number) => (
+            <div key={`${e.source}-${e.id}-${i}`}
+              onClick={e.source === 'shift' && e.shift_id && isAdmin ? () => navigate(`/shifts/${e.shift_id}`) : undefined}
+              className="bg-white rounded-xl p-4 shadow-sm flex items-center justify-between active:bg-gray-50">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{e.category}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    e.source === 'shift'
-                      ? 'bg-blue-50 text-blue-600'
-                      : e.source === 'payroll'
-                        ? 'bg-green-50 text-green-700'
-                        : 'bg-gray-50 text-gray-400'
-                  }`}>
-                    {e.source === 'shift' ? 'Shift' : e.source === 'payroll' ? 'Payroll' : 'General'}
-                  </span>
-                </div>
-                {e.description && <p className="text-sm text-gray-700 truncate">{e.description}</p>}
-                <p className="text-xs text-gray-400 mt-1">
-                  {new Date((e.date || e.created_at) + 'T12:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })}
-                  {e.employee_name && ` · ${e.employee_name}`}
+                <p className="text-sm font-semibold text-gray-800 truncate">{e.category}{view === 'expenses' && e.description ? ` · ${e.description}` : ''}</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {new Date((e.date || e.created_at) + 'T12:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })}
+                  {' · '}{e.source === 'shift' ? `Shift #${e.shift_id}` : e.source === 'payroll' ? (e.employee_name || '') : 'Office'}
                 </p>
               </div>
-              <div className="flex items-center gap-3 ml-3">
-                <span className="text-base font-bold text-gray-800">{fmt(e.amount)}</span>
+              <div className="flex items-center gap-2 ml-3">
+                <span className="text-base font-bold text-gray-800 tabular-nums">{fmt(e.amount)}</span>
                 {e.source === 'general' && isAdmin && (
-                  <button onClick={() => handleDelete(e)} className="p-2 text-gray-400 hover:text-red-500">
+                  <button onClick={() => handleDelete(e)} className="p-2 text-gray-400 hover:text-red-500" aria-label="Delete">
                     <Trash2 size={18} />
                   </button>
                 )}
@@ -215,7 +158,7 @@ export default function Expenses() {
         <div className="mobile-modal-overlay flex items-end" onClick={() => setShowAdd(false)}>
           <div className="mobile-bottom-sheet rounded-t-2xl p-6" onClick={e => e.stopPropagation()}>
             <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
-            <h2 className="text-lg font-bold text-gray-800 mb-4">Add Expense</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4">Add expense</h2>
             <div className="space-y-3">
               <div>
                 <label className="text-sm text-gray-600 mb-1 block">Category</label>
@@ -235,7 +178,6 @@ export default function Expenses() {
                 <label className="text-sm text-gray-600 mb-1 block">Description</label>
                 <input
                   className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Optional description"
                   value={form.description}
                   onChange={e => setForm({ ...form, description: e.target.value })}
                 />
@@ -260,7 +202,7 @@ export default function Expenses() {
               <button onClick={handleAdd}
                 disabled={submitting || !form.category || !form.amount}
                 className="w-full bg-blue-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50 mt-2">
-                {submitting ? 'Saving...' : 'Add Expense'}
+                {submitting ? 'Saving...' : 'Add expense'}
               </button>
             </div>
           </div>

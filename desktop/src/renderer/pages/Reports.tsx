@@ -1,20 +1,28 @@
 import { FundsCollectionSummary } from '../../../../shared/ui/ShiftFunds';
-import { BalanceMoveList } from '../../../../shared/ui/BalanceMove';
-import { useState, Fragment } from 'react';
+import { useState, useEffect, Fragment } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
   getStockReconciliationByShift, getDebtorAging, getCashFlow,
-  exportMonthlyReport, exportStockReconciliation, getShiftCorrections, getBalanceMoves,
+  exportMonthlyReport, exportStockReconciliation, getShifts, getDashboard,
 } from '../services/api';
-import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
+import { ShiftCorrectionList } from '../../../../shared/ui/ShiftCorrection';
 import { correctionTitle } from '../../../../shared/ui/Corrections';
 import {
-  BarChart3, Calendar, TrendingUp, TrendingDown, Minus,
+  ChevronLeft, ChevronRight, Calendar, TrendingUp, TrendingDown, Minus,
   Droplets, AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle, Download,
 } from 'lucide-react';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
-type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow' | 'corrections';
+type Tab = 'daily' | 'monthly' | 'stock' | 'debtors' | 'cashflow';
+const TABS: Tab[] = ['daily', 'monthly', 'stock', 'debtors', 'cashflow'];
+
+function addDays(date: string, by: number) {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() + by);
+  return d.toISOString().slice(0, 10);
+}
 
 function downloadBlob(response: any, fallbackFilename: string) {
   const disposition = String(response.headers['content-disposition'] || '');
@@ -28,11 +36,17 @@ function downloadBlob(response: any, fallbackFilename: string) {
 }
 
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState<Tab>('daily');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<Tab>(TABS.includes(searchParams.get('tab') as Tab) ? searchParams.get('tab') as Tab : 'daily');
+  const [week, setWeek] = useState<any[]>([]);
+  useEffect(() => {
+    const t = searchParams.get('tab') as Tab;
+    if (TABS.includes(t)) setActiveTab(t);
+  }, [searchParams]);
   const [loading, setLoading] = useState(false);
 
   // Daily
-  const [dailyDate, setDailyDate] = useState(getKenyaDate());
+  const [dailyDate, setDailyDate] = useState('');
   const [dailyData, setDailyData] = useState<any>(null);
 
   // Monthly
@@ -57,11 +71,18 @@ export default function Reports() {
   const [cfTo, setCfTo] = useState(getKenyaDate());
   const [cfData, setCfData] = useState<any>(null);
 
-  // Corrections to closed shifts
-  const [corrFrom, setCorrFrom] = useState(getKenyaMonth() + '-01');
-  const [corrTo, setCorrTo] = useState(getKenyaDate());
-  const [corrData, setCorrData] = useState<any[] | null>(null);
-  const [moveData, setMoveData] = useState<any[] | null>(null);
+  // Day opens on the last day with a closed shift; every tab loads as soon as it is shown.
+  useEffect(() => {
+    getShifts({ status: 'closed', limit: 1 })
+      .then((res) => setDailyDate(res.data.data?.shifts?.[0]?.shift_date || getKenyaDate()))
+      .catch(() => setDailyDate(getKenyaDate()));
+    getDashboard().then((res) => setWeek(res.data.data?.weekly_sales || [])).catch(() => {});
+  }, []);
+  useEffect(() => { if (activeTab === 'daily' && dailyDate) loadDailyReport(); }, [activeTab, dailyDate]);
+  useEffect(() => { if (activeTab === 'monthly' && monthlyMonth) loadMonthlyReport(); }, [activeTab, monthlyMonth]);
+  useEffect(() => { if (activeTab === 'stock' && stockDate) loadStockReport(); }, [activeTab, stockDate]);
+  useEffect(() => { if (activeTab === 'debtors') loadDebtorReport(); }, [activeTab]);
+  useEffect(() => { if (activeTab === 'cashflow' && cfFrom && cfTo) loadCashFlow(); }, [activeTab, cfFrom, cfTo]);
 
   async function loadDailyReport() {
     setLoading(true);
@@ -118,22 +139,6 @@ export default function Reports() {
     catch { setDebtorData(null); }
     finally { setLoading(false); }
   }
-  async function loadCorrections() {
-    setLoading(true);
-    try {
-      const [corr, moves] = await Promise.all([
-        getShiftCorrections({ from: corrFrom, to: corrTo }),
-        getBalanceMoves({ from: corrFrom, to: corrTo }),
-      ]);
-      setCorrData(corr.data.data || []);
-      setMoveData(moves.data.data || []);
-    } catch (err: any) {
-      console.error('[Reports:loadCorrections]', err.response?.data || err.message);
-      setCorrData(null);
-      setMoveData(null);
-    }
-    finally { setLoading(false); }
-  }
   async function loadCashFlow() {
     setLoading(true);
     try { const res = await getCashFlow({ from: cfFrom, to: cfTo }); setCfData(res.data.data); }
@@ -159,19 +164,16 @@ export default function Reports() {
   }
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'daily', label: 'Daily Report' },
-    { key: 'monthly', label: 'Monthly Report' },
-    { key: 'stock', label: 'Stock Reconciliation' },
-    { key: 'debtors', label: 'Debtor Aging' },
-    { key: 'cashflow', label: 'Cash Flow' },
-    { key: 'corrections', label: 'Mistakes Fixed' },
+    { key: 'daily', label: 'Day' },
+    { key: 'monthly', label: 'Month' },
+    { key: 'stock', label: 'Stock' },
+    { key: 'debtors', label: 'Who owes us' },
+    { key: 'cashflow', label: 'Cash flow' },
   ];
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2 mb-6">
-        <BarChart3 size={24} /> Reports
-      </h1>
+      <h1 className="text-2xl font-bold text-gray-800 mb-4">Reports</h1>
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b overflow-x-auto">
@@ -192,13 +194,23 @@ export default function Reports() {
       {activeTab === 'daily' && (
         <div>
           <div className="bg-white rounded-lg shadow p-4 mb-6 flex items-center gap-4">
-            <Calendar size={18} className="text-gray-400" />
-            <input type="date" value={dailyDate} onChange={e => setDailyDate(e.target.value)}
+            <button type="button" aria-label="Previous day" onClick={() => setDailyDate(addDays(dailyDate, -1))} className="p-2 rounded border border-gray-300"><ChevronLeft size={16} /></button>
+            <input type="date" value={dailyDate} max={getKenyaDate()} onChange={e => e.target.value && setDailyDate(e.target.value)}
               className="border border-gray-300 rounded-lg p-2 text-sm" />
-            <button onClick={loadDailyReport} disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm">
-              {loading ? 'Loading...' : 'Generate Report'}
-            </button>
+            <button type="button" aria-label="Next day" disabled={dailyDate >= getKenyaDate()} onClick={() => setDailyDate(addDays(dailyDate, 1))} className="p-2 rounded border border-gray-300 disabled:opacity-40"><ChevronRight size={16} /></button>
+            {loading && <span className="text-sm text-gray-400">Loading...</span>}
+            {week.some((d: any) => Number(d.amount) > 0) && (
+              <div className="ml-auto w-72 h-16" title="Sales, last 7 days">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={week}>
+                    <XAxis dataKey="date" tickFormatter={(d: string) => new Date(d).toLocaleDateString('en-KE', { weekday: 'narrow' })} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis hide />
+                    <Tooltip formatter={(v: number) => [kes(v), 'Sales']} labelFormatter={(d: string) => new Date(d).toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' })} />
+                    <Bar dataKey="amount" fill="#087F8C" radius={[3, 3, 0, 0]} onClick={(d: any) => d?.date && setDailyDate(String(d.date).slice(0, 10))} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
           {dailyData && (
@@ -480,7 +492,7 @@ export default function Reports() {
 
           {!dailyData && !loading && (
             <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
-              Select a date and click "Generate Report".
+              {loading ? 'Loading...' : 'Nothing for this date.'}
             </div>
           )}
         </div>
@@ -493,10 +505,7 @@ export default function Reports() {
             <Calendar size={18} className="text-gray-400" />
             <input type="month" value={monthlyMonth} onChange={e => setMonthlyMonth(e.target.value)}
               className="border border-gray-300 rounded-lg p-2 text-sm" />
-            <button onClick={loadMonthlyReport} disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm">
-              {loading ? 'Loading...' : 'Generate Report'}
-            </button>
+            {loading && <span className="text-sm text-gray-400">Loading...</span>}
             <button onClick={handleExportMonthly} disabled={exportingMonthly}
               className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 text-sm">
               <Download size={16} /> {exportingMonthly ? 'Exporting...' : 'Export CSV'}
@@ -821,7 +830,7 @@ export default function Reports() {
 
           {!monthlyData && !loading && (
             <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
-              Select a month and click "Generate Report".
+              {loading ? 'Loading...' : 'Nothing for this month.'}
             </div>
           )}
         </div>
@@ -834,10 +843,7 @@ export default function Reports() {
             <Calendar size={18} className="text-gray-400" />
             <input type="date" value={stockDate} onChange={e => setStockDate(e.target.value)}
               className="border border-gray-300 rounded-lg p-2 text-sm" />
-            <button onClick={loadStockReport} disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm">
-              {loading ? 'Loading...' : 'Generate Report'}
-            </button>
+            {loading && <span className="text-sm text-gray-400">Loading...</span>}
             <button onClick={handleExportStock} disabled={exportingStock}
               title={`Exports every day in ${stockDate.slice(0, 7)}, not just the selected date`}
               className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 text-sm">
@@ -927,7 +933,7 @@ export default function Reports() {
 
           {!stockData && !loading && (
             <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
-              Select a date and click "Generate Report".
+              {loading ? 'Loading...' : 'Nothing for this date.'}
             </div>
           )}
         </div>
@@ -936,12 +942,6 @@ export default function Reports() {
       {/* ── DEBTOR AGING ───────────────────────────────────────── */}
       {activeTab === 'debtors' && (
         <div>
-          <div className="bg-white rounded-lg shadow p-4 mb-6 flex items-center gap-4">
-            <button onClick={loadDebtorReport} disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm">
-              {loading ? 'Loading...' : 'Load Debtor Aging Report'}
-            </button>
-          </div>
 
           {debtorData && (
             <div className="space-y-6">
@@ -1016,7 +1016,7 @@ export default function Reports() {
 
           {!debtorData && !loading && (
             <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
-              Click "Load Debtor Aging Report" to view outstanding credit accounts.
+              {loading ? 'Loading...' : 'Nobody owes anything.'}
             </div>
           )}
         </div>
@@ -1037,10 +1037,7 @@ export default function Reports() {
               <input type="date" value={cfTo} onChange={e => setCfTo(e.target.value)}
                 className="border border-gray-300 rounded-lg p-2 text-sm" />
             </div>
-            <button onClick={loadCashFlow} disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm mt-4">
-              {loading ? 'Loading...' : 'Generate Report'}
-            </button>
+            {loading && <span className="text-sm text-gray-400 mt-4">Loading...</span>}
           </div>
 
           {cfData && (
@@ -1048,15 +1045,15 @@ export default function Reports() {
               {/* Net cash flow card */}
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1 flex items-center gap-1"><ArrowDownCircle size={14} className="text-green-500" /> Total Inflows</p>
+                  <p className="text-xs text-gray-500 mb-1 flex items-center gap-1"><ArrowDownCircle size={14} className="text-green-500" /> Money in</p>
                   <p className="text-xl font-bold text-green-600">{kes(cfData.inflows.total)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1 flex items-center gap-1"><ArrowUpCircle size={14} className="text-red-500" /> Total Outflows</p>
+                  <p className="text-xs text-gray-500 mb-1 flex items-center gap-1"><ArrowUpCircle size={14} className="text-red-500" /> Money out</p>
                   <p className="text-xl font-bold text-red-600">{kes(cfData.outflows.total)}</p>
                 </div>
                 <div className="bg-white rounded-lg shadow p-4">
-                  <p className="text-xs text-gray-500 mb-1">Net Cash Flow</p>
+                  <p className="text-xs text-gray-500 mb-1">Money in less money out</p>
                   <p className={`text-xl font-bold ${cfData.net_cash_flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {kes(cfData.net_cash_flow)}
                   </p>
@@ -1067,26 +1064,26 @@ export default function Reports() {
                 {/* Inflows */}
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <div className="p-4 border-b bg-green-50">
-                    <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wide">Cash Inflows</h2>
+                    <h2 className="text-sm font-semibold text-green-700 uppercase tracking-wide">Money in</h2>
                   </div>
                   <div className="py-2">
-                    <PnLRow label={cfData.has_balance_shifts ? 'Legacy shifts: cash received' : 'Shift Cash Received'} value={cfData.inflows.shift_cash_received ?? cfData.inflows.cash_sales} color="text-green-600" />
-                    <PnLRow label={cfData.has_balance_shifts ? 'Legacy shifts: M-Pesa received' : 'Shift M-Pesa Received'} value={cfData.inflows.shift_mpesa_received ?? cfData.inflows.mpesa_sales} color="text-green-600" />
-                    {cfData.has_balance_shifts && <PnLRow label="Balance shifts: collections inferred from counted funds" value={cfData.inflows.balance_shift_inferred_collections} color="text-green-600" />}
+                    <PnLRow label={cfData.has_balance_shifts ? 'Cash from older shifts' : 'Cash from shifts'} value={cfData.inflows.shift_cash_received ?? cfData.inflows.cash_sales} color="text-green-600" />
+                    <PnLRow label={cfData.has_balance_shifts ? 'M-Pesa from older shifts' : 'M-Pesa from shifts'} value={cfData.inflows.shift_mpesa_received ?? cfData.inflows.mpesa_sales} color="text-green-600" />
+                    {cfData.has_balance_shifts && <PnLRow label="Taken in shifts (from the counts)" value={cfData.inflows.balance_shift_inferred_collections} color="text-green-600" />}
                     {Number(cfData.inflows.owner_funding || 0) > 0 && <PnLRow label="Owner funding" value={cfData.inflows.owner_funding} color="text-green-600" />}
-                    <PnLRow label="Direct Money-Credit Payments" value={cfData.inflows.credit_payments_received} color="text-green-600" />
-                    <PnLRow label="Invoice Payments (net)" value={cfData.inflows.invoice_payments_received} color="text-green-600" />
-                    <PnLRow label="Direct Employee Debt Repayments" value={cfData.inflows.employee_debt_repayments || 0} color="text-green-600" />
-                    <PnLRow label="Shift Payouts Added Back" value={cfData.inflows.drawer_payouts_already_reflected || 0} color="text-green-600" />
-                    {Number(cfData.uncounted_balance_shifts || 0) > 0 && <p className="text-xs text-amber-700 px-4 py-2">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
-                    <PnLRow label="Total Inflows" value={cfData.inflows.total} bold border color="text-green-700" />
+                    <PnLRow label="Customer payments" value={cfData.inflows.credit_payments_received} color="text-green-600" />
+                    <PnLRow label="Invoice payments" value={cfData.inflows.invoice_payments_received} color="text-green-600" />
+                    <PnLRow label="Shortage repayments" value={cfData.inflows.employee_debt_repayments || 0} color="text-green-600" />
+                    <PnLRow label="Paid from the till (also in money out)" value={cfData.inflows.drawer_payouts_already_reflected || 0} color="text-green-600" />
+                    {Number(cfData.uncounted_balance_shifts || 0) > 0 && <p className="text-xs text-amber-700 px-4 py-2">Some shifts have no closing count yet.</p>}
+                    <PnLRow label="Total in" value={cfData.inflows.total} bold border color="text-green-700" />
                   </div>
                 </div>
 
                 {/* Outflows */}
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <div className="p-4 border-b bg-red-50">
-                    <h2 className="text-sm font-semibold text-red-700 uppercase tracking-wide">Cash Outflows</h2>
+                    <h2 className="text-sm font-semibold text-red-700 uppercase tracking-wide">Money out</h2>
                   </div>
                   <div className="py-2">
                     <PnLRow label="Fuel Purchases" value={cfData.outflows.fuel_purchases} color="text-red-600" />
@@ -1100,7 +1097,7 @@ export default function Reports() {
                       <PnLRow label="Refunds to Customers" value={cfData.outflows.customer_refunds} color="text-red-600" />
                     )}
                     {Number(cfData.outflows.owner_drawings || 0) > 0 && <PnLRow label="Owner drawings" value={cfData.outflows.owner_drawings} color="text-red-600" />}
-                    <PnLRow label="Total Outflows" value={cfData.outflows.total} bold border color="text-red-700" />
+                    <PnLRow label="Total out" value={cfData.outflows.total} bold border color="text-red-700" />
                   </div>
                 </div>
               </div>
@@ -1119,90 +1116,12 @@ export default function Reports() {
 
           {!cfData && !loading && (
             <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
-              Select a date range and click "Generate Report".
+              {loading ? 'Loading...' : 'Nothing for these dates.'}
             </div>
           )}
         </div>
       )}
 
-      {/* ── CORRECTIONS ───────────────────────────────────────────── */}
-      {activeTab === 'corrections' && (
-        <div>
-          <div className="bg-white rounded-lg shadow p-4 mb-6 flex items-center gap-4 flex-wrap">
-            <Calendar size={18} className="text-gray-400" />
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">From</label>
-              <input type="date" value={corrFrom} onChange={e => setCorrFrom(e.target.value)}
-                className="border border-gray-300 rounded-lg p-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">To</label>
-              <input type="date" value={corrTo} onChange={e => setCorrTo(e.target.value)}
-                className="border border-gray-300 rounded-lg p-2 text-sm" />
-            </div>
-            <button onClick={loadCorrections} disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm mt-4">
-              {loading ? 'Loading...' : 'Show'}
-            </button>
-          </div>
-          {moveData && (
-            <div className="bg-white rounded-lg shadow overflow-hidden mb-6">
-              <div className="p-4 border-b bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Balance Moves</h2>
-              </div>
-              {moveData.length === 0 ? (
-                <p className="p-6 text-center text-gray-400 text-sm">No balance moves in this period.</p>
-              ) : (
-                <div className="p-4"><BalanceMoveList moves={moveData} /></div>
-              )}
-            </div>
-          )}
-          {corrData && corrData.length > 0 && (
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="p-4 border-b bg-gray-50">
-                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Corrections to Closed Shifts (before September 23, 2026)</h2>
-              </div>
-              {corrData.length === 0 ? (
-                <p className="p-6 text-center text-gray-400 text-sm">No corrections in this period.</p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="text-left p-3 font-medium text-gray-600">Posted</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Shift</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Correction</th>
-                      <th className="text-right p-3 font-medium text-gray-600">Shift balance</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Approved by</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {corrData.map((c: any) => (
-                      <tr key={c.id} className="border-t align-top">
-                        <td className="p-3 whitespace-nowrap">{c.posting_date || String(c.created_at || '').slice(0, 10)}<p className="text-xs text-gray-400">#{c.id}</p></td>
-                        <td className="p-3 whitespace-nowrap">#{c.shift_id} · {c.shift_date}<p className="text-xs text-gray-400">{c.attendant_name}</p></td>
-                        <td className="p-3">
-                          {c.reason}
-                          {c.note && <p className="text-xs text-gray-500">Note: {c.note}</p>}
-                          {c.details?.attendant?.debt_added > 0 && <p className="text-xs text-red-600">{c.details.attendant.name} charged {kes(c.details.attendant.debt_added)}</p>}
-                          {c.details?.attendant?.debt_reduced > 0 && <p className="text-xs text-green-700">{c.details.attendant.name}'s shortage reduced by {kes(c.details.attendant.debt_reduced)}</p>}
-                          {c.details?.attendant?.refund_owed > 0 && <p className="text-xs text-amber-700">{kes(c.details.attendant.refund_owed)} owed back to {c.details.attendant.name}</p>}
-                        </td>
-                        <td className="p-3 text-right font-mono whitespace-nowrap">{describeShiftBalance(c.variance_before)} → {describeShiftBalance(c.variance_after)}</td>
-                        <td className="p-3">{c.approved_by_name || '—'}{c.recorded_by_name && c.recorded_by_name !== c.approved_by_name && <p className="text-xs text-gray-400">recorded by {c.recorded_by_name}</p>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
-          {!corrData && !loading && (
-            <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">
-              Select a date range and click "Show Corrections".
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

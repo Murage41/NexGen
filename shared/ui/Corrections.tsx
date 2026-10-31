@@ -542,7 +542,7 @@ export function OriginalCloseFigures({ figures, formatMoney }: {
     ...(balances ? [
       ['opening_cash_amount', 'Opening cash float'], ['opening_mpesa_amount', 'Opening M-Pesa balance'],
       ['funds_added_total', 'Money added'], ['funds_removed_total', 'Money removed'],
-      ['expected_closing', 'Expected closing funds'], ['inferred_collections', 'Collections inferred from counted funds'], ['expected_receipts', 'Expected receipts'],
+      ['expected_closing', 'Expected closing funds'], ['inferred_collections', 'Taken in (from the counts)'], ['expected_receipts', 'Expected receipts'],
     ] : []),
     ['total_cash', balances ? 'Cash remaining' : 'Cash'], ['total_mpesa', balances ? 'M-Pesa balance at close' : 'M-Pesa'], ['total_credit_receipts', 'Debt receipts included'],
     ['total_credits', 'Credits issued'], ['total_invoice_consumption', 'Invoice fuel value'],

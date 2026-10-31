@@ -90,8 +90,8 @@ Shortages**): **Move balance** of KES ___ **from** one account (owes less)
 A move between a customer and an employee must name that employee's shift.
 The Station is only ever on a customer's side: an employee's shortage is never
 written off. No money moves; a wrong move is fixed by moving it back. Moves
-show on statements, the shift's **Mistakes fixed later** and **Reports →
-Mistakes Fixed**.
+show on statements, the shift's **Mistakes fixed later** and the **Corrections**
+list (one list for corrections, balance moves and older fixes).
 
 ## What corrections don't do
 

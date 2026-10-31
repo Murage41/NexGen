@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Settings2, Fuel, Save, HardDrive, ChevronRight, Gauge, ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Save, HardDrive, Gauge, ShieldCheck, AlertTriangle, CheckCircle } from 'lucide-react';
 import { backupDatabase, getCurrentShift, getActivePumps, getOperationalSettings, runOperationalIntegrity, setOpeningReadings, updateOperationalSettings } from '../services/api';
 import StationProfileSettings from '../components/StationProfileSettings';
+import Pumps from './Pumps';
+
+type SettingsTab = 'profile' | 'pumps' | 'system';
 
 const numVal = (v: number | string | null | undefined) => {
   if (v === null || v === undefined || v === '' || Number(v) === 0) return '';
@@ -11,7 +14,9 @@ const numVal = (v: number | string | null | undefined) => {
 const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) => e.target.select();
 
 export default function Settings() {
-  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: SettingsTab = (['profile', 'pumps', 'system'] as const).includes(searchParams.get('tab') as SettingsTab)
+    ? searchParams.get('tab') as SettingsTab : 'profile';
 
   // Opening readings state
   const [currentShift, setCurrentShift] = useState<any>(null);
@@ -129,18 +134,22 @@ export default function Settings() {
     }
   }
 
-  const navItems = [
-    { label: 'Pumps', icon: Fuel, path: '/pumps', description: 'Pumps, nozzles and their tanks' },
-  ];
+  const tabs: Array<[SettingsTab, string]> = [['profile', 'Station profile'], ['pumps', 'Pumps'], ['system', 'System']];
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2 mb-6">
-        <Settings2 size={24} /> Settings
-      </h1>
+      <h1 className="text-2xl font-bold text-gray-800 mb-4">Settings</h1>
+      <div className="flex gap-1 mb-6 border-b">
+        {tabs.map(([key, label]) => (
+          <button key={key} type="button" onClick={() => setSearchParams({ tab: key })}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px ${tab === key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
 
       {/* Set Opening Readings — Admin Only */}
-      {!loadingReadings && currentShift && readings.length > 0 && (
+      {tab === 'pumps' && !loadingReadings && currentShift && readings.length > 0 && (
         <div className="bg-white rounded-lg shadow p-6 mb-6 border-l-4 border-orange-400">
           <h2 className="text-lg font-semibold text-gray-700 mb-1 flex items-center gap-2">
             <Gauge size={20} className="text-orange-500" /> Set Opening Readings
@@ -220,35 +229,16 @@ export default function Settings() {
       )}
 
       {/* Station profile: what documents show (M8) */}
-      <StationProfileSettings />
+      {tab === 'profile' && <StationProfileSettings />}
 
-      {/* Quick Links */}
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-700 mb-4">Station setup</h2>
-        <div className="grid grid-cols-2 gap-3">
-          {navItems.map(item => (
-            <button
-              key={item.path}
-              onClick={() => navigate(item.path)}
-              className="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-blue-300 transition text-left group"
-            >
-              <item.icon size={20} className="text-blue-600" />
-              <div className="flex-1">
-                <p className="font-medium text-gray-800">{item.label}</p>
-                <p className="text-sm text-gray-500">{item.description}</p>
-              </div>
-              <ChevronRight size={18} className="text-gray-300 group-hover:text-blue-500 transition" />
-            </button>
-          ))}
-        </div>
-      </div>
+      {tab === 'pumps' && <Pumps />}
 
-      {/* Data Management */}
+      {/* System: warning, check, backup */}
+      {tab === 'system' && (
       <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold text-gray-700 mb-4">Data Management</h2>
         <div className="grid grid-cols-3 gap-6">
           <div>
-            <p className="text-sm font-medium text-gray-700 mb-2">Open Shift Warning</p>
+            <p className="text-sm font-medium text-gray-700 mb-2">Warn when a shift is open longer than</p>
             <div className="flex items-center gap-2">
               <input type="number" min="1" max="720" step="1" value={staleShiftHours} onChange={(event) => setStaleShiftHours(event.target.value)} className="w-24 border border-gray-300 rounded-md px-3 py-2" aria-label="Open shift warning hours" />
               <span className="text-sm text-gray-500">hours</span>
@@ -259,9 +249,9 @@ export default function Settings() {
           </div>
 
           <div>
-            <p className="text-sm font-medium text-gray-700 mb-2">System Check</p>
+            <p className="text-sm font-medium text-gray-700 mb-2">System check</p>
             <button type="button" onClick={handleIntegrityCheck} disabled={checkingIntegrity} className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 disabled:opacity-50">
-              <ShieldCheck size={18} /> {checkingIntegrity ? 'Checking...' : 'Run Check'}
+              <ShieldCheck size={18} /> {checkingIntegrity ? 'Checking...' : 'Run check'}
             </button>
             {integrityReport && (
               <div className={`mt-2 flex items-start gap-2 text-xs ${integrityReport.ok ? 'text-green-700' : 'text-red-700'}`}>
@@ -277,19 +267,20 @@ export default function Settings() {
           </div>
 
           <div>
-            <p className="text-sm font-medium text-gray-700 mb-2">Database Backup</p>
+            <p className="text-sm font-medium text-gray-700 mb-2">Backup</p>
             <button
               onClick={handleBackup}
               disabled={backingUp}
               className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 transition disabled:opacity-50"
             >
-              <HardDrive size={18} /> {backingUp ? 'Creating...' : 'Create Backup'}
+              <HardDrive size={18} /> {backingUp ? 'Creating...' : 'Back up now'}
             </button>
             {backupMessage && <p className="text-xs text-green-700 mt-1 break-all">{backupMessage}</p>}
             {backupError && <p className="text-xs text-red-600 mt-1">{backupError}</p>}
           </div>
         </div>
       </div>
+      )}
 
     </div>
   );

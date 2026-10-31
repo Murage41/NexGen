@@ -20,7 +20,7 @@ const menuItems: MenuItem[] = [
   { label: 'Fuel Deliveries', path: '/deliveries', icon: Truck, color: 'text-orange-500', bg: 'bg-orange-50', adminOnly: true },
   { label: 'Suppliers', path: '/suppliers', icon: Truck, color: 'text-teal-500', bg: 'bg-teal-50', adminOnly: true },
   { label: 'Invoice Customers', path: '/invoice-customers', icon: FileText, color: 'text-indigo-500', bg: 'bg-indigo-50', adminOnly: true },
-  { label: 'Fuel Pricing', path: '/prices', icon: DollarSign, color: 'text-green-500', bg: 'bg-green-50' },
+  { label: 'Prices', path: '/prices', icon: DollarSign, color: 'text-green-500', bg: 'bg-green-50' },
   { label: 'Reports', path: '/reports', icon: BarChart3, color: 'text-amber-500', bg: 'bg-amber-50', adminOnly: true },
 ];
 

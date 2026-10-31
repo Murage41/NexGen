@@ -11,7 +11,6 @@ import { Notifications } from '../../../shared/ui/Notify';
 import Dashboard from './pages/Dashboard';
 import Shifts from './pages/Shifts';
 import ShiftDetail from './pages/ShiftDetail';
-import Pumps from './pages/Pumps';
 import Employees from './pages/Employees';
 import FuelPricing from './pages/FuelPricing';
 import Expenses from './pages/Expenses';
@@ -29,7 +28,7 @@ import Customers from './pages/Customers';
 
 const navGroups = [
   { title: 'Daily', items: [
-    { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { to: '/', icon: LayoutDashboard, label: 'Today' },
     { to: '/shifts', icon: Gauge, label: 'Shifts' },
     { to: '/expenses', icon: Receipt, label: 'Expenses' },
     { to: '/customers', icon: CreditCard, label: 'Customers' },
@@ -146,7 +145,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/shifts" element={<Shifts />} />
             <Route path="/shifts/:id" element={<ShiftDetail />} />
-            <Route path="/pumps" element={<Pumps />} />
+            <Route path="/pumps" element={<Navigate to="/settings?tab=pumps" replace />} />
             <Route path="/employees" element={<Employees />} />
             <Route path="/employees/:id" element={<Employees />} />
             <Route path="/employees/:id/variances" element={<EmployeeVariances />} />

@@ -10,7 +10,7 @@ export function fundsSummaryRows(data: any): Array<{ label: string; amount: numb
     ['Counted cash remaining', data.closing_cash], ['Counted M-Pesa balance', data.closing_mpesa],
     ['Money added', data.funds_added_total], ['Money removed', data.funds_removed_total],
     ['Expected closing funds', data.expected_closing], ['Expected receipts', data.expected_receipts],
-    ['Collections inferred from counted funds', data.inferred_collections],
+    ['Taken in (from the counts)', data.inferred_collections],
   ].map(([label, amount]) => ({ label: String(label), amount: Number(amount || 0) }));
 }
 
@@ -26,7 +26,7 @@ export function FundsCollectionSummary({ data, formatMoney }: { data: any; forma
         ))}
       </dl>
       {Number(data.uncounted_balance_shifts || 0) > 0 && (
-        <p className="text-xs text-amber-700">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>
+        <p className="text-xs text-amber-700">Some shifts have no closing count yet.</p>
       )}
     </div>
   );
@@ -107,7 +107,7 @@ export function ShiftFunds({ shift, formatMoney, canManage = false, onCorrect, r
       <div className="flex justify-between gap-3"><dt className="text-gray-500">Business payments from shift funds</dt><dd>{formatMoney(reconciliation.payouts)}</dd></div>
       <div className="flex justify-between gap-3 font-medium"><dt>Expected closing funds</dt><dd>{formatMoney(reconciliation.expectedClosing)}</dd></div>
       <div className="flex justify-between gap-3"><dt className="text-gray-500">Expected receipts</dt><dd>{formatMoney(reconciliation.expectedReceipts)}</dd></div>
-      {reconciliation.inferredCollections !== undefined && <div className="flex justify-between gap-3"><dt className="text-gray-500">Collections inferred from counted funds</dt><dd>{formatMoney(reconciliation.inferredCollections)}</dd></div>}
+      {reconciliation.inferredCollections !== undefined && <div className="flex justify-between gap-3"><dt className="text-gray-500">Taken in (from the counts)</dt><dd>{formatMoney(reconciliation.inferredCollections)}</dd></div>}
     </dl>}
     {canManage && <button type="button" className="text-sm rounded-lg border border-gray-300 px-3 py-2 text-gray-700" onClick={() => onCorrect?.('shift_funds')}>Money added / removed</button>}
     {movements.length > 0 && <details><summary className="text-xs text-blue-700 cursor-pointer">Money movement history ({movements.length})</summary><ul className="mt-2 space-y-2 text-xs">

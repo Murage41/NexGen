@@ -1,10 +1,11 @@
-import { FundsCollectionSummary } from '../../../shared/ui/ShiftFunds';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDashboard, getTanks } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { LowStockNotice, TankLevels } from '../../../shared/ui/TankLowStock';
-import { Fuel, DollarSign, TrendingUp, TrendingDown, Gauge, LogOut, AlertTriangle } from 'lucide-react';
+import { Gauge, LogOut, AlertTriangle, ChevronRight } from 'lucide-react';
+
+const since = (iso: string) => new Date(iso).toLocaleString('en-KE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 export default function Dashboard() {
   const { user, isAdmin, logout } = useAuth();
@@ -28,7 +29,7 @@ export default function Dashboard() {
     }
   }
 
-  const fmt = (n: number) => `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const fmt = (n: number) => `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
   if (loading) return <div className="text-center text-gray-400 mt-20">Loading...</div>;
 
@@ -48,15 +49,13 @@ export default function Dashboard() {
       {/* Tanks below their order level: everyone sees it (M7). */}
       <LowStockNotice tanks={data?.low_stock} onOpen={() => navigate('/tanks')} />
 
-      {data?.stale_open_shifts?.count > 0 && (
-        <button type="button" onClick={() => navigate(isAdmin ? '/shifts?status=open&sort=oldest' : '/my-shift')} className="mb-4 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900">
-          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-          <span>
-            <strong>{data.stale_open_shifts.count} open shift{data.stale_open_shifts.count === 1 ? '' : 's'} need review.</strong>
-            {' '}Older than {data.stale_open_shifts.stale_shift_hours} hours.
-          </span>
+      {data?.stale_open_shifts?.shifts?.map((s: any) => (
+        <button key={s.id} type="button" onClick={() => navigate(isAdmin ? `/shifts/${s.id}` : '/my-shift')} className="mb-4 flex w-full items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900">
+          <AlertTriangle size={18} className="shrink-0" />
+          <span className="flex-1"><strong>Shift #{s.id} open since {since(s.start_time)}</strong>{isAdmin && s.employee_name ? ` · ${s.employee_name}` : ''}</span>
+          <ChevronRight size={16} />
         </button>
-      )}
+      ))}
 
       {/* Current Shift */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
@@ -68,7 +67,7 @@ export default function Dashboard() {
           <div>
             <p className="text-sm text-gray-600">{data.current_shift.employee_name}</p>
             <p className="text-xs text-gray-400">
-              Started {new Date(data.current_shift.start_time).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}
+              Since {since(data.current_shift.start_time)}
             </p>
             {/* Attendants open only their own shift. */}
             {(isAdmin || Number(data.current_shift.employee_id) === Number(user?.id)) && (
@@ -91,62 +90,24 @@ export default function Dashboard() {
       {/* Today's figures are the owner's; attendants get the shift status only. */}
       {isAdmin && data && (
         <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="bg-white rounded-xl p-3 shadow-sm">
-            <DollarSign size={20} className="text-green-500 mb-1" />
-            <p className="text-xs text-gray-500">Today's Sales</p>
-            <p className="text-lg font-bold text-gray-800">{fmt(data.today_sales)}</p>
-          </div>
-          <div className="bg-white rounded-xl p-3 shadow-sm">
-            {data.today_variance >= 0
-              ? <TrendingUp size={20} className="text-green-500 mb-1" />
-              : <TrendingDown size={20} className="text-red-500 mb-1" />
-            }
-            <p className="text-xs text-gray-500">Variance</p>
-            <p className={`text-lg font-bold ${data.today_variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {data.today_variance >= 0 ? '+' : ''}{fmt(data.today_variance)}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl p-3 shadow-sm">
-            <Fuel size={20} className="text-blue-500 mb-1" />
-            <p className="text-xs text-gray-500">Petrol</p>
-            <p className="text-lg font-bold text-gray-800">{data.today_litres_petrol.toFixed(0)} L</p>
-          </div>
-          <div className="bg-white rounded-xl p-3 shadow-sm">
-            <Fuel size={20} className="text-amber-500 mb-1" />
-            <p className="text-xs text-gray-500">Diesel</p>
-            <p className="text-lg font-bold text-gray-800">{data.today_litres_diesel.toFixed(0)} L</p>
-          </div>
-        </div>
-      )}
-
-      {isAdmin && data?.today_collections && (data.today_collections.has_balance_shifts || data.today_collections.credit_receipts > 0) && (
-        <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
-          <p className="text-sm font-semibold text-gray-700 mb-2">{data.today_collections.has_balance_shifts ? 'Today’s counted funds and collections' : 'Today’s Received'}</p>
-          {data.today_collections.has_balance_shifts ? <FundsCollectionSummary data={data.today_collections} formatMoney={fmt} /> : <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span className="text-green-700">Debt receipts included</span>
-              <span className="font-medium text-green-700">{fmt(data.today_collections.credit_receipts)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Cash received total</span>
-              <span>{fmt(data.today_collections.expected_cash)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">M-Pesa received total</span>
-              <span>{fmt(data.today_collections.expected_mpesa)}</span>
-            </div>
-            <div className="flex justify-between font-semibold border-t border-gray-100 pt-1">
-              <span>Received total</span>
-              <span>{fmt(data.today_collections.expected_total_received)}</span>
-            </div>
-          </div>}
+          {([
+            ['Sales today', fmt(data.today_net_sales ?? data.today_sales), '', '/shifts'],
+            ['Profit this month', fmt(data.mtd_net_profit), data.mtd_net_profit < 0 ? 'text-red-600' : 'text-green-700', '/reports'],
+            ['Customers owe', fmt(data.total_outstanding_credits), '', '/credits'],
+            ['We owe suppliers', fmt(data.total_supplier_payables), data.total_supplier_payables > 0 ? 'text-red-600' : '', '/suppliers'],
+          ] as Array<[string, string, string, string]>).map(([label, value, tone, to]) => (
+            <button key={label} type="button" onClick={() => navigate(to)} className="bg-white rounded-xl p-3 shadow-sm text-left active:bg-gray-50">
+              <p className="text-xs text-gray-500">{label}</p>
+              <p className={`text-lg font-bold tabular-nums ${tone || 'text-gray-800'}`}>{value}</p>
+            </button>
+          ))}
         </div>
       )}
 
       {/* Weekly mini chart (simplified for mobile) */}
       {isAdmin && data?.weekly_sales && (
         <div className="bg-white rounded-xl p-4 shadow-sm">
-          <p className="text-sm font-semibold text-gray-700 mb-3">This Week</p>
+          <p className="text-sm font-semibold text-gray-700 mb-3">Last 7 days</p>
           <div className="flex items-end gap-1 h-24">
             {data.weekly_sales.map((d: any, i: number) => {
               const max = Math.max(...data.weekly_sales.map((s: any) => s.amount), 1);

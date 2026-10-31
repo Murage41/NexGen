@@ -19,7 +19,7 @@ station profile.
 
 ## Backups
 
-- **Settings → Create Backup**, or `npm run backup:database -w backend`,
+- **Settings → System → Back up now**, or `npm run backup:database -w backend`,
   makes a checked, standalone copy in `backend\data\backups`. It includes the
   saved invoice PDFs; supplier PDFs are copied beside it.
 - Every station update makes a backup before any migration.
@@ -59,5 +59,5 @@ replaces it, and **Use the NexGen logo** switches back.
 
 ## Open-shift warning
 
-The dashboard and shift list warn when a shift has been open longer than
-**Settings → Data Management → Open Shift Warning** (30 hours by default).
+The Today page and shift list warn when a shift has been open longer than
+**Settings → System** (30 hours by default).

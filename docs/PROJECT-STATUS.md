@@ -4,11 +4,11 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-10-28.
+Last updated: 2026-10-29.
 
 ## Station PC
 
-- **Runs update #22** (`cdca8fa`, see below), on top of #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
+- **Runs update #23** (`123eb2a`, see below), on top of #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
   Shortages, Pay plan & details). Before it #20 `90e3022` (phone shift page
   in tabs, cash count first in Money) and #19 `c35dc4e` (desktop shift page
   in tabs, one-press close, "Record my shift"). Latest migration
@@ -34,21 +34,31 @@ Last updated: 2026-10-28.
   most, like the admin's (backend sort, `test:attendant-access`) (owner,
   2026-10-28). No migration, no new packages. Phone Credits
   and Invoice Customers stay separate for now.
-- **Pending station update #23** (owner yes 2026-10-28; pushed to `main`
-  2026-10-28 in the commit after `cdca8fa`; next update number #24): screen
+- **Update #23 installed 2026-10-29** (owner's report; station now at
+  `123eb2a`, no migration; next update number #24): screen
   phase 4. Desktop **Stock** (tank list, tank page with
   Stock ledger / Dips / Deliveries / Adjustments), supplier page with Bills
   (delivery, still owed, days late) / Payments / Details, menu Stock ·
   Suppliers · Prices with Pumps under Settings; phone tank and supplier pages
   the same way, phone Add supplier fixed, last-dip figure now against the
   book at that dip. Frontend only; no migration, no new packages.
+- **Pending station update #24** (owner yes 2026-10-30, ship 2026-10-31;
+  pushed to `main` in the commit after `123eb2a`; next update number #25):
+  screen phase 5. **Today** (was Dashboard: open shift with its
+  date, rows Today / This month / Money owed incl. what we owe suppliers,
+  every box opens its page), Expenses with Expenses / Wages chips and month
+  arrows, Reports tabs Day / Month / Stock / Who owes us / Cash flow loading
+  at once with plain cash-flow words, one Corrections list (corrections,
+  balance moves, older shift corrections; Mistakes Fixed left Reports),
+  Settings tabs Station profile / Pumps / System; phone home, Expenses and
+  Reports the same way. Frontend only; no migration, no new packages.
 - **Offered, not chosen (2026-10-26):** closing reading boxes starting empty
   so every pump must be typed; the owner shipped #20 without it.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and updates #18 to #23.
-  Pushed 2026-10-28 (owner asked). No worktrees; work in
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #24.
+  Pushed 2026-10-31 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the
   abandoned office-corrections design; its migration 055 clashes with the

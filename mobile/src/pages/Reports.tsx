@@ -1,5 +1,5 @@
 import { fundsSummaryRows } from '../../../shared/ui/ShiftFunds';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   BarChart3, Calendar, TrendingUp, TrendingDown, Droplets,
   AlertTriangle, Phone, ArrowDownCircle, ArrowUpCircle, Download,
@@ -8,7 +8,7 @@ import PageHeader from '../components/PageHeader';
 import {
   getDailyReport, getMonthlyReport, getStockReconciliation,
   getStockReconciliationByShift, getDebtorAging, getCashFlow,
-  exportMonthlyReport, exportStockReconciliation,
+  exportMonthlyReport, exportStockReconciliation, getShifts,
 } from '../services/api';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 import { useAuth } from '../context/AuthContext';
@@ -29,7 +29,7 @@ function downloadBlob(response: any, fallbackFilename: string) {
 export default function Reports() {
   const { isAdmin } = useAuth();
   const [tab, setTab] = useState<Tab>('daily');
-  const [date, setDate] = useState(getKenyaDate());
+  const [date, setDate] = useState('');
   const [month, setMonth] = useState(getKenyaMonth());
   const [report, setReport] = useState<any>(null);
   const [stockByShift, setStockByShift] = useState<any>(null);
@@ -41,6 +41,13 @@ export default function Reports() {
   const kes = (n: number) => `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   const litres = (n: number) => `${Number(n || 0).toFixed(1)} L`;
   const pct = (n: number | null) => n !== null && n !== undefined ? `${Number(n).toFixed(1)}%` : '—';
+
+  useEffect(() => {
+    getShifts({ status: 'closed', limit: 1 })
+      .then((res) => setDate(res.data.data?.shifts?.[0]?.shift_date || getKenyaDate()))
+      .catch(() => setDate(getKenyaDate()));
+  }, []);
+  useEffect(() => { if (date) loadReport(); }, [tab, date, month]);
 
   async function loadReport() {
     setLoading(true);
@@ -60,7 +67,7 @@ export default function Reports() {
           break;
         }
         case 'debtors': res = await getDebtorAging(); break;
-        case 'cashflow': res = await getCashFlow({ from: month + '-01', to: date }); break;
+        case 'cashflow': res = await getCashFlow({ from: month + '-01', to: month === getKenyaMonth() ? getKenyaDate() : `${month}-${new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate()}` }); break;
       }
       setReport(res?.data?.data || res?.data);
     } catch (err) { console.error(err); }
@@ -142,11 +149,11 @@ export default function Reports() {
       {/* Tabs */}
       <div className="flex bg-gray-100 rounded-xl p-1 mb-4 overflow-x-auto">
         {([
-          { key: 'daily' as Tab, label: 'Daily' },
-          { key: 'monthly' as Tab, label: 'Monthly' },
+          { key: 'daily' as Tab, label: 'Day' },
+          { key: 'monthly' as Tab, label: 'Month' },
           { key: 'stock' as Tab, label: 'Stock' },
-          { key: 'debtors' as Tab, label: 'Debtors' },
-          { key: 'cashflow' as Tab, label: 'Cash Flow' },
+          { key: 'debtors' as Tab, label: 'Who owes' },
+          { key: 'cashflow' as Tab, label: 'Cash flow' },
         ]).map(t => (
           <button key={t.key} onClick={() => handleTabChange(t.key)}
             className={`flex-1 py-2.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap px-2 ${
@@ -175,10 +182,6 @@ export default function Reports() {
                 className="flex-1 border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={month} onChange={e => setMonth(e.target.value)} />
             )}
-            <button onClick={loadReport} disabled={loading}
-              className="bg-blue-600 text-white px-4 py-3 rounded-xl text-sm font-medium disabled:opacity-50">
-              {loading ? '...' : 'Go'}
-            </button>
           </div>
           {(tab === 'monthly' || tab === 'stock') && (
             <button onClick={handleExport} disabled={exporting}
@@ -190,22 +193,12 @@ export default function Reports() {
         </div>
       )}
 
-      {/* Debtors: just a button */}
-      {tab === 'debtors' && (
-        <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
-          <button onClick={loadReport} disabled={loading}
-            className="w-full bg-blue-600 text-white py-3 rounded-xl text-sm font-medium disabled:opacity-50">
-            {loading ? 'Loading...' : 'Load Debtor Aging Report'}
-          </button>
-        </div>
-      )}
-
       {loading && <div className="text-center text-gray-400 mt-10">Loading report...</div>}
 
       {/* ── DAILY / MONTHLY P&L ── */}
       {!loading && report && (tab === 'daily' || tab === 'monthly') && (
         <div className="space-y-4">
-          {Number(report.uncounted_balance_shifts || 0) > 0 && <p className="px-4 text-xs text-amber-700">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
+          {Number(report.uncounted_balance_shifts || 0) > 0 && <p className="px-4 text-xs text-amber-700">Some shifts have no closing count yet.</p>}
           {/* P&L Card */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center gap-2">
@@ -518,28 +511,28 @@ export default function Reports() {
       {!loading && report && tab === 'cashflow' && (
         <div className="space-y-4">
           <div className="bg-white rounded-xl shadow-sm p-4 text-center">
-            <p className="text-xs text-gray-500">Net Cash Flow</p>
+            <p className="text-xs text-gray-500">Money in less money out</p>
             <p className={`text-2xl font-bold ${report.net_cash_flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {kes(report.net_cash_flow)}
             </p>
           </div>
 
-          {Number(report.uncounted_balance_shifts || 0) > 0 && <p className="px-4 text-xs text-amber-700">Some shifts have no saved closing count. Inferred collections cover recorded counts only.</p>}
+          {Number(report.uncounted_balance_shifts || 0) > 0 && <p className="px-4 text-xs text-amber-700">Some shifts have no closing count yet.</p>}
           {/* Inflows */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-green-100 flex items-center gap-2">
               <ArrowDownCircle size={16} className="text-green-500" />
-              <span className="font-semibold text-green-700">Inflows: {kes(report.inflows?.total)}</span>
+              <span className="font-semibold text-green-700">Money in: {kes(report.inflows?.total)}</span>
             </div>
             <div className="divide-y divide-gray-50">
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">{report.has_balance_shifts ? 'Legacy shifts: cash received' : 'Shift Cash Received'}</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.cash_sales)}</span></div>
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">{report.has_balance_shifts ? 'Legacy shifts: M-Pesa received' : 'Shift M-Pesa Received'}</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.mpesa_sales)}</span></div>
-              {report.has_balance_shifts && <div className="flex justify-between gap-3 px-4 py-3"><span className="text-sm text-gray-600">Balance shifts: collections inferred from counted funds</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.balance_shift_inferred_collections)}</span></div>}
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">{report.has_balance_shifts ? 'Cash from older shifts' : 'Cash from shifts'}</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.cash_sales)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">{report.has_balance_shifts ? 'M-Pesa from older shifts' : 'M-Pesa from shifts'}</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.mpesa_sales)}</span></div>
+              {report.has_balance_shifts && <div className="flex justify-between gap-3 px-4 py-3"><span className="text-sm text-gray-600">Taken in shifts (from the counts)</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.balance_shift_inferred_collections)}</span></div>}
               {Number(report.inflows?.owner_funding || 0) > 0 && <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Owner funding</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows.owner_funding)}</span></div>}
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Credit Payments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.credit_payments_received)}</span></div>
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Invoice Payments (net)</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.invoice_payments_received)}</span></div>
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Employee Debt Repayments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.employee_debt_repayments)}</span></div>
-              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Shift Payouts Added Back</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.drawer_payouts_already_reflected)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Customer payments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.credit_payments_received)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Invoice payments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.invoice_payments_received)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Shortage repayments</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.employee_debt_repayments)}</span></div>
+              <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Paid from the till (also in money out)</span><span className="text-sm font-semibold text-green-600">{kes(report.inflows?.drawer_payouts_already_reflected)}</span></div>
             </div>
           </div>
 
@@ -547,7 +540,7 @@ export default function Reports() {
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             <div className="p-4 border-b border-red-100 flex items-center gap-2">
               <ArrowUpCircle size={16} className="text-red-500" />
-              <span className="font-semibold text-red-700">Outflows: {kes(report.outflows?.total)}</span>
+              <span className="font-semibold text-red-700">Money out: {kes(report.outflows?.total)}</span>
             </div>
             <div className="divide-y divide-gray-50">
               <div className="flex justify-between px-4 py-3"><span className="text-sm text-gray-600">Fuel Purchases</span><span className="text-sm font-semibold text-red-600">{kes(report.outflows?.fuel_purchases)}</span></div>
@@ -574,7 +567,7 @@ export default function Reports() {
         <div className="text-center mt-10">
           <BarChart3 size={48} className="mx-auto text-gray-300 mb-3" />
           <p className="text-gray-400">
-            {tab === 'debtors' ? 'Tap the button above to load' : `Select a ${tab === 'monthly' || tab === 'cashflow' ? 'month' : 'date'} and tap Go`}
+            Nothing to show
           </p>
         </div>
       )}

@@ -1,27 +1,28 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardCheck, X } from 'lucide-react';
-import { correctionApi, desktopApproval, getCorrection, getCorrections } from '../services/api';
+import { X } from 'lucide-react';
+import { correctionApi, desktopApproval, getCorrection, getCorrections, getShiftCorrections, getBalanceMoves } from '../services/api';
 import { CorrectionUndo, correctionTitle, lineText } from '../../../../shared/ui/Corrections';
+import { describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
 
-// The Corrections register (docs/CORRECTIONS.md): every correction made to a
-// closed record, newest first, with what it did and who approved it. A
-// correction made in error is undone here by a new correction that cancels it.
+// The Corrections register (docs/CORRECTIONS.md): every fix to a closed record,
+// newest first: corrections (undone here by a new correction), balance moves,
+// and the corrections to closed shifts made before 23 Sep 2026.
 
 const kes = (value: unknown) =>
   `KES ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const monthStart = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-};
+const yearStart = () => `${new Date().getFullYear()}-01-01`;
+type Kind = 'all' | 'correction' | 'move' | 'old';
+type Row = { key: string; kind: Exclude<Kind, 'all'>; date: string; tag: string; what: string; sub?: string; by: string; status: string; id?: number };
 const stageText = (stage: string | null) =>
   stage === 'invoiced' ? 'on an issued invoice' : stage === 'draft' ? 'in a draft invoice' : stage === 'unbilled' ? 'not yet invoiced'
     : stage === 'paid' ? 'paid' : stage === 'partial' ? 'partly paid' : stage === 'outstanding' ? 'unpaid' : '';
 
 export default function Corrections() {
-  const [from, setFrom] = useState(monthStart());
+  const [from, setFrom] = useState(yearStart());
   const [to, setTo] = useState('');
-  const [rows, setRows] = useState<any[]>([]);
+  const [kind, setKind] = useState<Kind>('all');
+  const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState('');
   const [detail, setDetail] = useState<any | null>(null);
   const [undoing, setUndoing] = useState(false);
@@ -29,7 +30,27 @@ export default function Corrections() {
   async function load() {
     try {
       setError('');
-      setRows((await getCorrections({ from: from || undefined, to: to || undefined })).data.data || []);
+      const range = { from: from || undefined, to: to || undefined };
+      const [corr, moves, old] = await Promise.all([getCorrections(range), getBalanceMoves(range), getShiftCorrections(range)]);
+      const list: Row[] = [
+        ...(corr.data.data || []).map((c: any) => ({
+          key: `c${c.id}`, kind: 'correction' as const, id: c.id, date: String(c.posting_date).slice(0, 10), tag: c.number,
+          what: correctionTitle(c.record_type, c.kind === 'undo' ? 'undo' : c.error_kind),
+          sub: `${c.reason_label ? `${c.reason_label}: ` : ''}${c.reason_note || ''}`, by: c.approved_by_name || '',
+          status: c.kind === 'undo' ? 'Undo' : c.status === 'undone' ? 'Undone' : 'Posted',
+        })),
+        ...(moves.data.data || []).map((m: any) => ({
+          key: `m${m.id}`, kind: 'move' as const, date: String(m.posting_date).slice(0, 10), tag: `Move #${m.id}`,
+          what: `${kes(m.amount)} from ${m.from_name} to ${m.to_name}${m.shift_id ? ` · shift #${m.shift_id}` : ''}`,
+          sub: m.reason, by: m.approved_by_name || '', status: 'Posted',
+        })),
+        ...(old.data.data || []).map((c: any) => ({
+          key: `o${c.id}`, kind: 'old' as const, date: String(c.posting_date || c.created_at || '').slice(0, 10), tag: `Old #${c.id}`,
+          what: `Shift #${c.shift_id}: ${describeShiftBalance(c.variance_before)} → ${describeShiftBalance(c.variance_after)}`,
+          sub: c.reason, by: c.approved_by_name || '', status: 'Posted',
+        })),
+      ].sort((x, y) => y.date.localeCompare(x.date));
+      setRows(list);
     } catch (err: any) {
       console.error('[Corrections:load]', err?.response?.data || err?.message);
       setError(err?.response?.data?.error || 'Corrections could not be loaded.');
@@ -47,19 +68,23 @@ export default function Corrections() {
 
   useEffect(() => { void load(); }, [from, to]);
 
+  const shown = kind === 'all' ? rows : rows.filter((r) => r.kind === kind);
+  const chip = (on: boolean) => `px-3 py-1.5 rounded-full text-sm font-semibold border ${on ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`;
+  const tagTone: Record<Row['kind'], string> = { correction: 'bg-blue-50 text-blue-700', move: 'bg-amber-50 text-amber-800', old: 'bg-gray-100 text-gray-600' };
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-2">
-        <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-          <ClipboardCheck size={24} /> Corrections
-        </h1>
-      </div>
-      <div className="flex items-end gap-3 mb-4 text-sm">
+      <h1 className="text-2xl font-bold text-gray-800 mb-4">Corrections</h1>
+      <div className="flex items-end gap-2 mb-4 text-sm flex-wrap">
+        {([['all', 'All'], ['correction', 'Corrections'], ['move', 'Balance moves'], ['old', 'Before 23 Sep']] as Array<[Kind, string]>).map(([k, label]) => (
+          <button key={k} type="button" className={chip(kind === k)} onClick={() => setKind(k)}>{label}</button>
+        ))}
+        <span className="flex-1" />
         <label className="block"><span className="text-xs text-gray-500">From</span>
-          <input type="date" className="block border border-gray-300 rounded-lg px-3 py-2" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input type="date" className="block border border-gray-300 rounded-lg px-3 py-1.5" value={from} onChange={(e) => setFrom(e.target.value)} />
         </label>
         <label className="block"><span className="text-xs text-gray-500">To</span>
-          <input type="date" className="block border border-gray-300 rounded-lg px-3 py-2" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input type="date" className="block border border-gray-300 rounded-lg px-3 py-1.5" value={to} onChange={(e) => setTo(e.target.value)} />
         </label>
       </div>
       {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
@@ -68,26 +93,25 @@ export default function Corrections() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-left text-xs text-gray-500">
             <tr>
-              <th className="px-3 py-2">Number</th>
-              <th className="px-3 py-2">Posted</th>
-              <th className="px-3 py-2">What was wrong</th>
-              <th className="px-3 py-2">Reason</th>
+              <th className="px-3 py-2">Date</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2">What changed</th>
               <th className="px-3 py-2">Approved by</th>
               <th className="px-3 py-2">Status</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">No corrections in this period.</td></tr>
+            {shown.length === 0 && (
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">Nothing in these dates.</td></tr>
             )}
-            {rows.map((row) => (
-              <tr key={row.id} onClick={() => void open(row.id)} className="border-t border-gray-100 hover:bg-blue-50 cursor-pointer">
-                <td className="px-3 py-2 font-medium text-blue-700">{row.number}</td>
-                <td className="px-3 py-2">{String(row.posting_date).slice(0, 10)}</td>
-                <td className="px-3 py-2">{correctionTitle(row.record_type, row.error_kind)}</td>
-                <td className="px-3 py-2 text-gray-600">{row.reason_label ? `${row.reason_label}: ` : ''}{row.reason_note}</td>
-                <td className="px-3 py-2">{row.approved_by_name}</td>
-                <td className="px-3 py-2">{row.kind === 'undo' ? 'Undo' : row.status === 'undone' ? 'Undone' : 'Posted'}</td>
+            {shown.map((row) => (
+              <tr key={row.key} onClick={row.id ? () => void open(row.id!) : undefined}
+                className={`border-t border-gray-100 align-top ${row.id ? 'hover:bg-blue-50 cursor-pointer' : ''}`}>
+                <td className="px-3 py-2 whitespace-nowrap">{row.date}</td>
+                <td className="px-3 py-2 whitespace-nowrap"><span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${tagTone[row.kind]}`}>{row.tag}</span></td>
+                <td className="px-3 py-2">{row.what}{row.sub && <p className="text-xs text-gray-500">{row.sub}</p>}</td>
+                <td className="px-3 py-2">{row.by || '—'}</td>
+                <td className="px-3 py-2">{row.status}</td>
               </tr>
             ))}
           </tbody>

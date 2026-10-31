@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { getExpenseSummary, getExpenseCategories, createExpense, updateExpense, deleteExpense } from '../services/api';
-import { Plus, Pencil, Trash2, Receipt, X, Filter, TrendingUp, TrendingDown } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getKenyaDate, getKenyaMonth } from '../utils/timezone';
 
 const PREDEFINED_CATEGORIES = [
@@ -16,29 +17,40 @@ export default function Expenses() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ category: '', description: '', amount: '', date: '' });
-  const [dateFrom, setDateFrom] = useState(getKenyaMonth() + '-01');
-  const [dateTo, setDateTo] = useState(getKenyaDate());
+  const [month, setMonth] = useState(getKenyaMonth());
+  const [view, setView] = useState<'expenses' | 'wages'>('expenses');
+  const [lastMonth, setLastMonth] = useState<any>(null);
   const [categoryFilter, setCategoryFilter] = useState('');
   const [categories, setCategories] = useState<string[]>(PREDEFINED_CATEGORIES);
   const [formError, setFormError] = useState('');
   const [listError, setListError] = useState('');
 
-  useEffect(() => {
-    loadData();
-    loadCategories();
-  }, []);
+  useEffect(() => { loadCategories(); }, []);
+  useEffect(() => { loadData(); }, [month]);
+
+  function monthRange(m: string) {
+    const [y, mo] = m.split('-').map(Number);
+    const end = new Date(y, mo, 0).getDate();
+    const to = m === getKenyaMonth() ? getKenyaDate() : `${m}-${String(end).padStart(2, '0')}`;
+    return { from: `${m}-01`, to };
+  }
+  function shiftMonth(m: string, by: number) {
+    const [y, mo] = m.split('-').map(Number);
+    const d = new Date(y, mo - 1 + by, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
 
   async function loadData() {
     setLoading(true);
     try {
-      const res = await getExpenseSummary({ from: dateFrom, to: dateTo });
+      const [res, prev] = await Promise.all([
+        getExpenseSummary(monthRange(month)),
+        getExpenseSummary(monthRange(shiftMonth(month, -1))),
+      ]);
       const data = res.data.data;
       setSummary(data);
-      let filtered = data.expenses || [];
-      if (categoryFilter) {
-        filtered = filtered.filter((e: any) => e.category === categoryFilter);
-      }
-      setExpenses(filtered);
+      setLastMonth(prev.data.data);
+      setExpenses(data.expenses || []);
     } catch (err) {
       console.error('Failed to load expenses:', err);
     } finally {
@@ -53,14 +65,6 @@ export default function Expenses() {
     } catch {
       // fallback to predefined
     }
-  }
-
-  function applyFilter() { loadData(); }
-  function clearFilter() {
-    setDateFrom(getKenyaMonth() + '-01');
-    setDateTo(getKenyaDate());
-    setCategoryFilter('');
-    setTimeout(() => loadData(), 0);
   }
 
   function openCreate() {
@@ -118,120 +122,70 @@ export default function Expenses() {
     }
   }
 
-  const formatKES = (n: number) => `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 2 })}`;
-  const total = expenses.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+  const formatKES = (n: number) => `KES ${Number(n || 0).toLocaleString('en-KE', { maximumFractionDigits: 0 })}`;
+  const isWage = (e: any) => e.source === 'payroll';
+  const inView = expenses.filter((e: any) => (view === 'wages' ? isWage(e) : !isWage(e)));
+  const usedCategories = [...new Set(inView.map((e: any) => e.category))].sort();
+  const rows = categoryFilter ? inView.filter((e: any) => e.category === categoryFilter) : inView;
+  const thisTotal = view === 'wages' ? summary?.total_payroll_expense : summary?.total_operating_expenses;
+  const prevTotal = view === 'wages' ? lastMonth?.total_payroll_expense : lastMonth?.total_operating_expenses;
+  const bars: Array<[string, number]> = Object.entries(
+    inView.reduce((m: Record<string, number>, e: any) => ({ ...m, [e.category]: (m[e.category] || 0) + e.amount }), {}),
+  ).sort((a: any, b: any) => b[1] - a[1]) as Array<[string, number]>;
+  const barMax = bars.length ? bars[0][1] : 0;
+  const monthLabel = new Date(`${month}-15`).toLocaleDateString('en-KE', { month: 'long', year: 'numeric' });
+  const chip = (on: boolean) => `px-3 py-1.5 rounded-full text-sm font-semibold border ${on ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`;
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-          <Receipt size={24} /> Expenses
-        </h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold text-gray-800">Expenses</h1>
         <button onClick={openCreate}
           className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">
-          <Plus size={18} /> Add Expense
+          <Plus size={18} /> Add expense
         </button>
       </div>
       {listError && <p className="text-sm text-red-600 mb-4">{listError}</p>}
 
-      {/* Summary Cards */}
-      {summary && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Business Expenses</p>
-            <p className="text-xl font-bold text-red-600">{formatKES(summary.total_expenses)}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">vs Previous Period</p>
-            {summary.change_percent !== null ? (
-              <p className={`text-xl font-bold flex items-center gap-1 ${summary.change_percent <= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {summary.change_percent <= 0 ? <TrendingDown size={18} /> : <TrendingUp size={18} />}
-                {Math.abs(summary.change_percent).toFixed(1)}%
-              </p>
-            ) : (
-              <p className="text-xl font-bold text-gray-400">—</p>
-            )}
-            <p className="text-xs text-gray-400 mt-0.5">Prev: {formatKES(summary.previous_period_total)}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Payroll Expense</p>
-            <p className="text-xl font-bold text-gray-800">{formatKES(summary.total_payroll_expense)}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Operating Expenses</p>
-            <p className="text-xl font-bold text-gray-800">{formatKES(summary.total_operating_expenses)}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Category Breakdown */}
-      {summary && summary.by_category && summary.by_category.length > 0 && (
-        <div className="bg-white rounded-lg shadow mb-6 overflow-hidden">
-          <div className="p-4 border-b bg-gray-50">
-            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Breakdown by Category</h2>
-          </div>
-          <div className="p-4 space-y-3">
-            {summary.by_category.map((cat: any, i: number) => (
-              <div key={i} className="flex items-center gap-4">
-                <span className="text-sm font-medium text-gray-700 w-32 truncate">{cat.category}</span>
-                <div className="flex-1 bg-gray-100 rounded-full h-4 relative">
-                  <div className="bg-red-400 h-4 rounded-full transition-all"
-                    style={{ width: `${Math.min(cat.pct, 100)}%` }} />
-                </div>
-                <span className="text-sm font-semibold text-gray-600 w-28 text-right">{formatKES(cat.total)}</span>
-                <span className="text-xs text-gray-400 w-12 text-right">{cat.pct.toFixed(1)}%</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Date + Category Filter */}
-      <div className="bg-white rounded-lg shadow p-4 mb-6">
-        <div className="flex items-center gap-4 flex-wrap">
-          <Filter size={18} className="text-gray-400" />
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">From</label>
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-              className="border border-gray-300 rounded-lg p-2 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">To</label>
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-              className="border border-gray-300 rounded-lg p-2 text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Category</label>
-            <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
-              className="border border-gray-300 rounded-lg p-2 text-sm min-w-[150px]">
-              <option value="">All Categories</option>
-              <option value="Payroll">Payroll</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div className="flex items-end gap-2">
-            <button onClick={applyFilter}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm mt-4">
-              Apply
-            </button>
-            <button onClick={clearFilter}
-              className="px-4 py-2 text-gray-500 hover:text-gray-700 text-sm mt-4">
-              Clear
-            </button>
-          </div>
-          <div className="ml-auto text-right">
-            <p className="text-xs text-gray-500">Filtered Total</p>
-            <p className="text-lg font-bold text-gray-800">{formatKES(total)}</p>
-          </div>
-        </div>
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <button type="button" className={chip(view === 'expenses')} onClick={() => { setView('expenses'); setCategoryFilter(''); }}>Expenses</button>
+        <button type="button" className={chip(view === 'wages')} onClick={() => { setView('wages'); setCategoryFilter(''); }}>Wages</button>
+        {usedCategories.length > 1 && (
+          <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="ml-2 border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+            <option value="">All categories</option>
+            {usedCategories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        <span className="flex-1" />
+        <button type="button" aria-label="Previous month" onClick={() => setMonth(shiftMonth(month, -1))} className="p-1.5 rounded border border-gray-300 bg-white"><ChevronLeft size={16} /></button>
+        <strong className="w-36 text-center">{monthLabel}</strong>
+        <button type="button" aria-label="Next month" disabled={month >= getKenyaMonth()} onClick={() => setMonth(shiftMonth(month, 1))} className="p-1.5 rounded border border-gray-300 bg-white disabled:opacity-40"><ChevronRight size={16} /></button>
       </div>
+
+      {summary && (
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-xs font-semibold text-gray-500">{view === 'wages' ? 'Wages this month' : 'This month'}</p>
+            <p className="text-2xl font-bold tabular-nums text-gray-800">{formatKES(thisTotal)}</p>
+            {lastMonth && <p className="text-xs text-gray-500 mt-0.5">Last month {formatKES(prevTotal)}</p>}
+          </div>
+          <div className="col-span-2 bg-white rounded-lg shadow p-4 grid grid-cols-[9rem_1fr_6rem] gap-x-3 gap-y-2 items-center text-sm content-start">
+            {bars.slice(0, 6).map(([cat, amt]) => [
+              <span key={`l${cat}`} className="truncate">{cat}</span>,
+              <span key={`b${cat}`} className="h-2 rounded bg-gray-100 overflow-hidden"><span className="block h-full bg-blue-600" style={{ width: `${barMax ? (amt / barMax) * 100 : 0}%` }} /></span>,
+              <span key={`v${cat}`} className="text-right tabular-nums">{formatKES(amt)}</span>,
+            ])}
+            {bars.length === 0 && <span className="col-span-3 text-gray-400">Nothing this month.</span>}
+          </div>
+        </div>
+      )}
 
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">{editing ? 'Edit Expense' : 'Add Expense'}</h2>
+              <h2 className="text-lg font-semibold">{editing ? 'Edit expense' : 'Add expense'}</h2>
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600">
                 <X size={20} />
               </button>
@@ -260,7 +214,7 @@ export default function Expenses() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <textarea value={form.description}
                   onChange={e => setForm({ ...form, description: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-2" rows={2} placeholder="Optional details" />
+                  className="w-full border border-gray-300 rounded-lg p-2" rows={2} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount (KES) *</label>
@@ -287,7 +241,6 @@ export default function Expenses() {
         </div>
       )}
 
-      {/* Table */}
       {loading ? (
         <div className="text-gray-500 text-center py-8">Loading...</div>
       ) : (
@@ -296,55 +249,38 @@ export default function Expenses() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="text-left p-3 font-medium text-gray-600">Date</th>
-                <th className="text-left p-3 font-medium text-gray-600">Category</th>
-                <th className="text-left p-3 font-medium text-gray-600">Description</th>
-                <th className="text-left p-3 font-medium text-gray-600">Source</th>
+                <th className="text-left p-3 font-medium text-gray-600">What</th>
+                <th className="text-left p-3 font-medium text-gray-600">{view === 'wages' ? 'Employee' : 'Paid from'}</th>
                 <th className="text-right p-3 font-medium text-gray-600">Amount</th>
-                <th className="text-left p-3 font-medium text-gray-600">Actions</th>
+                <th className="p-3 w-16"></th>
               </tr>
             </thead>
             <tbody>
-              {expenses.map((exp: any, i: number) => (
+              {rows.map((exp: any, i: number) => (
                 <tr key={`${exp.source}-${exp.id}-${i}`} className="border-t hover:bg-gray-50">
-                  <td className="p-3">{exp.date ? new Date(exp.date + 'T12:00:00').toLocaleDateString('en-KE') : '-'}</td>
-                  <td className="p-3 font-medium">{exp.category}</td>
-                  <td className="p-3 text-gray-600">{exp.description || '-'}</td>
+                  <td className="p-3 whitespace-nowrap">{exp.date ? new Date(exp.date + 'T12:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short' }) : '-'}</td>
                   <td className="p-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      exp.source === 'shift'
-                        ? 'bg-blue-100 text-blue-700'
-                        : exp.source === 'payroll'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {exp.source === 'shift'
-                        ? `Shift${exp.employee_name ? ` (${exp.employee_name})` : ''}`
-                        : exp.source === 'payroll'
-                          ? `Payroll${exp.employee_name ? ` (${exp.employee_name})` : ''}`
-                          : 'General'}
-                    </span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold mr-2">{exp.category}</span>
+                    {view === 'expenses' && <span className="text-gray-600">{exp.description || ''}</span>}
                   </td>
-                  <td className="p-3 text-right font-medium text-red-600">{formatKES(exp.amount)}</td>
                   <td className="p-3">
-                    {exp.source === 'general' ? (
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => openEdit(exp)} className="text-blue-600 hover:text-blue-800" title="Edit">
-                          <Pencil size={16} />
-                        </button>
-                        <button onClick={() => handleDelete(exp)} className="text-red-500 hover:text-red-700" title="Delete">
-                          <Trash2 size={16} />
-                        </button>
+                    {exp.source === 'shift' && exp.shift_id ? (
+                      <Link to={`/shifts/${exp.shift_id}`} className="text-blue-600 hover:underline">Shift #{exp.shift_id}</Link>
+                    ) : exp.source === 'payroll' ? (exp.employee_name || '-') : 'Office'}
+                  </td>
+                  <td className="p-3 text-right font-medium tabular-nums">{formatKES(exp.amount)}</td>
+                  <td className="p-3">
+                    {exp.source === 'general' && (
+                      <div className="flex items-center gap-2 justify-end">
+                        <button onClick={() => openEdit(exp)} className="text-blue-600 hover:text-blue-800" title="Edit"><Pencil size={15} /></button>
+                        <button onClick={() => handleDelete(exp)} className="text-red-500 hover:text-red-700" title="Delete"><Trash2 size={15} /></button>
                       </div>
-                    ) : (
-                      <span className="text-xs text-gray-400">{exp.source} expense</span>
                     )}
                   </td>
                 </tr>
               ))}
-              {expenses.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="p-8 text-center text-gray-400">No expenses found for this period.</td>
-                </tr>
+              {rows.length === 0 && (
+                <tr><td colSpan={5} className="p-8 text-center text-gray-400">Nothing this month.</td></tr>
               )}
             </tbody>
           </table>

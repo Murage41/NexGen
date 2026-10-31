@@ -12,8 +12,8 @@ analyses stay in `D:\NexGen\.claude\plans\`.
 ## Now
 
 1. **Screens: workflow and look (plan below).** Facelift #18, shifts #19/#20,
-   employees #21, customers list #22 are on the station. Phase 4 (stock and
-   suppliers, below) agreed 2026-10-28 and built as update #23. Then phase 5.
+   employees #21, customers list #22, stock and suppliers #23 are on the
+   station. Phase 5 built as update #24 (below).
 2. **Edit history for open shifts.** Every save of readings, cash/M-Pesa and
    the wage on an open shift adds who, when, old and new value; a plain
    **History** list on the shift; no restore button (re-enter through the
@@ -148,6 +148,51 @@ above, row "Phase 4". Frontend only; no backend change.**
   daily work); the phone keeps Pumps under More for attendants.
 - Phone: the same tank and supplier pages with chips; Add supplier fixed;
   empty invoice numbers hidden.
+
+**Phase 5 proposal (today, expenses, reports, corrections, settings),
+2026-10-29; mockups on the board, row "Phase 5". Frontend only; no backend
+change. Owner yes 2026-10-30; built as update #24.**
+- Found today (scratch copy, admin, desktop and phone): the dashboard's open
+  shift shows a time but no date, so a shift open for six days reads
+  "Started 11:06" (`desktop/.../Dashboard.tsx:206`,
+  `mobile/src/pages/Dashboard.tsx:71`); "1 open shift need review"; most tiles
+  open nothing; the server already returns what we owe suppliers
+  (`backend/src/routes/dashboard.ts`, `total_supplier_payables`) but no
+  screen shows it. Expenses mixes about 20 wage rows ("Fixed earning for
+  completed shift") into the expense list, lists 18 categories, prints
+  "Prev: KES 43,134.811" (`Expenses.tsx:121`, no rounding) and an Actions
+  column of plain words. Reports has six tabs that each wait for a Generate
+  click; Stock opens on today (empty); Cash flow says "Legacy shifts",
+  "collections inferred from counted funds", "Shift Payouts Added Back"
+  (`Reports.tsx:1073-1080`, phone `Reports.tsx:535-542`). Fixes live in two
+  places: **Corrections** (new corrections) and **Reports → Mistakes Fixed**
+  (balance moves and corrections before 23 Sep).
+- **Today (was Dashboard):** warnings first (open shift with its date, tanks
+  below order level), then rows Today (sales, cash, M-Pesa, on credit),
+  This month (sales, profit, expenses with wages, shortages owed), Money owed
+  (customers owe us, we owe suppliers, tanks). Every box opens its page; the
+  week chart goes to Reports → Month.
+- **Expenses:** chips **Expenses · Wages**, month arrows, this month against
+  last month (rounded), bars by category, a list with the shift it was paid
+  from (link) or Office; edit only on office expenses, as now. Category filter
+  lists only categories used.
+- **Reports:** tabs **Day · Month · Stock · Who owes us · Cash flow**, each
+  showing at once (day arrows, no Generate); Day opens on the last day with a
+  closed shift; plain cash-flow labels; Print stays. Figures unchanged.
+- **Corrections:** one list of corrections, balance moves and the older
+  closed-shift corrections, with chips by type; a row opens its detail and
+  Undo as now. Mistakes Fixed leaves Reports.
+- **Settings:** tabs **Station profile · Pumps · System** (open-shift warning
+  hours, system check, backup).
+- Phone: owner home gets the shift date and Customers owe / We owe
+  suppliers; Expenses gets the same chips; Reports the same tabs and labels;
+  More says Prices like the desktop.
+- Practice: Business Central Role Centers (insights first, then cues that
+  open their list,
+  https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-designing-role-centers);
+  dashboards readable at a glance, most important top left (ArcGIS,
+  https://doc.arcgis.com/en/dashboards/latest/reference/author-effective-dashboards.htm);
+  NN/g progressive disclosure (above).
 
 ## Later, in order
 
