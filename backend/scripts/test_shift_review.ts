@@ -139,9 +139,9 @@ async function main() {
       },
       reviewEvents: events.map((event) => ({ ...event, actor_name: 'Review Admin' })),
     });
-    assert(timeline[0].type === 'shift_opened', 'Timeline does not begin with shift opening');
+    assert(timeline.at(-1)?.type === 'shift_opened', 'Timeline does not end with shift opening');
     assert(timeline.some((event) => event.type === 'debt_receipt' && event.precision === 'date'), 'Date-only receipt precision was lost');
-    assert(timeline.at(-1)?.type === 'shift_reviewed', 'Timeline is not chronologically ordered');
+    assert(timeline[0].type === 'shift_reviewed', 'Timeline is not latest first');
 
     console.log('PASS closed-shift review transitions, notes, attribution, and append-only events');
     console.log('PASS timeline ordering and date-level precision disclosure');

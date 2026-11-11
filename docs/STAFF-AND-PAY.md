@@ -83,9 +83,12 @@ the attendant's credit and pays their next shortage. It is never paid out.
 
 ## What employees see
 
-**My Pay** on the phone, never anyone else's: three figures on top (earned
-but not yet paid, pay due, shortages in red when owed), the pay plan in one
-line, shifts not yet in payroll (earned, taken from the till, left), payroll
-runs (tap for details) and their shortages. The admin's Pay tab on an
-employee's page shows the same, without repeating the figures and shortages
-that page already has.
+**My Account** on the phone, never anyone else's, with two tabs. **Pay:** paid
+this month, in payroll but not paid, not in any payroll yet; the full pay plan;
+shifts not yet in payroll (earned, taken from the till, left), payroll runs
+(tap for details) and every payment with its date and how it was paid.
+**Shortages:** what is still owed on top, then one list, latest first: red adds
+to the debt (shortages), green takes it off (payments, balance moves, old
+write-offs), each line with what was owed after it. Surpluses are not listed:
+they are the station's. The admin's Pay and Shortages tabs on an employee's
+page are the same views, with Record payment, Move balance and Reverse. 

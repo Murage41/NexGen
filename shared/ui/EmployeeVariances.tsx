@@ -21,6 +21,12 @@ export type VarianceActions = {
 
 const kes = (value: unknown) =>
   `KES ${Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const LEDGER_SHOWN = 30;
+const whenText = (line: any) => {
+  const at = new Date(line.at);
+  const day = at.toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' });
+  return line.precision === 'date' ? day : `${day}, ${at.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}`;
+};
 const plain = (value: unknown) =>
   Math.abs(Number(value || 0)).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const kenyaToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
@@ -45,50 +51,8 @@ export function describeVarianceTotals(totals: any) {
   return { text: 'Nothing owed', tone: 'none' as const };
 }
 
-const EVENT_LABELS: Record<string, string> = {
-  repayment: 'Paid',
-  move: 'Balance move',
-  waiver: 'Written off (before 24 Sep 2026)',
-  refund: 'Paid back (before 24 Sep 2026)',
-  legacy_owed_back: 'Credit from the old records',
-  legacy_reversal: 'Owed again',
-};
 const METHODS: Record<string, string> = { cash: 'cash', mpesa: 'M-Pesa', bank_transfer: 'bank transfer' };
 
-function RowDetails({ row }: { row: any }) {
-  const by = row.paid_by || {};
-  const legacy = (row.legacy || []).map((l: any) => l.details).find(Boolean) || null;
-  const lines: string[] = [];
-  if (row.corrected) {
-    lines.push(`Shortage at close: ${kes(row.closed_shortage)}`);
-    for (const c of row.corrections) {
-      lines.push(`Changed ${c.date}: ${c.change > 0 ? 'short' : 'less short by'} ${plain(c.change)}${c.change > 0 ? ' more' : ''}${c.reason ? ` (${c.reason})` : ''}`);
-    }
-  }
-  if (by.repaid > 0) lines.push(`Paid: ${kes(by.repaid)}`);
-  if (by.moved > 0) lines.push(`Moved off by a balance move: ${kes(by.moved)}`);
-  if (by.waived > 0) lines.push(`Written off before 24 Sep 2026: ${kes(by.waived)}`);
-  if (by.recovered_before > 0) lines.push(`Recovered by the old records: ${kes(by.recovered_before)}`);
-  if (by.cleared_before > 0) lines.push(`Cleared by the old records: ${kes(by.cleared_before)}`);
-  if (legacy) {
-    const parts = [
-      ['deducted from the wage at close', legacy.deducted_from_wage_at_close],
-      ['deducted from later wages', legacy.deducted_from_later_wages],
-      ['repaid', legacy.repaid],
-      ['taken in payroll', legacy.payroll],
-    ].filter(([, v]) => Number(v) > 0);
-    if (parts.length) lines.push(`Old records: ${parts.map(([label, v]) => `${label} ${kes(v)}`).join(', ')}`);
-  }
-  return (
-    <div className="text-xs text-gray-700 space-y-0.5 py-2">
-      {lines.length ? lines.map((line) => <p key={line}>{line}</p>) : <p>Nothing paid yet.</p>}
-      <Link to={`/shifts/${row.shift_id}`} className="text-blue-700 underline print:hidden">Open shift #{row.shift_id}</Link>
-    </div>
-  );
-}
-
-// The employee pays in money, oldest shortage first, on a date, optionally
-// into an open shift's drawer.
 function PaymentForm({ statement, repay, onDone, onCancel, inputClassName }: any) {
   const owes = Number(statement.totals.owes || 0);
   const key = useRef(newOperationKey());
@@ -204,15 +168,13 @@ export function VarianceStatementView({
   earlier?: any;
   inputClassName?: string;
 }) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [openRow, setOpenRow] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const [form, setForm] = useState<'' | 'repay' | 'move'>('');
   const [reversing, setReversing] = useState<any>(null);
   if (!statement) return null;
   const totals = statement.totals || {};
-  const rows: any[] = (statement.rows || []).filter((r: any) => (!from || r.date >= from) && (!to || r.date <= to));
-  const shownOwed = Math.round(rows.reduce((sum, r) => sum + Number(r.owed || 0), 0) * 100) / 100;
+  const ledger: any[] = statement.ledger || [];
+  const shown = showAll ? ledger : ledger.slice(0, LEDGER_SHOWN);
   const owes = Number(totals.owes || 0);
   const credit = Number(totals.credit || 0);
   const done = async () => {
@@ -228,7 +190,7 @@ export function VarianceStatementView({
         </div>
         <div className="text-right">
           {owes > 0 ? (
-            <p className="text-xl font-bold text-red-700">{self ? 'You owe' : 'Owes'} {kes(owes)}</p>
+            <p className="text-xl font-bold text-red-700">{self ? 'You still owe' : 'Still owes'} {kes(owes)}</p>
           ) : (
             <p className="text-xl font-bold text-gray-700">Nothing owed</p>
           )}
@@ -257,71 +219,41 @@ export function VarianceStatementView({
         <BalanceMoveForm api={actions.move} approval={approval} initialFrom={{ kind: 'employee', id: statement.employee.id }} onDone={done} onCancel={() => setForm('')} inputClassName={inputClassName} />
       )}
 
-      {(statement.rows || []).length > 0 && (<>
-      <div className="flex flex-wrap items-end gap-2 text-sm print:hidden">
-        <label className="block"><span className="text-gray-600 text-xs">From</span>
-          <input type="date" className="border rounded-lg px-2 py-1 bg-white" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label className="block"><span className="text-gray-600 text-xs">To</span>
-          <input type="date" className="border rounded-lg px-2 py-1 bg-white" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-        {(from || to) && (
-          <button type="button" className="text-blue-700 underline text-xs pb-1" onClick={() => { setFrom(''); setTo(''); }}>All dates</button>
-        )}
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs sm:text-sm">
-          <thead className="bg-gray-50 text-gray-600">
-            <tr>
-              <th className="text-left p-1.5 sm:p-2 font-medium">Date</th>
-              <th className="text-left p-1.5 sm:p-2 font-medium">Shift</th>
-              <th className="text-right p-1.5 sm:p-2 font-medium">Shortage</th>
-              {/* On a phone, tap a row to see what paid it. */}
-              <th className="hidden sm:table-cell text-right p-2 font-medium">Paid</th>
-              <th className="text-right p-1.5 sm:p-2 font-medium">Still owed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <FragmentRow key={row.shift_id} row={row} open={openRow === row.shift_id} onToggle={() => setOpenRow(openRow === row.shift_id ? null : row.shift_id)} />
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={5} className="p-4 text-center text-gray-400">No shortages for these dates.</td></tr>
-            )}
-          </tbody>
-          {rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t-2 border-gray-300 font-semibold">
-                <td className="p-1.5 sm:p-2" colSpan={3}>{from || to ? 'Still owed for these dates' : 'Still owed'}</td>
-                <td className="hidden sm:table-cell" />
-                <td className="p-1.5 sm:p-2 text-right tabular-nums">{kes(shownOwed)}</td>
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-      </>)}
-
-      {(statement.events || []).length > 0 && (
-        <div className="space-y-1">
-          <h3 className="font-semibold text-sm">Payments and moves</h3>
-          {statement.events.map((ev: any) => (
-            <div key={ev.id} className="text-sm border-t pt-1 flex flex-wrap justify-between gap-2">
-              <p>
-                {ev.date} · {EVENT_LABELS[ev.type] || ev.type} {kes(ev.amount)}
-                {ev.method && METHODS[ev.method] ? ` · ${METHODS[ev.method]}` : ''}
-                {ev.type === 'repayment' && ev.shift_id ? ` · into shift #${ev.shift_id} drawer` : ''}
-                {ev.reference ? ` · ${ev.reference}` : ''}
-                {ev.approved_by_name ? ` · approved by ${ev.approved_by_name}` : ev.created_by_name ? ` · by ${ev.created_by_name}` : ''}
-                {ev.reason ? <span className="block text-xs text-gray-500">{ev.reason}</span> : null}
-              </p>
-              {actions && ev.type === 'repayment' && ev.payment_id && (
-                <button type="button" className="text-red-700 underline text-xs print:hidden" onClick={() => setReversing(ev)}>Reverse</button>
-              )}
-            </div>
-          ))}
-        </div>
+      {ledger.length === 0 ? <p className="text-sm text-gray-400">No shortages.</p> : (
+        <ol className="border rounded-lg overflow-hidden">
+          {shown.map((line) => {
+            const adds = Number(line.amount) > 0;
+            const balance = Number(line.balance);
+            const details = [
+              whenText(line),
+              line.shift_id ? `Shift #${line.shift_id}` : '',
+              line.method ? METHODS[line.method] || line.method : '',
+              line.reference || '',
+              line.by && !adds ? `by ${line.by}` : '',
+            ].filter(Boolean).join(' · ');
+            return (
+              <li key={line.id} className={`border-l-4 border-t first:border-t-0 border-t-gray-100 px-3 py-2 flex items-start justify-between gap-3 ${adds ? 'border-l-red-500' : 'border-l-green-600'}`}>
+                <div className="min-w-0 text-sm">
+                  <p className="font-semibold">{line.title}</p>
+                  <p className="text-xs text-gray-500">{details}</p>
+                  {line.reason && <p className="text-xs text-gray-500">{line.reason}</p>}
+                  {actions && line.type === 'repayment' && line.payment_id && (
+                    <button type="button" className="text-red-700 underline text-xs print:hidden" onClick={() => setReversing(line)}>Reverse</button>
+                  )}
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={`text-sm font-bold tabular-nums ${adds ? 'text-red-700' : 'text-green-700'}`}>{adds ? '+' : '−'}{plain(Math.abs(Number(line.amount)))}</p>
+                  <p className="text-xs text-gray-500 tabular-nums">{balance < 0 ? `credit ${plain(-balance)}` : `owed ${plain(balance)}`}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {ledger.length > LEDGER_SHOWN && (
+        <button type="button" onClick={() => setShowAll(!showAll)} className="w-full py-2 text-sm text-blue-700 print:hidden">
+          {showAll ? 'Show fewer' : `Show all ${ledger.length}`}
+        </button>
       )}
 
       <EarlierRecords debt={earlier} />
@@ -337,7 +269,7 @@ export function VarianceStatementView({
           }}
         >
           <p className="text-sm text-gray-600">
-            {kes(reversing.amount)} received {reversing.date}. It stays on record, marked reversed, and is owed again.
+            {kes(Math.abs(Number(reversing.amount)))} received {whenText(reversing)}. It stays on record, marked reversed, and is owed again.
           </p>
         </ReasonDialog>
       )}
@@ -345,28 +277,6 @@ export function VarianceStatementView({
   );
 }
 
-function FragmentRow({ row, open, onToggle }: { row: any; open: boolean; onToggle: () => void }) {
-  return (
-    <>
-      <tr className="border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={onToggle}>
-        <td className="p-1.5 sm:p-2 whitespace-nowrap">{row.date}</td>
-        <td className="p-1.5 sm:p-2">#{row.shift_id}{row.corrected ? <span className="ml-1 text-xs text-blue-700">changed</span> : null}</td>
-        <td className="p-1.5 sm:p-2 text-right tabular-nums">{kes(row.shortage)}</td>
-        <td className="hidden sm:table-cell p-2 text-right tabular-nums">{plain(row.paid)}</td>
-        <td className={`p-1.5 sm:p-2 text-right tabular-nums ${row.owed > 0 ? 'text-red-700' : 'text-gray-500'}`}>
-          {row.owed > 0 ? kes(row.owed) : 'Paid'}
-        </td>
-      </tr>
-      {open && (
-        <tr className="bg-gray-50">
-          <td colSpan={5} className="px-2"><RowDetails row={row} /></td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-// A page of its own: Employees, then an employee's Variances.
 export function EmployeeVariancesPage({
   employeeId,
   load,

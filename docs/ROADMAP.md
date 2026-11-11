@@ -13,14 +13,12 @@ analyses stay in `D:\NexGen\.claude\plans\`.
 
 1. **Screens: workflow and look (plan below).** Facelift #18, shifts #19/#20,
    employees #21, customers list #22, stock and suppliers #23 are on the
-   station. Phase 5 built as update #24 (below).
-2. **Edit history for open shifts.** Every save of readings, cash/M-Pesa and
-   the wage on an open shift adds who, when, old and new value; a plain
-   **History** list on the shift; no restore button (re-enter through the
-   normal form). Needs a migration. Practice: NetSuite System Notes
-   (https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_158644279544.html).
-   Today readings are overwritten; the 2026-10-23 recovery relied on leftover
-   SQLite WAL frames.
+   station, and phase 5 as #24. The screen review is finished.
+2. **Edit history for open shifts** (owner asked 2026-11-04: add it to the
+   existing History, include the other shift actions, leave out syncing, keep
+   it easy to follow). Plan below; mockup on the board, row "Edit history".
+   Owner yes 2026-11-04; built as update #25, together with **Shortages
+   ledger and My Account** (below; owner, 2026-11-05: one station update).
 3. **The owner's other issues** (bugs from over-complication): each with due
    diligence before code.
 
@@ -193,6 +191,81 @@ change. Owner yes 2026-10-30; built as update #24.**
   dashboards readable at a glance, most important top left (ArcGIS,
   https://doc.arcgis.com/en/dashboards/latest/reference/author-effective-dashboards.htm);
   NN/g progressive disclosure (above).
+
+## Edit history plan (item 2), 2026-11-04
+
+**Today** (`backend/src/services/shiftTimeline.ts`, shown under the shift's
+History tab on desktop and phone as "Activity Timeline"): it is built from the
+shift's own rows, so it lists shift opened, credit sales, invoice fuel, debt
+payments, wage paid from the till, review, corrections and close. It has no
+readings, no cash/M-Pesa counts, expenses only as a count at close, nothing
+removed (deleted rows just vanish), no opening-reading changes, and never
+says who. Readings and counts are overwritten on save
+(`PUT /shifts/:id/readings`, `/collections`); desktop and phone save
+automatically 1.2 s after typing stops (`ShiftDetail.tsx:175`,
+`ShiftRecord.tsx:112`), so one sitting makes many saves.
+
+**What changes**
+- New table `shift_history` (migration 057): shift, what (readings, opening
+  readings, cash and M-Pesa count, entry removed), the changed figures as
+  old → new, who, when. Written by the server in the same save, only when a
+  figure really changed. Rows are never edited or deleted (database guard).
+- Who: the phone user's name; the desktop shows **Station PC** until the
+  desktop has its own sign-in (G1).
+- Recorded: closing readings entered or changed, opening readings changed,
+  cash and M-Pesa counts entered or changed, and credit sales, invoice fuel,
+  expenses and debt payments removed, invoice fuel litres changed. Additions already come
+  from their own rows; expenses get one line each.
+- **Kept short** (the owner's ask): saves of the same thing by the same
+  person within 10 minutes show as one line with the first old figure and
+  the last new one; figures that end where they started drop out; a first
+  entry shows a summary ("3 pumps · sales KES 92,371", "Cash 21,400 · M-Pesa
+  33,880"), a change shows only what changed. Syncing never shows. Every raw
+  save is still kept for recovery.
+- One History list, latest first (owner), plain titles (Credit sale, Expense,
+  Closing readings changed, Shift closed), colour dot: added, changed,
+  removed. No restore button.
+- Won't solve: changes made before this update are unknown; desktop changes
+  name the PC, not the person, until G1.
+- Tests: new suite `test:shift-history` (a no-op save writes nothing, grouping,
+  revert drops out, removal recorded, attendant only on own shift), with a
+  mutation check.
+
+Practice: NetSuite System Notes record field, old value, new value, who and
+when on every save
+(https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_158644279544.html);
+Odoo field tracking logs "old → new" with who and when in the record's own
+history (https://www.dasolo.ai/blog/odoo-data-api-5/odoo-tracking-field-explained-127).
+
+## Shortages ledger and My Account (owner, 2026-11-04), built with #25
+
+**Today:** the admin's employee page **Shortages** tab and the attendant's
+**My Pay** use `shared/ui/EmployeeVariances.tsx`: a table of shortages per
+shift (paid, still owed, worked out oldest first) and, below it, a separate
+"Payments and moves" list. My Pay (`shared/ui/EmployeePayView.tsx`, server
+`employeePayStatement` in `backend/src/services/employeePay.ts`) stacks three
+tiles, the pay plan, shifts not yet in payroll, payroll runs and the
+shortages on one long page.
+
+**What changes**
+- **Shortages = one dated list**, latest first (owner) by the time each was recorded:
+  shortages, corrections that change one, payments, balance moves and the old
+  records, each with amount and "owed after". Red adds to what is owed,
+  green takes it off. **Still owes** on top. Admin keeps Record payment,
+  Move balance and Reverse. Surpluses stay out (they are the station's).
+  Server: one `ledger` list on the existing statement, built from the
+  posted variance entries in `created_at` order; no database change.
+- **My Pay becomes My Account** (phone bottom bar), with two chips:
+  **Pay** (paid this month, in payroll but not paid, not in any payroll
+  yet; my pay plan in full; then the lists: not in payroll yet, payroll
+  runs, paid to me with date and how) and **Shortages** (the same dated
+  list, read-only).
+- The admin's employee **Pay** tab uses the same Pay view, so both sides read
+  the same.
+- Practice: an account statement in date order with a running balance
+  (QuickBooks customer statements,
+  https://quickbooks.intuit.com/learn-support/en-us/accounts-receivable/create-and-view-customer-statements/00/186219);
+  one record per thing with tabs (SAP Fiori object page, above).
 
 ## Later, in order
 

@@ -4,11 +4,11 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-10-29.
+Last updated: 2026-11-11.
 
 ## Station PC
 
-- **Runs update #23** (`123eb2a`, see below), on top of #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
+- **Runs update #24** (`dab2acb`, see below), on top of #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
   Shortages, Pay plan & details). Before it #20 `90e3022` (phone shift page
   in tabs, cash count first in Money) and #19 `c35dc4e` (desktop shift page
   in tabs, one-press close, "Record my shift"). Latest migration
@@ -42,9 +42,9 @@ Last updated: 2026-10-29.
   Suppliers · Prices with Pumps under Settings; phone tank and supplier pages
   the same way, phone Add supplier fixed, last-dip figure now against the
   book at that dip. Frontend only; no migration, no new packages.
-- **Pending station update #24** (owner yes 2026-10-30, ship 2026-10-31;
-  pushed to `main` in the commit after `123eb2a`; next update number #25):
-  screen phase 5. **Today** (was Dashboard: open shift with its
+- **Update #24 installed by 2026-11-04** (owner's `git log` on the station
+  shows `dab2acb`; no migration; phone build not confirmed; next update
+  number #25): screen phase 5. **Today** (was Dashboard: open shift with its
   date, rows Today / This month / Money owed incl. what we owe suppliers,
   every box opens its page), Expenses with Expenses / Wages chips and month
   arrows, Reports tabs Day / Month / Stock / Who owes us / Cash flow loading
@@ -52,13 +52,31 @@ Last updated: 2026-10-29.
   balance moves, older shift corrections; Mistakes Fixed left Reports),
   Settings tabs Station profile / Pumps / System; phone home, Expenses and
   Reports the same way. Frontend only; no migration, no new packages.
+- **Pending station update #25** (owner asked for the station commands
+  2026-11-11; pushed to `main` in the commit after `dab2acb`; next update
+  number #26): edit history on open shifts. Migration
+  `20261104_057_shift_history` (table `shift_history`, never changed or
+  deleted; `shift_expenses` gains `created_at` and
+  `created_by_employee_id`). Readings, opening readings and cash/M-Pesa
+  saves that change a figure, and expenses, credit sales, invoice fuel and
+  debt payments removed, keep who/when/old → new; the shift's History shows
+  them grouped (one line per sitting) with each expense and who did it.
+  Suite `test:shift-history`. Needs a backup at install. History is latest
+  first. The owner wants this and the next item on the station together, as
+  one update (2026-11-05).
+- **Also in #25:** one dated shortages list (latest first, red
+  adds, green takes off, owed after each line; server `ledger` on the
+  statement, no database change), **My Pay renamed My Account** with tabs Pay
+  (paid this month, in payroll not paid, not in any payroll yet, full plan,
+  lists, `paid_history`) and Shortages; the admin's Pay tab uses the same
+  layout. Suite `test:employee-account`.
 - **Offered, not chosen (2026-10-26):** closing reading boxes starting empty
   so every pump must be typed; the owner shipped #20 without it.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and updates #18 to #24.
-  Pushed 2026-10-31 (owner asked). No worktrees; work in
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #25.
+  Pushed 2026-11-11 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the
   abandoned office-corrections design; its migration 055 clashes with the
@@ -66,9 +84,8 @@ Last updated: 2026-10-29.
   migration 057; never ship), `archive/focused-feistel`,
   `archive/mystifying-johnson`. `codex/production-readiness` has 13 commits
   not in `main` (also on GitHub); don't build on it.
-- `backend/data/nexgen.db` is the owner's copy of station data from
-  2026-10-23 (shifts to #151, one open), re-pasted 2026-10-24 after the
-  incident below. Fingerprint re-saved 2026-10-24. Never run the backend on
+- `backend/data/nexgen.db` is the owner's copy of station data, refreshed
+  by the owner after 2026-10-29 (shifts to #157, none open). Never run the backend on
   it; E2E uses `scripts/e2e` on a scratch copy.
 - **Incident, 2026-10-23:** removing an old Codex worktree deleted through its
   `node_modules` junction and emptied `backend`, `desktop`, `mobile`, `shared`
@@ -88,7 +105,7 @@ Last updated: 2026-10-29.
 | `SHIFTS.md` | Opening, recording, closing, current figures, what attendants see |
 | `CORRECTIONS.md` | Fixing closed records, undo, Move balance |
 | `CUSTOMERS.md` | Money and invoice customers, limits, invoices, notes, documents |
-| `STAFF-AND-PAY.md` | Pay plans, payroll, shortages, My Pay |
+| `STAFF-AND-PAY.md` | Pay plans, payroll, shortages, My Account |
 | `STOCK.md` | Deliveries, FIFO, dips, low-fuel warning, prices |
 | `STATION-PC.md` | Running, backups, updates, audits, station profile |
 

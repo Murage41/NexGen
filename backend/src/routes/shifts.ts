@@ -59,6 +59,10 @@ import { asRecordedConsumption, asRecordedReceipts, asRecordedRows, snapshotFigu
 import { shiftCorrections } from '../services/corrections';
 import { listBalanceMoves } from '../services/balanceMoves';
 import { getRetailPriceAsOf } from '../services/invoiceAccounting';
+import { recordShiftHistory, historyActor, loadShiftHistory, groupShiftHistory, staffReceiptKey, visibleShiftHistory, type ShiftChange } from '../services/shiftEdits';
+
+// What the meter face shows for a running total kept past its rollovers.
+const meterDisplay = (value: number, capacity: number) => Math.round((value % capacity) * 1000) / 1000;
 import {
   listShiftCorrections,
 } from '../services/shiftCorrections';
@@ -372,7 +376,10 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       // Current records are the default. The explicit original view reconstructs
       // the saved close, including its legacy/backfilled source rules.
       const asClosed = originalView && Boolean(closeReconciliation);
-      const expenses = await trx('shift_expenses').where({ 'shift_expenses.shift_id': shift.id }).modify((query: any) => {
+      const expenses = await trx('shift_expenses')
+        .leftJoin('employees as expense_author', 'shift_expenses.created_by_employee_id', 'expense_author.id')
+        .select('shift_expenses.*', 'expense_author.name as created_by_name')
+        .where({ 'shift_expenses.shift_id': shift.id }).modify((query: any) => {
         if (asClosed) asRecordedRows(query, 'shift_expenses');
         else query.whereNull('shift_expenses.deleted_at');
       });
@@ -535,6 +542,7 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
       }));
       const activityTimeline = buildShiftTimeline({
         shift,
+        history: groupShiftHistory(visibleShiftHistory(await loadShiftHistory(trx, Number(shift.id)), viewer)),
         closeReconciliation,
         shiftCredits,
         invoiceConsumption,
@@ -765,11 +773,21 @@ router.put('/:id/opening-readings', requireAdmin, async (req, res) => {
       });
     }
 
+    const openingPumps = new Map<number, any>((await db('pumps').select('id', 'label', 'meter_capacity_litres', 'meter_capacity_amount')).map((p: any) => [Number(p.id), p]));
+    const openingChanges: ShiftChange[] = [];
     for (const r of readings) {
       const existing = await db('pump_readings')
         .where({ shift_id: req.params.id, pump_id: r.pump_id })
         .first();
       if (existing) {
+        const pumpRow = openingPumps.get(Number(r.pump_id));
+        const label = pumpRow?.label || `Pump ${r.pump_id}`;
+        const capL = Number(pumpRow?.meter_capacity_litres) || 1000000;
+        const capA = Number(pumpRow?.meter_capacity_amount) || 1000000;
+        openingChanges.push(
+          { key: `${r.pump_id}:litres`, label: `${label} opening litres`, from: meterDisplay(Number(existing.opening_litres), capL), to: meterDisplay(Number(r.opening_litres), capL) },
+          { key: `${r.pump_id}:amount`, label: `${label} opening KES`, from: meterDisplay(Number(existing.opening_amount), capA), to: meterDisplay(Number(r.opening_amount), capA) },
+        );
         const litres_sold = existing.closing_litres - r.opening_litres;
         const amount_sold = existing.closing_amount - r.opening_amount;
         await db('pump_readings')
@@ -782,6 +800,7 @@ router.put('/:id/opening-readings', requireAdmin, async (req, res) => {
           });
       }
     }
+    await recordShiftHistory(db, { shiftId: Number(req.params.id), kind: 'opening_readings', employeeId: historyActor(req), changes: openingChanges });
     await db('shifts').where({ id: req.params.id, status: 'open' }).increment('readings_revision', 1);
     const revisionRow = await db('shifts')
       .where({ id: req.params.id })
@@ -1035,6 +1054,8 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
         throw staleShiftWrite('readings', Number(latest?.readings_revision || currentRevision));
       }
 
+      const pumpInfo = new Map<number, any>((await trx('pumps').select('id', 'label', 'meter_capacity_litres', 'meter_capacity_amount')).map((p: any) => [Number(p.id), p]));
+      const readingChanges: ShiftChange[] = [];
       for (const r of readings) {
         const existing = await trx('pump_readings')
           .where({ shift_id: req.params.id, pump_id: r.pump_id })
@@ -1043,6 +1064,14 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
         if (existing) {
           const cL = resolved[r.pump_id].closing_litres;
           const cA = resolved[r.pump_id].closing_amount;
+          const pumpRow = pumpInfo.get(Number(r.pump_id));
+          const label = pumpRow?.label || `Pump ${r.pump_id}`;
+          const capL = Number(pumpRow?.meter_capacity_litres) || 1000000;
+          const capA = Number(pumpRow?.meter_capacity_amount) || 1000000;
+          readingChanges.push(
+            { key: `${r.pump_id}:litres`, label: `${label} litres`, from: meterDisplay(Number(existing.closing_litres), capL), to: meterDisplay(cL, capL) },
+            { key: `${r.pump_id}:amount`, label: `${label} KES`, from: meterDisplay(Number(existing.closing_amount), capA), to: meterDisplay(cA, capA) },
+          );
           const litres_sold = cL - Number(existing.opening_litres);
           const amount_sold = cA - Number(existing.opening_amount);
           await trx('pump_readings')
@@ -1055,6 +1084,8 @@ router.put('/:id/readings', requireAuth, requireOwnShiftOrAdmin, validate(update
             });
         }
       }
+
+      await recordShiftHistory(trx, { shiftId: Number(req.params.id), kind: 'readings', employeeId: historyActor(req), changes: readingChanges });
 
       const updatedReadings = await trx('pump_readings')
         .join('pumps', 'pump_readings.pump_id', 'pumps.id')
@@ -1134,6 +1165,13 @@ router.put('/:id/collections', requireAuth, requireOwnShiftOrAdmin, validate(upd
       } else {
         await trx('shift_collections').insert({ shift_id: req.params.id, ...values });
       }
+      await recordShiftHistory(trx, {
+        shiftId: Number(req.params.id), kind: 'money', employeeId: historyActor(req),
+        changes: [
+          { key: 'cash', label: 'Cash', from: existing ? Number(existing.cash_amount) : null, to: cashAmount },
+          { key: 'mpesa', label: 'M-Pesa', from: existing ? Number(existing.mpesa_amount) : null, to: mpesaAmount },
+        ],
+      });
 
       const collections = await trx('shift_collections').where({ shift_id: req.params.id }).first();
       return { collections, revision: currentRevision + 1 };
@@ -1171,6 +1209,7 @@ router.post('/:id/expenses', requireAuth, requireOwnShiftOrAdmin, validate(creat
         }
         const [expId] = await trx('shift_expenses').insert({
           shift_id: req.params.id, category, description, amount,
+          created_at: new Date().toISOString(), created_by_employee_id: historyActor(req),
         });
         const expense = await trx('shift_expenses').where({ id: expId }).first();
         return { status: 201, body: { success: true, data: expense } };
@@ -1187,7 +1226,15 @@ router.post('/:id/expenses', requireAuth, requireOwnShiftOrAdmin, validate(creat
 router.delete('/:id/expenses/:expenseId', requireAdmin, async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
-    await db('shift_expenses').where({ id: req.params.expenseId, shift_id: req.params.id }).update({ deleted_at: new Date().toISOString() });
+    await db.transaction(async (trx) => {
+      const expense = await trx('shift_expenses').where({ id: req.params.expenseId, shift_id: req.params.id }).whereNull('deleted_at').first();
+      if (!expense) return;
+      await trx('shift_expenses').where({ id: expense.id }).update({ deleted_at: new Date().toISOString() });
+      await recordShiftHistory(trx, {
+        shiftId: Number(req.params.id), kind: 'removed', employeeId: historyActor(req),
+        changes: [{ key: `expense:${expense.id}`, label: `Expense · ${expense.category}`, from: Number(expense.amount), to: null }],
+      });
+    });
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -1344,6 +1391,10 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
 
         // Soft-delete the shift credit
         await trx('shift_credits').where({ id: req.params.creditId }).update({ deleted_at: now });
+        await recordShiftHistory(trx, {
+          shiftId: Number(shiftId), kind: 'removed', employeeId: historyActor(req),
+          changes: [{ key: `credit:${shiftCredit.id}`, label: `Credit sale · ${shiftCredit.customer_name || 'customer'}`, from: Number(shiftCredit.amount), to: null }],
+        });
 
         // Soft-delete the main credits line item (only if no payments have been applied to it)
         if (shiftCredit.credit_id) {
@@ -1547,6 +1598,11 @@ router.put('/:id/invoice-consumption/:entryId', requireAdmin, async (req, res) =
         }
         update.litres = litresNum;
         update.retail_amount = Math.round(litresNum * Number(entry.retail_price_at_time) * 100) / 100;
+        const account = await trx('credit_accounts').where({ id: entry.account_id }).first('name');
+        await recordShiftHistory(trx, {
+          shiftId, kind: 'changed_entry', employeeId: historyActor(req),
+          changes: [{ key: `invoice:${entry.id}`, label: `Invoice fuel litres · ${account?.name || 'customer'}`, from: Number(entry.litres), to: litresNum }],
+        });
       }
 
       if (req.body.pump_id !== undefined || req.body.tank_id !== undefined) {
@@ -1643,6 +1699,11 @@ router.delete('/:id/invoice-consumption/:entryId', requireAdmin, async (req, res
       await trx('invoice_consumption')
         .where({ id: entryId })
         .update({ deleted_at: now, updated_at: now, entry_status: 'deleted' });
+      const account = await trx('credit_accounts').where({ id: entry.account_id }).first('name');
+      await recordShiftHistory(trx, {
+        shiftId, kind: 'removed', employeeId: historyActor(req),
+        changes: [{ key: `invoice:${entry.id}`, label: `Invoice fuel · ${account?.name || 'customer'} · ${Number(entry.litres)} L`, from: Number(entry.retail_amount), to: null }],
+      });
     });
     res.json({ success: true });
   } catch (err: any) {
@@ -1773,6 +1834,11 @@ router.post('/:id/credit-receipts/:paymentId/reverse', requireAdmin, async (req:
           { http: 409 },
         );
       }
+      const payer = payment.account_id ? await trx('credit_accounts').where({ id: payment.account_id }).first('name', 'type', 'employee_id') : null;
+      await recordShiftHistory(trx, {
+        shiftId, kind: 'removed', employeeId: actorId,
+        changes: [{ key: payer?.type === 'employee' ? staffReceiptKey(payer.employee_id, payment.id) : `receipt:${payment.id}`, label: `Debt payment · ${payer?.name || 'customer'}`, from: Number(payment.amount), to: null }],
+      });
       if (payment.payment_type === 'staff_debt') {
         await reverseEmployeeDebtReceipt(paymentId, reason, trx, actorId);
       } else {

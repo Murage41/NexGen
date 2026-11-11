@@ -114,6 +114,13 @@ cache instead of recomputing; computing at event time and never updating.
 
 ## 4. Code conventions
 
+- **A shortages balance is net of credit:** `buildLedger` in
+  `employeeVariances.ts` lists only what moved the debt, so its top balance
+  equals `totals.net`. Keep that true when adding an entry type.
+- **Check a file name is free before creating it** (2026-11-04: a new
+  `services/shiftHistory.ts` overwrote the shift list query of that name and
+  was restored from git). Edit history lives in `services/shiftEdits.ts`.
+
 - **Messages on screen** (`shared/ui/Notify.tsx`, owner 2026-10-27: "just what
   is needed"). A short green "done" comes from the API layer for writes listed
   in its `DONE` table (open/close a shift, money in or out, invoices, notes,

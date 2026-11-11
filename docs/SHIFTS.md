@@ -40,9 +40,16 @@ Record, through their own forms:
   A typed amount stays on that device until close.
 
 While a shift is open an administrator removes a wrong entry with the bin icon;
-it is kept, marked reversed. Readings and counts are overwritten when saved
-(no history yet; see the roadmap). Two devices saving an older copy get a
+it is kept, marked reversed. Two devices saving an older copy get a
 conflict message instead of overwriting each other.
+
+**History** (latest first) keeps who did what and when: readings and the cash/M-Pesa count
+when first entered and every later change (old → new), opening readings
+changed, each expense, credit sale, invoice fuel and payment, and an expense,
+credit sale, invoice fuel or debt payment removed (or invoice fuel changed). Saves made while typing by one person within 10 minutes
+read as one line; a figure changed and put back drops out. Changes from the desktop say
+**Station PC** (it has no sign-in). Nothing in History can be changed or
+deleted; there is no restore: type the right figure again.
 
 **Money added / removed** (administrators): cash or M-Pesa put into or taken
 out of the till that is not a sale, expense, wage or customer payment, such as
@@ -86,7 +93,7 @@ received instead of opening and closing balances.
 
 ## What attendants see on the phone
 
-Bottom bar: **Home, My Shift, My Pay, Credits, More**.
+Bottom bar: **Home, My Shift, My Account, Credits, More**.
 
 - Home: whether a shift is open, each tank's level as a bar (red when low),
   and "Fuel is low" warnings. Admins see the same tanks on their home screen.
@@ -94,7 +101,7 @@ Bottom bar: **Home, My Shift, My Pay, Credits, More**.
 - My Shift: their own shifts. An open shift is **blind**: they record readings,
   money, credits and expenses but see no expected total or shortage until an
   administrator closes it. The pump's own money meter still shows its sales.
-- My Pay: their pay, payments and shortages.
+- My Account: their pay and, on its own tab, their shortages.
 - Credits: money customers, who owes most first, with balances and limits (no phone numbers or
   statements). Invoice customers appear by name only, to record fuel.
 - More: pumps, tanks, today's prices.

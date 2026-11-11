@@ -142,6 +142,79 @@ function eventView(ev: EventState) {
   };
 }
 
+// When an entry happened: the moment it was recorded, or just its date for
+// records carried over from the old system (they all share one load time).
+function entryMoment(e: VarianceEntry): { at: string; precision: 'time' | 'date' } {
+  const raw = e.created_at as unknown;
+  const legacy = Boolean(e.legacy_source) || String(e.entry_type).startsWith('legacy_');
+  if (legacy || raw === null || raw === undefined || raw === '') {
+    return { at: `${String(e.entry_date).slice(0, 10)}T09:00:00.000Z`, precision: 'date' };
+  }
+  if (typeof raw === 'number' || /^\d+$/.test(String(raw))) return { at: new Date(Number(raw)).toISOString(), precision: 'time' };
+  if (raw instanceof Date) return { at: raw.toISOString(), precision: 'time' };
+  const text = String(raw);
+  return { at: text.includes('T') ? text : `${text.replace(' ', 'T')}Z`, precision: 'time' };
+}
+
+const LEDGER_TITLES: Record<string, string> = {
+  repayment: 'Paid',
+  waiver: 'Written off (before 24 Sep 2026)',
+  refund: 'Paid back (before 24 Sep 2026)',
+  legacy_owed_back: 'Credit from the old records',
+  legacy_reversal: 'Owed again',
+};
+
+// Pure: every shortage and payment as one list, latest first, each with what
+// was owed after it. Red lines add to the debt, green lines take it off. Only
+// what really moved the debt is listed, so the top line's balance is the net
+// total: a surplus (the station's) and a clearing with nothing to clear are not.
+function buildLedger(rows: RowState[], events: EventState[]) {
+  type Line = ReturnType<typeof entryMoment> & {
+    id: number; type: string; title: string; change: number; shift_id: number | null; payment_id: number | null;
+    method: string | null; reference: string | null; reason: string | null; by: string | null;
+  };
+  const lines: Line[] = [];
+  const add = (e: VarianceEntry, title: string, change: number) => {
+    if (change === 0) return;
+    lines.push({
+      ...entryMoment(e), id: e.id, type: e.entry_type, title, change, shift_id: e.shift_id ?? null, payment_id: e.payment_id ?? null,
+      method: e.method || null, reference: e.reference || null, reason: e.entry_type === 'shift' ? null : e.reason || null,
+      by: e.approved_by_name || e.created_by_name || null,
+    });
+  };
+  const settled = (ev: EventState) => {
+    const amount = toCents(ev.entry.amount);
+    return amount > 0 ? amount : amount + ev.unused;
+  };
+  for (const row of rows) {
+    let total = 0;
+    for (const e of [...row.entries].sort((a, b) => a.id - b.id)) {
+      const before = Math.max(0, total);
+      total += toCents(e.amount);
+      const change = Math.max(0, total) - before;
+      add(e, e.entry_type === 'shift' ? 'Shortage' : change > 0 ? 'Shortage raised by a correction' : 'Shortage reduced by a correction', change);
+    }
+    for (const ev of row.legacy) {
+      add(ev.entry, toCents(ev.entry.amount) > 0 ? 'Charged in the old records' : 'Settled in the old records', settled(ev));
+    }
+  }
+  for (const ev of events) {
+    const type = ev.entry.entry_type;
+    const title = type === 'move'
+      ? (toCents(ev.entry.amount) > 0 ? 'Balance moved here' : 'Balance moved away')
+      : LEDGER_TITLES[type] || 'Adjustment';
+    add(ev.entry, title, settled(ev));
+  }
+  lines.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime() || a.id - b.id);
+  let balance = 0;
+  return lines
+    .map((line) => {
+      balance += line.change;
+      return { ...line, amount: toMoney(line.change), balance: toMoney(balance), change: undefined };
+    })
+    .reverse();
+}
+
 // Pure: one employee's shortages and payments as of a date. Entries of other
 // employees must not be passed in.
 export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
@@ -303,6 +376,7 @@ export function computeVarianceStatement(input: VarianceEntry[], asOf: string) {
     events: events
       .sort((a, b) => String(b.entry.entry_date).localeCompare(String(a.entry.entry_date)) || b.entry.id - a.entry.id)
       .map(eventView),
+    ledger: buildLedger([...rows.values()], events),
     totals: {
       owes: toMoney(owes),
       // Money they paid that pays nothing yet: it pays their next shortage.

@@ -5,6 +5,7 @@ import {
   money,
 } from './employeeDebt';
 import { listCompensationPlans } from './compensation';
+import { getKenyaDate } from '../utils/timezone';
 import { getPayrollRun } from './payroll';
 import {
   getVarianceStatement,
@@ -183,11 +184,45 @@ export async function employeePayStatement(employeeId: number, db: Knex) {
     );
     row.remaining = money(Math.max(0, row.gross - row.paid - row.deductions));
   }
+  // Everything paid to them, latest first: payroll payments (a wage taken from
+  // the till becomes one when its shift joins a payroll), and wages taken from
+  // the till on shifts not in a payroll yet.
+  const payments = await db('payroll_payments as p')
+    .join('payroll_lines as l', 'p.payroll_line_id', 'l.id')
+    .join('payroll_runs as r', 'l.run_id', 'r.id')
+    .join('payroll_periods as period', 'r.period_id', 'period.id')
+    .where({ 'p.employee_id': employeeId, 'p.status': 'posted' })
+    .select('p.id', 'p.amount', 'p.payment_date', 'p.payment_method', 'p.shift_id', 'p.reference', 'period.name as run_name');
+  const paidHistory = [
+    ...payments.map((p: any) => ({
+      key: `payment:${p.id}`,
+      date: String(p.payment_date).slice(0, 10),
+      amount: money(p.amount),
+      method: p.payment_method,
+      shift_id: p.shift_id ?? null,
+      from_till: String(p.reference || '').startsWith('SHIFT-WAGE:'),
+      run_name: p.run_name,
+    })),
+    ...[...accruedGroups.values()].filter((row: any) => row.paid > 0).map((row: any) => ({
+      key: `till:${row.key}`,
+      date: String(row.date).slice(0, 10),
+      amount: row.paid,
+      method: 'cash',
+      shift_id: row.shift_id ?? null,
+      from_till: true,
+      run_name: null,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date) || b.key.localeCompare(a.key));
+  const month = getKenyaDate().slice(0, 7);
   return {
     employee,
     plans,
     runs,
     accrued,
+    paid_history: paidHistory,
+    in_payroll_unpaid: money(runs.filter((r) => r.status !== 'void')
+      .reduce((sum, r) => sum + r.lines.reduce((v: number, l: any) => v + Number(l.balance_due || 0), 0), 0)),
+    paid_this_month: money(paidHistory.filter((p) => p.date.startsWith(month)).reduce((sum, p) => sum + p.amount, 0)),
     accrued_shift_details: [...accruedGroups.values()],
     variances: await getVarianceStatement(db, employeeId),
     debt: await employeeDebtHistory(employeeId, db),

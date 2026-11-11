@@ -1,3 +1,4 @@
+import { ShiftHistoryList } from '../../../../shared/ui/ShiftHistoryList';
 import { ShiftFunds, FundsCloseReview, validOpeningAmount } from '../../../../shared/ui/ShiftFunds';
 import { CreditLimitPrompt, isCreditLimitBreach } from '../../../../shared/ui/CreditLimitPrompt';
 import { ShiftCorrectionList, describeShiftBalance } from '../../../../shared/ui/ShiftCorrection';
@@ -12,7 +13,7 @@ import {
   getCreditAccounts, getShiftTankSummary, addShiftCreditReceipt,
   addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, getExpenseCategories, updateShiftReview, getShiftNeighbors, createOperationKey,
 } from '../services/api';
-import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, Activity, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Save, Plus, Trash2, Lock, ArrowLeft, AlertTriangle, DollarSign, Droplets, CheckCircle, Flag, ShieldCheck, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
@@ -64,6 +65,13 @@ export default function ShiftDetail() {
   const [shift, setShift] = useState<any>(null);
   // Which part of the shift is showing; null = the default for its status.
   const [tab, setTab] = useState<ShiftTab | null>(null);
+  // History is fresh each time it is opened: saves elsewhere on the page add to it.
+  useEffect(() => {
+    if (tab !== 'history' || !id) return;
+    getShift(parseInt(id))
+      .then((res) => setShift((prev: any) => (prev ? { ...prev, activity_timeline: res.data.data.activity_timeline } : prev)))
+      .catch(() => {});
+  }, [tab]);
   const [readings, setReadings] = useState<any[]>([]);
   const [collections, setCollections] = useState<{ cash_amount: number | string; mpesa_amount: number | string }>({ cash_amount: 0, mpesa_amount: 0 });
   const [shiftCredits, setShiftCredits] = useState<any[]>([]);
@@ -959,38 +967,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
-      {shift.activity_timeline?.length > 0 && (
-        <section className="bg-white border border-gray-200 p-4 mb-4">
-          <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Activity size={17} className="text-blue-600" /> Activity Timeline</h2>
-          <div className="mt-4 border-l border-gray-200 ml-2 space-y-4">
-            {shift.activity_timeline.map((event: any) => (
-              <div key={event.id} className="relative pl-5">
-                <span className={`absolute -left-1.5 top-1.5 h-3 w-3 rounded-full border-2 border-white ${event.type === 'shift_flagged' || event.type === 'shift_cancelled' ? 'bg-red-500' : event.type === 'shift_reviewed' || event.type === 'shift_closed' ? 'bg-green-500' : 'bg-blue-500'}`} />
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{event.title}</p>
-                    {event.description && <p className="text-xs text-gray-500 mt-0.5">{event.description}</p>}
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs text-gray-500">
-                      {event.precision === 'date'
-                        ? new Date(event.occurred_at).toLocaleDateString('en-KE')
-                        : new Date(event.occurred_at).toLocaleString('en-KE')}
-                    </p>
-                    {event.precision === 'date' && <p className="text-[11px] text-gray-400">Exact time unavailable</p>}
-                    {event.amount !== undefined && (
-                      <p className="text-xs font-semibold text-gray-700 mt-0.5">
-                        {event.type === 'shift_closed' ? 'Variance ' : ''}{formatKES(Number(event.amount))}
-                        {event.litres !== undefined ? ` · ${Number(event.litres).toLocaleString('en-KE')} L` : ''}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      <ShiftHistoryList events={shift.activity_timeline || []} />
 
       </>)}
       {activeTab === 'close' && (<>

@@ -1,5 +1,8 @@
+import type { HistoryGroup } from './shiftEdits';
+
 export interface ShiftTimelineInput {
   shift: any;
+  history?: HistoryGroup[];
   closeReconciliation?: any;
   shiftCredits?: any[];
   invoiceConsumption?: any[];
@@ -19,6 +22,39 @@ export interface ShiftTimelineEvent {
   precision: 'time' | 'date';
   amount?: number;
   litres?: number;
+  // add: something recorded; change: a figure changed (lines say old -> new);
+  // remove: taken off the shift. Who did it when the record says.
+  tone?: 'add' | 'change' | 'remove' | 'event';
+  actor?: string | null;
+  lines?: string[];
+}
+
+const figure = (value: number | null) => (value === null || value === undefined
+  ? '-' : Number(value).toLocaleString('en-KE', { maximumFractionDigits: 3 }));
+
+// One History line for each group of edits (services/shiftEdits.ts).
+function historyEvent(group: HistoryGroup): ShiftTimelineEvent {
+  const base = { id: group.id, occurred_at: group.occurred_at, precision: 'time' as const, actor: group.actor };
+  const changeLines = group.changes.map((c) => `${c.label}: ${figure(c.from)} → ${figure(c.to)}`);
+  if (group.kind === 'removed') {
+    const [what, ...rest] = group.changes[0].label.split(' · ');
+    return { ...base, type: 'entry_removed', tone: 'remove', title: `${what} removed`, description: rest.join(' · ') || null, amount: Number(group.changes[0].from || 0) };
+  }
+  if (group.kind === 'readings') {
+    const pumps = new Set(group.changes.map((c) => c.key.split(':')[0])).size;
+    return group.first
+      ? { ...base, type: 'readings_recorded', tone: 'add', title: 'Closing readings recorded', description: `${pumps} pump${pumps === 1 ? '' : 's'}` }
+      : { ...base, type: 'readings_changed', tone: 'change', title: 'Closing readings changed', description: null, lines: changeLines };
+  }
+  if (group.kind === 'money') {
+    return group.first
+      ? { ...base, type: 'money_counted', tone: 'add', title: 'Cash and M-Pesa counted', description: group.changes.map((c) => `${c.label} ${figure(c.to)}`).join(' · ') }
+      : { ...base, type: 'money_changed', tone: 'change', title: 'Cash and M-Pesa count changed', description: null, lines: changeLines };
+  }
+  if (group.kind === 'opening_readings') {
+    return { ...base, type: 'opening_changed', tone: 'change', title: 'Opening readings changed', description: null, lines: changeLines };
+  }
+  return { ...base, type: 'entry_changed', tone: 'change', title: 'Invoice fuel changed', description: null, lines: changeLines };
 }
 
 function amount(value: unknown): number {
@@ -38,9 +74,33 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
       id: `shift-opened-${input.shift.id}`,
       type: 'shift_opened',
       title: 'Shift opened',
-      description: input.shift.employee_name || null,
+      description: [
+        input.shift.employee_name,
+        input.shift.opening_cash_amount !== null && input.shift.opening_cash_amount !== undefined
+          ? `Opening cash ${figure(Number(input.shift.opening_cash_amount))} · M-Pesa ${figure(Number(input.shift.opening_mpesa_amount || 0))}`
+          : null,
+      ].filter(Boolean).join(' · ') || null,
       occurred_at: openedAt,
       precision: 'time',
+      tone: 'event',
+    });
+  }
+
+  for (const group of input.history || []) events.push(historyEvent(group));
+
+  for (const expense of input.expenses || []) {
+    const occurredAt = eventTime(expense.created_at);
+    if (!occurredAt) continue;
+    events.push({
+      id: `expense-${expense.id}`,
+      type: 'expense',
+      title: 'Expense',
+      description: [expense.category, expense.description].filter(Boolean).join(' · ') || null,
+      occurred_at: occurredAt,
+      precision: 'time',
+      amount: amount(expense.amount),
+      tone: 'add',
+      actor: expense.created_by_name || 'Station PC',
     });
   }
 
@@ -50,7 +110,8 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
     events.push({
       id: `credit-${credit.id}`,
       type: 'credit_issued',
-      title: 'Customer credit recorded',
+      title: 'Credit sale',
+      tone: 'add',
       description: credit.customer_name || credit.description || null,
       occurred_at: occurredAt,
       precision: 'time',
@@ -64,7 +125,8 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
     events.push({
       id: `invoice-consumption-${entry.id}`,
       type: 'invoice_consumption',
-      title: 'Invoice consumption recorded',
+      title: 'Invoice fuel',
+      tone: 'add',
       description: entry.account_name || entry.fuel_type || null,
       occurred_at: occurredAt,
       precision: 'time',
@@ -80,7 +142,8 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
     events.push({
       id: `debt-receipt-${receipt.id}`,
       type: 'debt_receipt',
-      title: 'Debt payment received',
+      title: 'Debt payment',
+      tone: 'add',
       description: receipt.account_name || receipt.payment_method || null,
       occurred_at: timestamp || `${date}T12:00:00`,
       precision: timestamp ? 'time' : 'date',
@@ -94,7 +157,8 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
     events.push({
       id: `payroll-payment-${payment.id}`,
       type: 'payroll_payment',
-      title: 'Payroll payment made from shift',
+      title: 'Wage paid from the till',
+      tone: 'add',
       description: payment.payment_method || null,
       occurred_at: occurredAt,
       precision: 'time',
@@ -105,14 +169,12 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
   if (input.closeReconciliation) {
     const occurredAt = eventTime(input.closeReconciliation.approved_at || input.shift.end_time);
     if (occurredAt) {
-      const expenseCount = (input.expenses || []).length;
       events.push({
         id: `shift-closed-${input.shift.id}`,
         type: 'shift_closed',
-        title: 'Shift reconciled and closed',
-        description: expenseCount > 0
-          ? `${expenseCount} expense entr${expenseCount === 1 ? 'y' : 'ies'} included in the close review`
-          : 'Readings, collections, and shift entries reviewed',
+        title: 'Shift closed',
+        tone: 'event',
+        description: null,
         occurred_at: occurredAt,
         precision: 'time',
         amount: amount(input.closeReconciliation.variance),
@@ -125,7 +187,8 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
         id: `shift-closed-${input.shift.id}`,
         type: 'shift_closed',
         title: 'Shift closed',
-        description: 'Legacy close record; no reconciliation snapshot was stored',
+        tone: 'event',
+        description: null,
         occurred_at: occurredAt,
         precision: 'time',
       });
@@ -175,8 +238,9 @@ export function buildShiftTimeline(input: ShiftTimelineInput): ShiftTimelineEven
     });
   }
 
+  // Latest first (owner, 2026-11-04).
   return events.sort((left, right) => {
-    const timeDifference = new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime();
-    return timeDifference || left.id.localeCompare(right.id);
+    const timeDifference = new Date(right.occurred_at).getTime() - new Date(left.occurred_at).getTime();
+    return timeDifference || right.id.localeCompare(left.id);
   });
 }

@@ -2,21 +2,27 @@ import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { PayrollStatement, kes } from './PayrollStatement';
 import type { ApprovalApi } from './ApproverConfirm';
-import { VarianceStatementView, describeVarianceTotals, type VarianceActions } from './EmployeeVariances';
+import { VarianceStatementView, type VarianceActions } from './EmployeeVariances';
 
-// An employee's pay: the same view on My Pay (the employee, read-only) and on
-// the admin's employee page. Three figures on top, then recent shifts,
-// payroll runs (details on tap) and shortages. Pay is never reduced for
-// shortages; an administrator records repayments in the Shortages section.
+// An employee's account: the same view on My Account (the employee, read-only)
+// and on the admin's employee page. Pay: what was paid, what is in payroll but
+// unpaid, what is in no payroll yet, the full pay plan and the lists behind
+// them. Shortages: the dated list. Pay is never reduced for shortages; an
+// administrator records repayments in the Shortages section.
 const SHIFTS_SHOWN = 10;
+
+const METHOD_TEXT: Record<string, string> = { cash: 'Cash', mpesa: 'M-Pesa', bank_transfer: 'Bank transfer' };
+
+function componentText(c: any, plan: any): string {
+  return c.component_type === 'fixed_per_shift' ? `${kes(c.amount)} per shift`
+    : c.component_type === 'fixed_periodic' ? `${kes(c.amount)} per ${plan.pay_schedule} period`
+      : c.component_type === 'sales_percentage' ? `${c.rate}% of ${c.fuel_type || 'all'} sales`
+        : `${kes(c.rate)} per litre${c.fuel_type ? ` (${c.fuel_type})` : ''}`;
+}
 
 function planText(plan: any): string {
   if (!plan) return 'No pay plan';
-  const parts = (plan.components || []).map((c: any) => (
-    c.component_type === 'fixed_per_shift' ? `${kes(c.amount)} per shift`
-      : c.component_type === 'fixed_periodic' ? `${kes(c.amount)} per ${plan.pay_schedule} period`
-        : c.component_type === 'sales_percentage' ? `${c.rate}% of ${c.fuel_type || 'all'} sales`
-          : `${kes(c.rate)} per litre${c.fuel_type ? ` (${c.fuel_type})` : ''}`));
+  const parts = (plan.components || []).map((c: any) => componentText(c, plan));
   return `${parts.join(' + ') || plan.name} · paid ${plan.pay_schedule}`;
 }
 
@@ -51,6 +57,8 @@ export function EmployeePayView({ load, admin = false, actions, approval, embedd
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
   const [allShifts, setAllShifts] = useState(false);
+  const [allPaid, setAllPaid] = useState(false);
+  const [section, setSection] = useState<'pay' | 'shortages'>('pay');
   async function refresh() {
     try {
       const r = await load();
@@ -66,11 +74,10 @@ export function EmployeePayView({ load, admin = false, actions, approval, embedd
   if (!data) return <p role="status">{error || 'Loading…'}</p>;
 
   const runs: any[] = data.runs || [];
-  const due = runs.filter((r) => !['void', 'calculated'].includes(r.status))
-    .reduce((sum, r) => sum + r.lines.reduce((v: number, l: any) => v + Number(l.balance_due || 0), 0), 0);
   const shifts: any[] = [...(data.accrued_shift_details || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const unpaid = shifts.reduce((sum, row) => sum + Number(row.remaining || 0), 0);
-  const shortages = describeVarianceTotals(data.variances?.totals);
+  const paidHistory: any[] = data.paid_history || [];
+  const paidShown = allPaid ? paidHistory : paidHistory.slice(0, SHIFTS_SHOWN);
   const plans: any[] = data.plans || [];
   const currentPlan = plans.find((p) => !p.effective_to) || plans[plans.length - 1];
   const shown = allShifts ? shifts : shifts.slice(0, SHIFTS_SHOWN);
@@ -78,25 +85,40 @@ export function EmployeePayView({ load, admin = false, actions, approval, embedd
   return (
     <main className="max-w-5xl mx-auto space-y-4 text-gray-800 p-1 sm:p-2">
       <div className={`flex flex-wrap items-center gap-3 ${embedded ? 'justify-end' : 'justify-between'}`}>
-        {!embedded && <h1 className="text-2xl font-bold">{admin ? data.employee.name : 'My Pay'}</h1>}
+        {!embedded && <h1 className="text-2xl font-bold">{admin ? data.employee.name : 'My Account'}</h1>}
         <button onClick={() => window.print()} className="border rounded-lg px-3 py-1.5 text-sm bg-white print:hidden">Print</button>
       </div>
       {error && <p role="alert" className="bg-red-50 text-red-700 p-3 rounded-lg">{error}</p>}
 
-      {!inRecord && <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <Tile label="Earned, not yet paid" value={kes(unpaid)} tone="teal" />
-        <Tile label="Pay due" value={kes(due)} tone="blue" />
-        <Tile label="Shortages" value={shortages.tone === 'owes' ? shortages.text.replace(/^Owes /, '') : shortages.text}
-          tone={shortages.tone === 'owes' ? 'red' : shortages.tone === 'favour' ? 'green' : 'grey'} />
-      </div>}
+      {!inRecord && (
+        <nav className="flex gap-2 print:hidden" aria-label="Account sections">
+          {([['pay', 'Pay'], ['shortages', 'Shortages']] as const).map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setSection(id)}
+              className={`px-4 py-2 rounded-full text-sm font-semibold border ${section === id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`}>
+              {label}
+            </button>
+          ))}
+        </nav>
+      )}
 
-      <section className="bg-white border rounded-xl p-3 sm:p-4 text-sm">
-        <div className="flex flex-wrap justify-between gap-2">
-          <span className="text-gray-500">Pay plan</span>
-          <span className="font-semibold text-right">{planText(currentPlan)}</span>
-        </div>
+      {section === 'pay' && (<>
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <Tile label="Paid this month" value={kes(data.paid_this_month)} tone="green" />
+        <Tile label="In payroll, not paid" value={kes(data.in_payroll_unpaid)} tone="blue" />
+        <Tile label="Not in payroll yet" value={kes(unpaid)} tone="teal" />
+      </div>
+
+      <section className="bg-white border rounded-xl p-3 sm:p-4 text-sm space-y-1">
+        <p className="font-semibold">{admin ? 'Pay plan' : 'My pay plan'}</p>
+        {currentPlan ? (<>
+          {(currentPlan.components || []).map((c: any, i: number) => (
+            <p key={c.id ?? i} className="font-medium">{componentText(c, currentPlan)}</p>
+          ))}
+          <p className="text-gray-600">Paid {currentPlan.pay_schedule}</p>
+          {currentPlan.effective_from > '2000' && <p className="text-xs text-gray-500">Since {currentPlan.effective_from}</p>}
+        </>) : <p className="text-gray-400">No pay plan</p>}
         {plans.length > 1 && (
-          <details className="mt-2">
+          <details className="pt-1">
             <summary className="text-xs text-blue-700 cursor-pointer">Earlier plans</summary>
             {plans.filter((p) => p !== currentPlan).map((p) => (
               <p key={p.id} className="text-xs text-gray-600 mt-1">{p.effective_from} to {p.effective_to || 'now'}: {planText(p)}</p>
@@ -165,7 +187,30 @@ export function EmployeePayView({ load, admin = false, actions, approval, embedd
         </section>
       )}
 
-      {!inRecord && <VarianceStatementView
+      <section className="bg-white border rounded-xl overflow-hidden">
+        <p className="px-3 sm:px-4 pt-3 font-semibold">Paid</p>
+        {paidHistory.length === 0 ? <p className="px-4 py-3 text-sm text-gray-400">None.</p> : (
+          <ul className="mt-2">
+            {paidShown.map((p) => (
+              <li key={p.key} className="border-t border-gray-100 px-3 sm:px-4 py-2 flex items-start justify-between gap-3 text-sm">
+                <span>
+                  {p.date} · {p.from_till ? 'From the till' : METHOD_TEXT[p.method] || p.method}
+                  <span className="block text-xs text-gray-500">{[p.shift_id ? `Shift #${p.shift_id}` : '', p.run_name || ''].filter(Boolean).join(' · ')}</span>
+                </span>
+                <span className="font-semibold tabular-nums text-green-700">{kes(p.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {paidHistory.length > SHIFTS_SHOWN && (
+          <button type="button" onClick={() => setAllPaid(!allPaid)} className="w-full py-2 text-sm text-blue-700 border-t border-gray-100 print:hidden">
+            {allPaid ? 'Show fewer' : `Show all ${paidHistory.length}`}
+          </button>
+        )}
+      </section>
+      </>)}
+
+      {!inRecord && section === 'shortages' && <VarianceStatementView
         statement={data.variances}
         earlier={data.debt}
         self={!admin}

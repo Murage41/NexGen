@@ -77,7 +77,7 @@ async function mutate(
 router.get('/me', requireAuth, async (req: any, res) => {
   try {
     if (!actor(req))
-      throw settlementError('Sign in as an employee to view My Pay.', 403);
+      throw settlementError('Sign in as an employee to view My Account.', 403);
     res.json({
       success: true,
       data: await employeePayStatement(actor(req)!, db),
