@@ -1,4 +1,5 @@
 import db from '../database';
+import { recountBatches } from './cacheRecounts';
 import type { Knex } from 'knex';
 
 /**
@@ -63,6 +64,54 @@ export async function computeBookStock(
   const totalSold = parseFloat(salesResult?.total) || 0;
 
   return totalDelivered + totalAdjusted - totalSold;
+}
+
+/**
+ * Book stock for one tank at many moments in one pass: the same sums as
+ * computeBookStock, read once and run forward instead of re-added per moment.
+ * `ats` are SQLite datetimes ('YYYY-MM-DD HH:MM:SS', as datetime() returns);
+ * a null moment, like an unreadable one in computeBookStock, counts nothing.
+ */
+export async function computeBookStockAtTimes(
+  tankId: number,
+  ats: Array<string | null>,
+  conn?: Knex
+): Promise<number[]> {
+  const qb = conn || db;
+  const events: Array<{ at: string; litres: number }> = [];
+  const add = (rows: any[]) => {
+    for (const row of rows) if (row.at) events.push({ at: String(row.at), litres: parseFloat(row.litres) || 0 });
+  };
+  add(await qb('fuel_deliveries')
+    .where('tank_id', tankId)
+    .whereNull('deleted_at')
+    .select(qb.raw('datetime(COALESCE(delivery_timestamp, created_at)) as at'), 'litres'));
+  if (await qb.schema.hasTable('tank_stock_adjustments')) {
+    add(await qb('tank_stock_adjustments')
+      .where('tank_id', tankId)
+      .select(qb.raw('datetime(adjustment_timestamp) as at'), 'litres_change as litres'));
+  }
+  add(await qb('pump_readings')
+    .join('pumps', 'pump_readings.pump_id', 'pumps.id')
+    .join('shifts', 'pump_readings.shift_id', 'shifts.id')
+    .where('pumps.tank_id', tankId)
+    .where('shifts.status', 'closed')
+    .select(
+      qb.raw("datetime(COALESCE(shifts.end_time, shifts.shift_date || ' 23:59:59')) as at"),
+      qb.raw('-pump_readings.litres_sold as litres'),
+    ));
+  events.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+  const order = ats.map((at, index) => ({ at, index })).filter((item) => item.at) as Array<{ at: string; index: number }>;
+  order.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  const result = ats.map(() => 0);
+  let running = 0;
+  let next = 0;
+  for (const item of order) {
+    while (next < events.length && events[next].at <= item.at) running += events[next++].litres;
+    result[item.index] = running;
+  }
+  return result;
 }
 
 /**
@@ -244,34 +293,19 @@ export async function consumeBatchesFIFO(
   return { totalCost, details };
 }
 
+// Counts again the batches these consumption rows drew from. Call it after the
+// rows are deleted: each batch's remaining litres = what it held less what is
+// still recorded as taken from it (services/cacheRecounts.ts), never an add-back.
 async function restoreBatchConsumptionRows(rows: any[], qb: Knex): Promise<void> {
-  const deliveryRestores = new Map<number, number>();
-  const adjustmentRestores = new Map<number, number>();
-
-  for (const row of rows) {
-    const litres = parseFloat(row.litres_consumed) || 0;
-    if (row.batch_id) {
-      deliveryRestores.set(row.batch_id, (deliveryRestores.get(row.batch_id) || 0) + litres);
-    }
-    if (row.adjustment_batch_id) {
-      adjustmentRestores.set(
-        row.adjustment_batch_id,
-        (adjustmentRestores.get(row.adjustment_batch_id) || 0) + litres,
-      );
-    }
-  }
-
-  for (const [batchId, litres] of deliveryRestores) {
-    await qb('delivery_batches').where({ id: batchId }).increment('remaining_litres', litres);
-  }
-  for (const [batchId, litres] of adjustmentRestores) {
-    await qb('tank_adjustment_batches').where({ id: batchId }).increment('remaining_litres', litres);
-  }
+  await recountBatches(qb, {
+    deliveryBatchIds: rows.filter((row) => row.batch_id).map((row) => Number(row.batch_id)),
+    adjustmentBatchIds: rows.filter((row) => row.adjustment_batch_id).map((row) => Number(row.adjustment_batch_id)),
+  });
 }
 
 /**
  * Reverse all batch consumption for a given shift and tank.
- * Adds litres back to delivery_batches.remaining_litres.
+ * Its batches' remaining litres are then counted again from what is still taken.
  */
 export async function reverseBatchConsumption(
   shiftId: number,
@@ -283,12 +317,12 @@ export async function reverseBatchConsumption(
   if (tankId !== null) query = query.where({ tank_id: tankId });
 
   const rows = await query.select('*');
-  await restoreBatchConsumptionRows(rows, qb);
 
-  // Delete the consumption records
+  // Delete the consumption records, then count their batches again
   let deleteQuery = qb('batch_consumption').where({ shift_id: shiftId });
   if (tankId !== null) deleteQuery = deleteQuery.where({ tank_id: tankId });
   await deleteQuery.delete();
+  await restoreBatchConsumptionRows(rows, qb);
 }
 
 export type TankCogsReplayResult = {
@@ -346,11 +380,11 @@ export async function replayTankCogsFrom(
     oldCosts.set(shiftId, (oldCosts.get(shiftId) || 0) + Number(row.total_cost || 0));
   }
 
-  await restoreBatchConsumptionRows(consumptionRows, qb);
   await qb('batch_consumption')
     .where({ tank_id: tankId })
     .whereIn('shift_id', shiftIds)
     .delete();
+  await restoreBatchConsumptionRows(consumptionRows, qb);
 
   const hasCorrections = await qb.schema.hasTable('cogs_corrections');
   const results: TankCogsReplayResult[] = [];

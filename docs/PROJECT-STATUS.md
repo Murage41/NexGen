@@ -4,11 +4,12 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-11-11.
+Last updated: 2026-11-12.
 
 ## Station PC
 
-- **Runs update #24** (`dab2acb`, see below), on top of #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
+- **Runs update #25** (`16b9642`, installed 2026-11-11 per the owner's report
+  in project memory; see below), on top of #24 `dab2acb`, #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
   Shortages, Pay plan & details). Before it #20 `90e3022` (phone shift page
   in tabs, cash count first in Money) and #19 `c35dc4e` (desktop shift page
   in tabs, one-press close, "Record my shift"). Latest migration
@@ -52,9 +53,8 @@ Last updated: 2026-11-11.
   balance moves, older shift corrections; Mistakes Fixed left Reports),
   Settings tabs Station profile / Pumps / System; phone home, Expenses and
   Reports the same way. Frontend only; no migration, no new packages.
-- **Pending station update #25** (owner asked for the station commands
-  2026-11-11; pushed to `main` in the commit after `dab2acb`; next update
-  number #26): edit history on open shifts. Migration
+- **Update #25 installed 2026-11-11** (`16b9642`, owner's report in project
+  memory; was pending since the owner asked for the commands that day): edit history on open shifts. Migration
   `20261104_057_shift_history` (table `shift_history`, never changed or
   deleted; `shift_expenses` gains `created_at` and
   `created_by_employee_id`). Readings, opening readings and cash/M-Pesa
@@ -64,6 +64,19 @@ Last updated: 2026-11-11.
   Suite `test:shift-history`. Needs a backup at install. History is latest
   first. The owner wants this and the next item on the station together, as
   one update (2026-11-05).
+- **Pending station update #26** (owner asked for the station commands
+  2026-11-12; pushed to `main` in the commit after `16b9642`; no migration,
+  no new packages, no phone rebuild): undo and delete recounts (`ROADMAP.md` item 4).
+  Archiving a customer keeps their debts and payments (old shifts and reports
+  no longer change); a supplier bill with any payment cannot be deleted;
+  reversing a customer or supplier payment, or a shift's FIFO use, counts the
+  debt, bill or fuel batch again (`services/cacheRecounts.ts`); the Today
+  drift check runs in one pass and also checks debts, bills and batches, and
+  the System check includes it; a late delivery or stock adjustment recounts
+  closed shifts' tank litres; an open-shift credit with a payment cannot be
+  removed. Suite `test:reversal-recounts`. Station data copy (to shift #157)
+  had no archived customers and no drift: no repair needed. Next update
+  number #27.
 - **Also in #25:** one dated shortages list (latest first, red
   adds, green takes off, owed after each line; server `ledger` on the
   statement, no database change), **My Pay renamed My Account** with tabs Pay
@@ -75,7 +88,7 @@ Last updated: 2026-11-11.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and updates #18 to #25.
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #26.
   Pushed 2026-11-11 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the

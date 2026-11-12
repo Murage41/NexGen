@@ -56,13 +56,19 @@ incremented) whenever a source changes, atomically in the same transaction:
 | Field | Recompute trigger |
 |---|---|
 | `tanks.current_stock_litres` | delivery changes, shift close, dip changes |
-| `delivery_batches.remaining_litres` | shift close (FIFO consumption) |
+| `delivery_batches.remaining_litres` (and adjustment batches) | shift close (FIFO consumption); reversal and replay recount (`recountBatches`) |
 | `credit_accounts.balance` | any credit, payment, reversal, move (`recomputeAccountBalance`) |
-| `credits.balance` | payment allocations |
+| `credits.balance` | payment allocations; reversal recounts (`recountCreditBalance`) |
 | `customer_invoices.balance`, `status` | payments, credit applications, notes (`recomputeInvoiceTotals`) |
-| `supplier_invoices.balance_due` | supplier payment changes |
+| `supplier_invoices.balance`, `status` | supplier payments; a void recounts (`recountSupplierBill`) |
 | `tank_dips.book_stock_at_dip`, `variance_litres` | deliveries or shift closes on/before the dip date |
-| `shift_tank_snapshots.*` | deliveries and dips on/before the shift date |
+| `shift_tank_snapshots` opening, deliveries, closing litres | deliveries and stock adjustments on/before the shift (`recountShiftTankSnapshotsFrom`); `cogs` by the FIFO replay |
+
+The debt, supplier bill and batch formulas live once in
+`services/cacheRecounts.ts`: reversals recount with them and the drift check
+(`findStoredBalanceDrift`, shown on Today and in the System check) compares
+every row with them. A forward allocation may subtract; a reversal never adds
+back.
 
 Decision rule for a new field: a physical event we recorded → A. Cheap to
 derive → B (default when unsure). Expensive and changes on known events → C,
@@ -70,6 +76,15 @@ with its triggers listed and a recompute function called from every trigger.
 
 Rejected patterns: storing a derived value without its triggers; incrementing a
 cache instead of recomputing; computing at event time and never updating.
+
+**Archiving master data never removes its financial rows.** Archiving a
+customer (or any party) only sets the account's `deleted_at`; its credits,
+payments and documents stay. History queries (positions as of a date,
+activity, cash inflows, shift figures) do not filter on the account's
+`deleted_at`; only lists and current-state views do. Every delete or archive
+guard counts from records, never from a stored balance, and checks
+allocation tables, not only a direct link column (general payments carry no
+`invoice_id`).
 
 ## 3. Approvals, permissions, idempotency
 

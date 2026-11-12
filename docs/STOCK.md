@@ -29,7 +29,8 @@ the same delivery and add the cost and invoice number; the supplier invoice is
 created then.
 
 **Backdated delivery:** enter the real date. NexGen recalculates stock, dip
-book figures and fuel cost for the affected shifts from that date.
+book figures, fuel cost and each closed shift's tank figures (opening and
+closing litres) from that date. A stock adjustment does the same.
 
 ## Low fuel warning
 
@@ -53,6 +54,8 @@ payment days. **Suppliers** → a supplier shows what we owe, how much is
 overdue and what was paid this month, with tabs **Bills** (unpaid first; date
 delivered, tank, litres, still owed, "N days late"), **Payments** and
 **Details**. **Record payment** pays a chosen bill or the oldest bills first.
+A bill with any payment on it cannot be deleted: void the payment first. A
+voided payment's bills are counted again from the payments still on them.
 
 ## Pumps and prices
 

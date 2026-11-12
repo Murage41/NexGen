@@ -45,7 +45,10 @@ npm run audit:receivables
 ```
 
 Both read only. Run them after any update with a migration. Any finding is
-investigated before carrying on.
+investigated before carrying on. `audit:operations` (and **Settings → System
+check**) also compares stored figures with their records: each dip's book
+stock, each customer debt, supplier bill and delivery's fuel left. The Today
+page shows a red line when one disagrees.
 
 ## Station profile and logo
 

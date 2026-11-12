@@ -1,5 +1,6 @@
 import type { Knex } from 'knex';
 import { auditReceivableIntegrity } from './receivableIntegrity';
+import { detectDrift } from './driftDetector';
 import { listStaleOpenShifts } from './shiftOperations';
 
 function rowsFromRaw(value: any): any[] {
@@ -14,6 +15,10 @@ export async function runOperationalIntegrityCheck(conn: Knex) {
   const sqliteMessage = String(quickRows[0]?.quick_check || 'unknown');
   const foreignKeyIssues = rowsFromRaw(await conn.raw('PRAGMA foreign_key_check'));
   const receivables = await auditReceivableIntegrity(conn);
+  // Stored figures against their records: dips' book stock, and each debt,
+  // supplier bill and fuel batch (customer balances are in receivables above).
+  const drift = await detectDrift(conn);
+  const storedBalanceIssues = drift.dips.drift_count + drift.stored_balances.drift_count;
   const staleShifts = await listStaleOpenShifts(conn, new Date(checkedAt));
 
   const negativeRevisionRow = await conn('shifts')
@@ -36,6 +41,7 @@ export async function runOperationalIntegrityCheck(conn: Knex) {
   const counts = {
     foreign_key_issues: foreignKeyIssues.length,
     receivable_issues: receivables.issues.length,
+    stored_balance_issues: storedBalanceIssues,
     negative_shift_revisions: Number(negativeRevisionRow?.count || 0),
     incomplete_operations: Number(incompleteOperationRow?.count || 0),
     legacy_closed_shifts_without_snapshot: Number(missingCloseSnapshotRow?.count || 0),
@@ -44,6 +50,7 @@ export async function runOperationalIntegrityCheck(conn: Knex) {
   const ok = sqliteMessage === 'ok'
     && counts.foreign_key_issues === 0
     && receivables.ok
+    && storedBalanceIssues === 0
     && counts.negative_shift_revisions === 0
     && counts.incomplete_operations === 0;
 
@@ -58,6 +65,12 @@ export async function runOperationalIntegrityCheck(conn: Knex) {
         issues: foreignKeyIssues.slice(0, 100),
       },
       receivables,
+      stored_balances: {
+        ok: storedBalanceIssues === 0,
+        count: storedBalanceIssues,
+        dips: drift.dips.drifted.slice(0, 100),
+        records: drift.stored_balances.drifted.slice(0, 100),
+      },
       shift_revisions: { ok: counts.negative_shift_revisions === 0, count: counts.negative_shift_revisions },
       idempotency: { ok: counts.incomplete_operations === 0, count: counts.incomplete_operations },
     },

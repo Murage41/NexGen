@@ -1389,6 +1389,27 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
       if (shiftCredit) {
         const now = new Date().toISOString();
 
+        // A debt with money paid on it is never half-removed (the shift dropping
+        // it while the customer still owes it): reverse the payment first, as
+        // Cancel shift requires. Payments pay debts through allocations; very
+        // old ones named the debt directly.
+        if (shiftCredit.credit_id) {
+          const allocation = await trx('credit_payment_allocations')
+            .where({ credit_id: shiftCredit.credit_id })
+            .whereNull('reversed_at')
+            .first('id');
+          const direct = await trx('credit_payments')
+            .where({ credit_id: shiftCredit.credit_id, status: 'posted' })
+            .whereNull('deleted_at')
+            .first('id');
+          if (allocation || direct) {
+            throw Object.assign(
+              new Error('This credit sale has a payment on it. Reverse the payment first, then remove the sale.'),
+              { httpStatus: 409, code: 'SHIFT_CREDIT_HAS_PAYMENT' },
+            );
+          }
+        }
+
         // Soft-delete the shift credit
         await trx('shift_credits').where({ id: req.params.creditId }).update({ deleted_at: now });
         await recordShiftHistory(trx, {
@@ -1396,15 +1417,10 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
           changes: [{ key: `credit:${shiftCredit.id}`, label: `Credit sale · ${shiftCredit.customer_name || 'customer'}`, from: Number(shiftCredit.amount), to: null }],
         });
 
-        // Soft-delete the main credits line item (only if no payments have been applied to it)
+        // Soft-delete the main credits line item (no payment is on it: checked above)
         if (shiftCredit.credit_id) {
           const credit = await trx('credits').where({ id: shiftCredit.credit_id }).first();
-          const payments = await trx('credit_payments')
-            .where({ credit_id: shiftCredit.credit_id })
-            .where({ status: 'posted' })
-            .whereNull('deleted_at');
-
-          if (credit && payments.length === 0) {
+          if (credit) {
             await trx('credits')
               .where({ id: shiftCredit.credit_id })
               .update({ deleted_at: now, status: 'cancelled' });
@@ -1414,9 +1430,6 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
               await recomputeAccountBalance(credit.account_id, trx);
             }
           }
-          // If payments exist, we don't touch the credit or balance — the payment
-          // has already modified the account state, so removing the credit would
-          // create an inconsistency. Manager must resolve manually.
         }
       }
 
@@ -1438,7 +1451,7 @@ router.delete('/:id/credits/:creditId', requireAdmin, async (req, res) => {
 
     res.json({ success: true });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.httpStatus || 500).json({ success: false, error: err.message, code: err.code });
   }
 });
 

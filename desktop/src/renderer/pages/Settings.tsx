@@ -259,7 +259,7 @@ export default function Settings() {
                 <span>
                   {integrityReport.ok
                     ? `Checks passed${integrityReport.counts.stale_open_shifts ? `; ${integrityReport.counts.stale_open_shifts} stale open shift warning` : ''}.`
-                    : `${integrityReport.counts.foreign_key_issues + integrityReport.counts.receivable_issues + integrityReport.counts.negative_shift_revisions + integrityReport.counts.incomplete_operations} integrity issue(s) require review.`}
+                    : `${integrityReport.counts.foreign_key_issues + integrityReport.counts.receivable_issues + (integrityReport.counts.stored_balance_issues || 0) + integrityReport.counts.negative_shift_revisions + integrityReport.counts.incomplete_operations} integrity issue(s) require review.`}
                 </span>
               </div>
             )}

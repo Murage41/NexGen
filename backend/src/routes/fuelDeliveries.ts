@@ -7,6 +7,7 @@ import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
 import { createDeliverySchema, updateDeliverySchema } from '../schemas';
 import { recomputeCache, recomputeDipsForTankFromDate, replayTankCogsFrom } from '../services/stockCalculator';
+import { recountShiftTankSnapshotsFrom } from '../services/tankStock';
 import {
   DELIVERY_STATUS_PENDING_PRICE,
   DELIVERY_STATUS_PRICED,
@@ -291,6 +292,7 @@ router.post('/', requireAdmin, validate(createDeliverySchema), async (req, res) 
       // Phase 1 stale-cache fix: any dip on/after this delivery's date is now
       // stale because its book_stock_at_dip didn't include this delivery.
       await recomputeDipsForTankFromDate(tank_id, date, trx);
+      await recountShiftTankSnapshotsFrom(trx, tank_id, date);
 
       // Ledger entry
       await trx('tank_stock_ledger').insert({
@@ -475,7 +477,9 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
 
           const earliestDate = existing.date < date ? existing.date : date;
           await recomputeDipsForTankFromDate(oldTankId, earliestDate, trx);
+          await recountShiftTankSnapshotsFrom(trx, oldTankId, earliestDate);
           await recomputeDipsForTankFromDate(newTankId, earliestDate, trx);
+          await recountShiftTankSnapshotsFrom(trx, newTankId, earliestDate);
 
           await trx('tank_stock_ledger').insert({
             tank_id: oldTankId,
@@ -520,6 +524,7 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
 
           const earliestDate = existing.date < date ? existing.date : date;
           await recomputeDipsForTankFromDate(newTankId, earliestDate, trx);
+          await recountShiftTankSnapshotsFrom(trx, newTankId, earliestDate);
         }
       } else {
         const newTank = await trx('tanks').where({ id: newTankId }).select('fuel_type').first();
@@ -536,6 +541,7 @@ router.put('/:id', requireAdmin, validate(updateDeliverySchema), async (req, res
         const capacityWarning = await deliveryCapacityWarning(trx, newTankId, newStock);
         if (capacityWarning) warnings.push(capacityWarning);
         await recomputeDipsForTankFromDate(newTankId, date, trx);
+        await recountShiftTankSnapshotsFrom(trx, newTankId, date);
       }
 
       const replayTankIds = new Set<number>([newTankId]);
@@ -616,6 +622,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 
       // Phase 1 stale-cache fix: dips on/after delivery date are stale
       await recomputeDipsForTankFromDate(delivery.tank_id, delivery.date, trx);
+      await recountShiftTankSnapshotsFrom(trx, delivery.tank_id, delivery.date);
 
       await trx('tank_stock_ledger').insert({
         tank_id: delivery.tank_id,

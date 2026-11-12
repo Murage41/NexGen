@@ -3,6 +3,7 @@ import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
 import { createSupplierPaymentSchema } from '../schemas';
+import { recountSupplierBill } from '../services/cacheRecounts';
 
 const router = Router();
 
@@ -155,28 +156,21 @@ router.delete('/:id', requireAdmin, async (req, res) => {
         );
       }
 
-      for (const allocation of allocations) {
-        const invoice = await trx('supplier_invoices').where({ id: allocation.invoice_id }).first();
-        if (invoice) {
-          const newBalance = Math.min(
-            Number(invoice.amount),
-            Math.round((Number(invoice.balance) + Number(allocation.amount)) * 100) / 100,
-          );
-          await trx('supplier_invoices').where({ id: allocation.invoice_id }).update({
-            balance: newBalance,
-            status: newBalance >= Number(invoice.amount) ? 'unpaid' : 'partial',
-          });
-        }
-      }
-
+      const voidedAt = new Date().toISOString();
       await trx('supplier_payment_allocations')
         .where({ payment_id: payment.id })
         .whereNull('deleted_at')
-        .update({ deleted_at: new Date().toISOString() });
+        .update({ deleted_at: voidedAt });
 
       await trx('supplier_payments').where({ id: req.params.id }).update({
-        deleted_at: new Date().toISOString(),
+        deleted_at: voidedAt,
       });
+
+      // Each bill it paid is counted again from the payments still on it
+      // (services/cacheRecounts.ts), never by adding the amount back.
+      for (const invoiceId of new Set(allocations.map((allocation) => Number(allocation.invoice_id)))) {
+        await recountSupplierBill(trx, invoiceId);
+      }
     });
 
     res.json({ success: true });

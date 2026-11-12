@@ -15,6 +15,7 @@ import { validate } from '../middleware/validate';
 import { createCreditAccountSchema, updateCreditAccountSchema } from '../schemas';
 import { evaluateCreditLimits } from '../services/creditLimits';
 import { approvalBindings, resolveApprover } from '../services/approval';
+import { readAccountBalance, recomputeAccountBalance } from '../services/accountBalance';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 
 const router = Router();
@@ -424,18 +425,26 @@ router.post('/:id/refunds', requireAdmin, async (req: any, res) => {
   }
 });
 
-// DELETE /:id - Remove a customer account (only if balance = 0 and type = 'customer')
+// DELETE /:id - Archive a customer account (type 'customer', nothing owed or held).
+// Archiving only hides the account from lists. Its credits, payments and
+// refunds stay exactly as recorded, so old shifts and reports never change
+// (they count active records only). The balance is counted again from source
+// rows here; the stored balance is a cache and could be stale.
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
-    const account = await db('credit_accounts').where({ id: req.params.id }).first();
+    const account = await db('credit_accounts').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!account) return res.status(404).json({ success: false, error: 'Credit account not found' });
 
     if (account.type === 'employee') {
       return res.status(400).json({ success: false, error: 'Cannot delete employee credit accounts' });
     }
 
-    if (Number(account.balance || 0) > 0) {
-      return res.status(400).json({ success: false, error: 'Cannot delete account with outstanding balance' });
+    const owed = roundMoney(await readAccountBalance(Number(account.id), db));
+    if (owed > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `${account.name} still owes KES ${owed.toFixed(2)}. Cannot delete an account with an outstanding balance.`,
+      });
     }
     const held = roundMoney(await customerCreditBalance(Number(account.id), db) + await invoiceCustomerCredit(Number(account.id), db));
     if (held > 0) {
@@ -445,12 +454,9 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       });
     }
 
-    // Phase 7 fix: soft-delete to preserve audit trail (was hard-delete)
-    const now = new Date().toISOString();
     await db.transaction(async (trx) => {
-      await trx('credit_payments').where({ account_id: account.id }).update({ deleted_at: now });
-      await trx('credits').where({ account_id: account.id }).update({ deleted_at: now, status: 'cancelled' });
-      await trx('credit_accounts').where({ id: account.id }).update({ deleted_at: now });
+      await recomputeAccountBalance(Number(account.id), trx);
+      await trx('credit_accounts').where({ id: account.id }).update({ deleted_at: new Date().toISOString() });
     });
 
     res.json({ success: true, message: 'Account archived' });

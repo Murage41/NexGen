@@ -1,6 +1,7 @@
 import type { Knex } from 'knex';
 import { readAccountBalance, recomputeAccountBalance } from './accountBalance';
 import { getKenyaDate } from '../utils/timezone';
+import { recountCreditBalance } from './cacheRecounts';
 import {
   postInvoiceAccountingEvent,
   receivingAccountForMethod,
@@ -564,25 +565,22 @@ export async function reverseMoneyAccountPaymentInTransaction(
   }
 
   for (const allocation of allocations) {
-    const credit = await trx('credits').where({ id: allocation.credit_id }).first();
+    const credit = await trx('credits').where({ id: allocation.credit_id }).first('id');
     if (!credit) {
       throw httpError('An allocated credit record is missing.', 409, 'CREDIT_ALLOCATION_MISSING');
     }
-    const restoredCents = Math.min(
-      toCents(credit.amount),
-      toCents(credit.balance) + toCents(allocation.amount_applied),
-    );
-    await trx('credits').where({ id: credit.id }).update({
-      balance: fromCents(restoredCents),
-      status: restoredCents >= toCents(credit.amount) ? 'outstanding' : 'partial',
-    });
   }
 
+  // Release the payment's allocations, then count each debt it paid again from
+  // the payments still on it (services/cacheRecounts.ts), never by adding back.
   const reversedAt = new Date().toISOString();
   await trx('credit_payment_allocations')
     .where({ payment_id: payment.id })
     .whereNull('reversed_at')
     .update({ reversed_at: reversedAt });
+  for (const creditId of new Set(allocations.map((allocation) => Number(allocation.credit_id)))) {
+    await recountCreditBalance(trx, creditId);
+  }
   await trx('credit_payments').where({ id: payment.id }).update({
     status: 'reversed',
     reversed_at: reversedAt,

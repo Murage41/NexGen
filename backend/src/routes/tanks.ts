@@ -5,7 +5,7 @@ import { validate } from '../middleware/validate';
 import { createTankStockAdjustmentSchema } from '../schemas';
 import { computeBookStock, recomputeCache, recomputeDipsForTankFromDate } from '../services/stockCalculator';
 import { getKenyaDate } from '../utils/timezone';
-import { averageDailySalesByTank, tanksWithStockNow } from '../services/tankStock';
+import { averageDailySalesByTank, recountShiftTankSnapshotsFrom, tanksWithStockNow } from '../services/tankStock';
 
 const router = Router();
 
@@ -420,6 +420,7 @@ router.post('/:id/adjustments', requireAdmin, validate(createTankStockAdjustment
 
       const newStock = await recomputeCache(tank.id, trx);
       await recomputeDipsForTankFromDate(tank.id, adjustmentDate, trx);
+      await recountShiftTankSnapshotsFrom(trx, tank.id, adjustmentDate);
 
       await trx('tank_stock_ledger').insert({
         tank_id: tank.id,

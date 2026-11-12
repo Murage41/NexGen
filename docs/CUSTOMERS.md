@@ -47,6 +47,9 @@ the customer. The customer list shows **Over limit** and **Overdue**.
   having paid more than they owe, the extra is their credit. It pays their next
   credit automatically, or is paid back with **Refund** (amount, cash or
   M-Pesa, approval). A customer holding credit cannot be removed.
+- **Removing a customer** needs them to owe nothing and hold no credit,
+  counted from their records. It only takes them off the lists: their debts
+  and payments stay, so old shifts and reports never change.
 
 ## Invoice customers
 

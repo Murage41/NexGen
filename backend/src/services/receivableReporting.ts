@@ -19,10 +19,11 @@ export function previousBusinessDate(date: string) {
 // Closed-shift corrections (services/shiftCorrections.ts) reverse a credit or
 // payment on the day they are posted. Until then it counted, so positions and
 // activity for earlier dates keep it; the reversal lands on its own date.
+// Archived customers stay in history: archiving hides an account from lists
+// but never removes its records (routes/creditAccounts.ts).
 function moneyCustomer(query: any) {
   return query
     .join('credit_accounts as account', 'credit.account_id', 'account.id')
-    .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where(function (this: any) {
       this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
@@ -37,7 +38,6 @@ function moneyCustomerPayment(db: Knex) {
       db.raw('account.id = COALESCE(payment.account_id, source_credit.account_id)'),
     )
     .whereNull('payment.deleted_at')
-    .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where(function (this: any) {
       this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
@@ -87,7 +87,6 @@ async function moneyNetByAccount(db: Knex, asOfDate: string) {
     .sum({ total: 'payment.amount' }), -1);
   add(await db('customer_refunds as refund')
     .join('credit_accounts as account', 'refund.account_id', 'account.id')
-    .whereNull('account.deleted_at')
     .where('refund.status', 'posted')
     .where('refund.refund_date', '<=', asOfDate)
     .groupBy('account.id')
@@ -109,7 +108,6 @@ export async function getReceivablePositionAsOf(db: Knex, asOfDate: string) {
   // owed, services/invoiceAdjustments.ts) is owed money, not a negative debt.
   const invoiceEvents = await db('invoice_accounting_events as event')
     .join('credit_accounts as account', 'event.account_id', 'account.id')
-    .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where('account.billing_mode', 'invoice')
     .where('event.posting_date', '<=', asOfDate)
@@ -313,7 +311,6 @@ export async function getDirectReceivableCashInflows(db: Knex, from: string, to:
     .where('payment.status', 'posted')
     .whereNull('payment.shift_id')
     .where((q: any) => q.whereNull('payment.payment_type').orWhereNot('payment.payment_type', 'adjustment'))
-    .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where(function (this: any) {
       this.whereNull('account.billing_mode').orWhere('account.billing_mode', 'money');
@@ -333,7 +330,6 @@ export async function getDirectReceivableCashInflows(db: Knex, from: string, to:
 
   const invoicePaymentEvents = await db('invoice_accounting_events as event')
     .join('credit_accounts as account', 'event.account_id', 'account.id')
-    .whereNull('account.deleted_at')
     .where('account.type', 'customer')
     .where('account.billing_mode', 'invoice')
     .whereIn('event_type', ['invoice_payment', 'invoice_payment_reversal'])

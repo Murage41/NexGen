@@ -37,6 +37,7 @@
     "test:shift-drawer-wage": "tsx scripts/test_shift_drawer_wage.ts",
     "test:shift-date": "tsx scripts/test_shift_date.ts",
     "test:shift-history": "tsx scripts/test_shift_history.ts",
+    "test:reversal-recounts": "tsx scripts/test_reversal_recounts.ts",
     "test:employee-account": "tsx scripts/test_employee_account.ts",
     "test:closing-total-corrections": "tsx scripts/test_closing_total_corrections.ts",
     "test:customer-shift-corrections": "tsx scripts/test_customer_shift_corrections.ts",

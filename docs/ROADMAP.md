@@ -21,6 +21,8 @@ analyses stay in `D:\NexGen\.claude\plans\`.
    ledger and My Account** (below; owner, 2026-11-05: one station update).
 3. **The owner's other issues** (bugs from over-complication): each with due
    diligence before code.
+4. **Undo and delete recounts** (owner asked 2026-11-12 how reversals work;
+   chose "all, money bugs first"). Plan below; built for update #26.
 
 Done: shift date on the open-shift form and B2 (money-only invoice notes)
 both went to the station with #18.
@@ -267,6 +269,39 @@ shortages on one long page.
   https://quickbooks.intuit.com/learn-support/en-us/accounts-receivable/create-and-view-customer-statements/00/186219);
   one record per thing with tabs (SAP Fiori object page, above).
 
+## Undo and delete recounts (owner, 2026-11-12), built for #26
+
+**Today** (audit 2026-11-12): most figures already recount from active
+entries (shift figures, account and invoice balances, shortages, stock).
+Found: archiving a customer marked all their debts and payments removed
+(`routes/creditAccounts.ts`), so old shifts lost those receipts; a supplier
+bill paid by a general payment could be deleted (`routes/supplierInvoices.ts`
+checked only `invoice_id`); debt, bill and batch balances were reversed by
+adding back, capped, and nothing checked them; the Today drift check re-added
+the stock history per dip (1.4 s at a year, 3.4 s at two); shift tank figures
+were never recounted after a late delivery; removing an open-shift credit with
+a payment half-removed it.
+
+**What changes**
+- Archive hides the account only; checks owed and held from records; history
+  reports keep archived customers.
+- Supplier bill delete refused with any live payment or allocation.
+- Reversals recount debts, bills and fuel batches (`services/cacheRecounts.ts`);
+  the drift check and System check compare all three; dips in one pass.
+- Late delivery or adjustment recounts closed shifts' tank litres.
+- Open-shift credit with a payment: refused (as Cancel shift).
+- Station data copy (to shift #157): no archived customers, no drift in
+  debts, bills or batches, no untracked supplier payments; no repair needed.
+- Practice: a customer with entries is blocked, not deleted
+  (https://learn.microsoft.com/en-us/dynamics365/business-central/receivables-how-block-customers);
+  payments are unapplied before a paid entry is cancelled
+  (https://learn.microsoft.com/cs-cz/training/modules/enter-payments-dynamics-365-business-central/3-unapply,
+  https://odoo-modules.trobz.com/oca/account-reconcile/18.0/account_move_reconcile_forbid_cancel.html);
+  open items reconcile to their source entries
+  (https://docs.oracle.com/en/cloud/saas/financials/24b/faugl/account-reconciliation-and-subledgers.html).
+- Won't change: undo of a payment correction re-pays debts oldest first, so
+  which debt shows as paid can differ; totals are exact.
+
 ## Later, in order
 
 - **B3** Editable unbilled invoice fuel, draft refresh, limit and litre checks.
@@ -275,7 +310,8 @@ shortages on one long page.
 - **B6** Office customer/invoice payments, employee receipts, refunds.
 - **B7** Corrections to wages paid from the till, separate from earned pay.
 - **C1** Supplier cash flow from actual supplier payments. **C2** Supplier
-  payables drift audit.
+  payables drift audit (bill balances are checked since #26; supplier totals
+  and statements remain).
 - **D1–D5** Deliveries as order → goods received → supplier invoice matching;
   supplier price/document amendments; physical stock adjustments and returns.
   Meter readings are never edited.

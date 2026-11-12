@@ -65,6 +65,16 @@ The shift page and reports show current figures; **Original close → View
 original figures** shows the saved close. The desktop **Corrections** page
 lists every correction; the daily report lists the day's.
 
+## How removing and undoing work
+
+Nothing is overwritten or erased. A removed entry is kept and marked removed,
+with who and when; a correction or an undo is a new entry. Every total (a
+shift's figures, what a customer owes, a supplier bill, tank stock, fuel left
+from a delivery) is counted again from the entries still active, so removing
+something brings the figures back exactly. A credit sale on an open shift
+cannot be removed while a payment is on it: reverse the payment first.
+**Settings → System check** compares every stored figure with its records.
+
 ## Undo
 
 From the desktop **Corrections** page: **Undo this correction**, with a reason

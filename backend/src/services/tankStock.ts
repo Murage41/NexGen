@@ -112,3 +112,46 @@ export async function shiftTankMovement(
   }
   return movement;
 }
+
+// A closed shift's tank figures (shift_tank_snapshots) are counted again when
+// a delivery or stock adjustment lands on or before it: a late delivery
+// changes the opening stock of every later shift and the deliveries of the
+// shift it fell in. Same formula as the close (shiftTankMovement); the shift's
+// own sales litres and its FIFO cost stay as recorded.
+export async function recountShiftTankSnapshotsFrom(conn: Conn, tankId: number, fromDate: string): Promise<number> {
+  const sqliteTs = (value: string) => String(value).slice(0, 19).replace('T', ' ');
+  const rows = await conn('shift_tank_snapshots as snap')
+    .join('shifts', 'snap.shift_id', 'shifts.id')
+    .where('snap.tank_id', tankId)
+    .where('shifts.status', 'closed')
+    .whereNotNull('shifts.start_time')
+    .whereNotNull('shifts.end_time')
+    // A day early: a Kenya date starts three hours before midnight UTC.
+    .whereRaw("datetime(shifts.end_time) >= datetime(?, '-1 day')", [`${String(fromDate).slice(0, 10)} 00:00:00`])
+    .select('snap.id', 'snap.opening_stock_litres', 'snap.deliveries_litres', 'snap.sales_litres', 'snap.closing_stock_litres',
+      'shifts.start_time', 'shifts.end_time');
+  let changed = 0;
+  for (const row of rows as any[]) {
+    const startTs = sqliteTs(row.start_time);
+    const untilTs = sqliteTs(row.end_time);
+    const opening = await computeBookStock(tankId, startTs, conn as Knex);
+    const delivered: any = await conn('fuel_deliveries')
+      .where({ tank_id: tankId })
+      .whereNull('deleted_at')
+      .whereRaw('datetime(COALESCE(delivery_timestamp, created_at)) > datetime(?)', [startTs])
+      .whereRaw('datetime(COALESCE(delivery_timestamp, created_at)) <= datetime(?)', [untilTs])
+      .sum({ total: 'litres' })
+      .first();
+    const deliveries = parseFloat(delivered?.total) || 0;
+    const closing = opening + deliveries - (parseFloat(row.sales_litres) || 0);
+    const same = (a: unknown, b: number) => Math.abs((parseFloat(String(a)) || 0) - b) < 0.005;
+    if (same(row.opening_stock_litres, opening) && same(row.deliveries_litres, deliveries) && same(row.closing_stock_litres, closing)) continue;
+    await conn('shift_tank_snapshots').where({ id: row.id }).update({
+      opening_stock_litres: opening,
+      deliveries_litres: deliveries,
+      closing_stock_litres: closing,
+    });
+    changed += 1;
+  }
+  return changed;
+}

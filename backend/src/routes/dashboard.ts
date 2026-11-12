@@ -368,12 +368,12 @@ router.get('/', async (req: any, res) => {
     // Phase 11: embed drift summary so the dashboard can flag Category C
     // cache drift the moment it appears. If this query ever becomes slow,
     // move it behind a ?include=drift flag.
-    let driftSummary: { ok: boolean; dip_drift_count: number; account_drift_count: number; checked_at: string };
+    let driftSummary: { ok: boolean; dip_drift_count: number; account_drift_count: number; stored_balance_drift_count: number; checked_at: string };
     try {
       driftSummary = await detectDriftSummary();
     } catch (e: any) {
       console.error('[dashboard:drift] ERROR', e.message);
-      driftSummary = { ok: true, dip_drift_count: 0, account_drift_count: 0, checked_at: new Date().toISOString() };
+      driftSummary = { ok: true, dip_drift_count: 0, account_drift_count: 0, stored_balance_drift_count: 0, checked_at: new Date().toISOString() };
     }
 
     const fullData = {

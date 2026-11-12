@@ -111,12 +111,22 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     const existing = await db('supplier_invoices').where({ id: req.params.id }).whereNull('deleted_at').first();
     if (!existing) return res.status(404).json({ success: false, error: 'Invoice not found' });
 
+    // A payment paid this bill if it names it, or if it was spread over the
+    // oldest bills and part of it landed here (supplier_payment_allocations).
     const paymentCount = await db('supplier_payments')
       .where('invoice_id', req.params.id)
       .whereNull('deleted_at')
       .count('id as count')
       .first();
-    if (Number((paymentCount as any)?.count) > 0) {
+    const allocationCount = await db('supplier_payment_allocations as allocation')
+      .join('supplier_payments as payment', 'allocation.payment_id', 'payment.id')
+      .where('allocation.invoice_id', req.params.id)
+      .whereNull('allocation.deleted_at')
+      .whereNull('payment.deleted_at')
+      .count('allocation.id as count')
+      .first();
+    const paidDown = Math.round(Number(existing.balance) * 100) < Math.round(Number(existing.amount) * 100);
+    if (Number((paymentCount as any)?.count) > 0 || Number((allocationCount as any)?.count) > 0 || paidDown) {
       return res.status(400).json({
         success: false,
         error: 'Cannot delete an invoice that has payments. Void the payments first.',
