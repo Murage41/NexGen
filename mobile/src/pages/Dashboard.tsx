@@ -57,6 +57,18 @@ export default function Dashboard() {
         </button>
       ))}
 
+      {isAdmin && (data?.invoice_alerts || []).map((a: any) => (
+        <button key={`invoice-${a.account_id}`} type="button" onClick={() => navigate(`/invoice-customers/${a.account_id}`)}
+          className={`mb-4 flex w-full items-center gap-2 rounded-lg border p-3 text-left text-sm ${a.overdue_amount > 0 ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
+          <span className="flex-1">
+            <strong>{a.name}</strong>
+            {a.overdue_amount > 0 && ` · ${fmt(a.overdue_amount)} overdue ${a.days_past_due} days`}
+            {a.not_invoiced_late && ` · fuel not invoiced since ${new Date(a.not_invoiced_since).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })}`}
+          </span>
+          <ChevronRight size={16} />
+        </button>
+      ))}
+
       {/* Current Shift */}
       <div className="bg-white rounded-xl p-4 shadow-sm mb-4">
         <div className="flex items-center gap-2 mb-2">

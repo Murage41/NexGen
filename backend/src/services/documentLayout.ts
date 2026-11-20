@@ -30,7 +30,7 @@ export function longDate(value: unknown): string {
   return `${d} ${months[m - 1]} ${y}`;
 }
 
-const fuelName = (fuel: unknown) => {
+export const fuelName = (fuel: unknown) => {
   const text = String(fuel || '');
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 };
@@ -48,7 +48,17 @@ export type DocumentInput = {
   lines: DocumentLine[];
   totals: Array<{ label: string; amount: number; strong?: boolean }>;
   notes: string[];
+  // Tables after the totals, each with a heading: an invoice's fuel by shift,
+  // a statement's activity, open invoices and ageing (services/documents.ts).
+  sections?: DocumentSection[];
 };
+export type DocumentSection = {
+  title: string;
+  columns: Array<{ header: string; width: number | '*'; right?: boolean }>;
+  rows: string[][];
+  total?: string[];
+};
+export const money2 = (value: unknown) => number2(value);
 
 function stationBlock(p: StationProfile): Content {
   const rows: Content[] = [{ text: p.trading_name || '', bold: true, fontSize: 12, color: NAVY }];
@@ -96,6 +106,33 @@ export function documentDefinition(input: DocumentInput): TDocumentDefinitions {
     { text: kes(row.amount), alignment: 'right', bold: row.strong, color: row.strong ? NAVY : undefined },
   ]);
   const payment = paymentFooter(profile);
+  const grid = {
+    hLineColor: () => LINE,
+    vLineColor: () => LINE,
+    hLineWidth: (i: number) => (i === 0 ? 0 : 0.7),
+    vLineWidth: () => 0,
+    paddingTop: () => 5,
+    paddingBottom: () => 5,
+  };
+  const sections: Content[] = (input.sections || []).filter((section) => section.rows.length > 0).flatMap((section): Content[] => {
+    const cell = (text: string, index: number, bold = false): TableCell => ({ text, bold, alignment: section.columns[index]?.right ? 'right' : 'left' });
+    return [
+      { text: section.title, bold: true, fontSize: 11, color: NAVY, margin: [0, 20, 0, 6] },
+      {
+        table: {
+          headerRows: 1,
+          dontBreakRows: true,
+          widths: section.columns.map((column) => column.width),
+          body: [
+            section.columns.map((column) => ({ text: column.header, style: 'th', alignment: column.right ? 'right' : 'left' }) as TableCell),
+            ...section.rows.map((row) => row.map((text, index) => cell(text, index))),
+            ...(section.total ? [section.total.map((text, index) => cell(text, index, true))] : []),
+          ],
+        },
+        layout: grid,
+      },
+    ];
+  });
 
   return {
     pageSize: 'A4',
@@ -141,14 +178,7 @@ export function documentDefinition(input: DocumentInput): TDocumentDefinitions {
       },
       {
         table: { headerRows: 1, widths: moneyOnly ? ['*', 95] : ['*', 70, 85, 95], body: lineRows },
-        layout: {
-          hLineColor: () => LINE,
-          vLineColor: () => LINE,
-          hLineWidth: (i: number) => (i === 0 ? 0 : 0.7),
-          vLineWidth: () => 0,
-          paddingTop: () => 5,
-          paddingBottom: () => 5,
-        },
+        layout: grid,
       },
       {
         columns: [
@@ -157,6 +187,7 @@ export function documentDefinition(input: DocumentInput): TDocumentDefinitions {
         ],
       },
       ...input.notes.map((note) => ({ text: note, margin: [0, 10, 0, 0] as [number, number, number, number], color: GREY })),
+      ...sections,
       ...(profile.document_footer ? [{ text: profile.document_footer, margin: [0, 16, 0, 0] as [number, number, number, number] }] : []),
     ],
     footer: (currentPage: number, pageCount: number) => ({

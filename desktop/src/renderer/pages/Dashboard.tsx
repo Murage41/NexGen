@@ -76,6 +76,17 @@ export default function Dashboard() {
       ))}
 
       <LowStockNotice tanks={data.low_stock} onOpen={() => navigate('/tank-stock')} />
+      {(data.invoice_alerts || []).map((a: any) => (
+        <button key={`invoice-${a.account_id}`} type="button" onClick={() => navigate(`/customer-invoices?customer=${a.account_id}`)}
+          className={`mb-4 flex w-full items-center justify-between gap-2 rounded-lg border p-3 text-left text-sm ${a.overdue_amount > 0 ? 'border-red-200 bg-red-50 text-red-800 hover:bg-red-100' : 'border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100'}`}>
+          <span>
+            <strong>{a.name}</strong>
+            {a.overdue_amount > 0 && ` · ${formatKES(a.overdue_amount)} overdue ${a.days_past_due} days`}
+            {a.not_invoiced_late && ` · fuel not invoiced since ${new Date(a.not_invoiced_since).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })}`}
+          </span>
+          <ChevronRight size={16} className="shrink-0" />
+        </button>
+      ))}
 
       <Section title="Today">
         <Tile label="Sales so far" value={formatKES(data.today_net_sales ?? data.today_sales)}

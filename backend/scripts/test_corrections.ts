@@ -204,7 +204,7 @@ async function main() {
     console.log('PASS wrong fuel before invoicing: reversed, petrol added at the shift price, the attendant carries the 500');
 
     // A draft takes s1's fuel.
-    const draft = await call('POST', '/inv', desktop, { account_id: delta, from_date: daysAgo(10), to_date: daysAgo(10), agreed_prices: { diesel: 185, petrol: 175 } });
+    const draft = await call('POST', '/inv', desktop, { account_id: delta, to_date: daysAgo(10) });
     assert.equal(draft.status, 201, JSON.stringify(draft.body));
     const draftId = draft.body.data.id;
     const draftLines = async () => Object.fromEntries((await db('invoice_lines').where({ invoice_id: draftId })).map((l: any) => [l.fuel_type, Number(l.total_litres)]));
@@ -230,12 +230,13 @@ async function main() {
     console.log('PASS wrong litres in a draft: better by 360, it reduces what the attendant owes; the draft refreshed');
 
     // ---- An issued, paid invoice for s2 ----
-    const inv = await call('POST', '/inv', desktop, { account_id: delta, from_date: daysAgo(9), to_date: daysAgo(9), agreed_prices: { diesel: 185, petrol: 175 } });
+    const inv = await call('POST', '/inv', desktop, { account_id: delta, to_date: daysAgo(9) });
     const invId = inv.body.data.id;
     assert.equal((await call('POST', `/inv/${invId}/issue`, desktop, {})).status, 200);
     const invoice = async () => db('customer_invoices').where({ id: invId }).first();
-    assert.equal(Number((await invoice()).total_amount), 40 * 175 + 10 * 185);
-    assert.equal((await call('POST', '/inv/payments', desktop, { account_id: delta, amount: 8850, payment_method: 'cash' })).status, 201);
+    const pumpAmount = Number((await db('invoice_consumption').whereIn('id', [e4, e5]).sum({ t: 'retail_amount' }).first() as any).t);
+    assert.equal(Number((await invoice()).total_amount), pumpAmount, 'billed at the pump amounts');
+    assert.equal((await call('POST', '/inv/payments', desktop, { account_id: delta, amount: pumpAmount, payment_method: 'cash' })).status, 201);
     assert.equal((await invoice()).status, 'paid');
 
     // ---- Issued fuel stays fixed, whether paid or unpaid ----
@@ -260,7 +261,7 @@ async function main() {
     const body6 = { record_type: 'fuel_on_account', error_kind: 'wrong_customer', target_id: e6, account_id: delta, ...reason };
     const p6 = (await call('POST', '/corrections/preview', desktop, body6)).body.data;
     const t6 = await token('correction', { plan_hash: p6.plan_hash });
-    const gInv = (await call('POST', '/inv', desktop, { account_id: gamma, from_date: daysAgo(9), to_date: daysAgo(9), agreed_prices: { petrol: 170 } })).body.data.id;
+    const gInv = (await call('POST', '/inv', desktop, { account_id: gamma, to_date: daysAgo(9) })).body.data.id;
     assert.equal((await call('POST', `/inv/${gInv}/issue`, desktop, {})).status, 200);
     assert.equal((await call('POST', '/corrections', desktop, { ...body6, plan_hash: p6.plan_hash, approval_token: t6 })).body.code, 'ISSUED_INVOICE_SOURCE_FIXED');
     assert.equal((await preview({ error_kind: 'wrong_customer', target_id: e6, account_id: delta })).body.code, 'ISSUED_INVOICE_SOURCE_FIXED');
@@ -348,6 +349,28 @@ async function main() {
     assert.equal(detail.lines.length, 2);
     assert(detail.lines.every((line: any) => !line.document_type), 'unbilled corrections do not manufacture invoice notes');
     console.log('PASS the register lists unbilled/draft corrections and preserves the issued boundary');
+
+    // ---- A fuel correction past the credit limit needs approval, kept like a shift's ----
+    await db('credit_accounts').where({ id: gamma }).update({ credit_limit: 100 });
+    const overLimit = { error_kind: 'missing', account_id: gamma, shift_id: s3.id, fuel_type: 'diesel', litres: 5 };
+    const pOver = await preview(overLimit);
+    assert.equal(pOver.status, 200, JSON.stringify(pOver.body));
+    assert.equal(pOver.body.data.needs_override, true, 'over the limit');
+    assert(pOver.body.data.effects.some((e: string) => /credit limits/.test(e)), 'the preview says why');
+    const unapproved = await call('POST', '/corrections', desktop, {
+      record_type: 'fuel_on_account', ...reason, ...overLimit, plan_hash: pOver.body.data.plan_hash,
+      approval_token: await token('correction', { plan_hash: pOver.body.data.plan_hash }),
+    });
+    assert.equal(unapproved.body.code, 'OVERRIDE_REQUIRED', 'not posted without approving the limit');
+    const approved = await correct({ ...overLimit, limit_override: true });
+    assert.equal(approved.status, 201, JSON.stringify(approved.body));
+    const overEntry = approved.body.data.lines.find((l: any) => l.action === 'add').created_record_id;
+    assert.equal((await db('credit_limit_overrides').where({ invoice_consumption_id: overEntry })).length, 1, 'the approval is kept on the customer');
+    // Less fuel on the same customer is never stopped by the limit.
+    const lower = await preview({ error_kind: 'wrong_litres', target_id: overEntry, litres: 2 });
+    assert.equal(lower.body.data.needs_override, false, 'a smaller amount needs no limit approval');
+    await db('credit_accounts').where({ id: gamma }).update({ credit_limit: null });
+    console.log('PASS a fuel correction past the credit limit needs approval, kept on the customer');
   } finally {
     server?.close();
     await db.destroy();

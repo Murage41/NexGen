@@ -4,11 +4,13 @@ import { recomputeInvoiceTotals, roundMoney } from './receivablePayments';
 
 type DbConnection = Knex | Knex.Transaction;
 
+// A draft bills every fill of the customer's not yet invoiced, from closed
+// shifts up to one date: there is no start date, so nothing older is ever
+// left behind. Each fill is billed at the amount recorded at the pump; lines
+// are one per fuel and pump price, so the invoice matches the pump receipts.
 export type DraftReservationInput = {
   accountId: number;
-  fromDate: string;
   toDate: string;
-  agreedPrices?: Record<string, number>;
   notes?: string | null;
 };
 
@@ -16,22 +18,13 @@ function httpError(message: string, http: number, code?: string): Error {
   return Object.assign(new Error(message), { http, code });
 }
 
-function normalizeDateRange(fromDate: string, toDate: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
-    throw httpError('from_date and to_date must use YYYY-MM-DD format', 400, 'INVALID_DATE_RANGE');
-  }
-  if (fromDate > toDate) {
-    throw httpError('from_date cannot be after to_date', 400, 'INVALID_DATE_RANGE');
+function normalizeUpTo(toDate: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(toDate || ''))) {
+    throw httpError('Choose the date to invoice up to (YYYY-MM-DD).', 400, 'INVALID_DATE_RANGE');
   }
 }
 
-function normalizeAgreedPrice(value: unknown, fallback: number): number {
-  const price = value === undefined ? roundMoney(fallback) : roundMoney(Number(value));
-  if (!Number.isFinite(price) || price <= 0) {
-    throw httpError('Agreed invoice prices must be greater than zero', 400, 'INVALID_AGREED_PRICE');
-  }
-  return price;
-}
+const priceKey = (fuel: unknown, price: unknown) => `${String(fuel)}|${Math.round(Number(price) * 100)}`;
 
 async function getAccount(trx: DbConnection, accountId: number) {
   const account = await trx('credit_accounts')
@@ -48,10 +41,9 @@ async function getAccount(trx: DbConnection, accountId: number) {
 export async function getReservableConsumption(
   trx: DbConnection,
   accountId: number,
-  fromDate: string,
   toDate: string,
 ) {
-  normalizeDateRange(fromDate, toDate);
+  normalizeUpTo(toDate);
   return trx('invoice_consumption as ic')
     .join('shifts as s', 'ic.shift_id', 's.id')
     .where('ic.account_id', accountId)
@@ -61,7 +53,6 @@ export async function getReservableConsumption(
     .where(function (this: any) {
       this.whereNull('ic.entry_status').orWhere('ic.entry_status', 'active');
     })
-    .where('s.shift_date', '>=', fromDate)
     .where('s.shift_date', '<=', toDate)
     .select(
       'ic.id',
@@ -78,13 +69,12 @@ export async function getReservableConsumption(
 }
 
 function groupConsumption(rows: any[]) {
-  const grouped: Record<string, { ids: number[]; litres: number; retail: number }> = {};
+  const grouped = new Map<string, { fuel: string; price: number; ids: number[] }>();
   for (const row of rows) {
-    const fuelType = String(row.fuel_type);
-    const group = grouped[fuelType] ||= { ids: [], litres: 0, retail: 0 };
+    const key = priceKey(row.fuel_type, row.retail_price_at_time);
+    const group = grouped.get(key) || { fuel: String(row.fuel_type), price: roundMoney(Number(row.retail_price_at_time)), ids: [] };
     group.ids.push(Number(row.id));
-    group.litres += Number(row.litres || 0);
-    group.retail += Number(row.retail_amount || 0);
+    grouped.set(key, group);
   }
   return grouped;
 }
@@ -113,6 +103,10 @@ async function reserveIds(
   }
 }
 
+// A draft line holds the fills of one fuel at one pump price: its litres and
+// amount are their sums (the amount recorded at the pump, so the invoice equals
+// what the shifts recorded). A line left with no fill goes, and the draft's
+// period starts at its first fill.
 async function rebuildLineTotals(trx: Knex.Transaction, invoiceId: number) {
   const lines = await trx('invoice_lines').where({ invoice_id: invoiceId }).orderBy('id');
   let linkedEntries = 0;
@@ -125,17 +119,28 @@ async function rebuildLineTotals(trx: Knex.Transaction, invoiceId: number) {
         this.whereNull('entry_status').orWhere('entry_status', 'active');
       })
       .sum({ litres: 'litres' })
+      .sum({ amount: 'retail_amount' })
       .count({ entries: 'id' })
       .first();
-    const litres = roundMoney(Number((aggregate as any)?.litres || 0));
     const entries = Number((aggregate as any)?.entries || 0);
+    if (entries === 0) {
+      await trx('invoice_lines').where({ id: line.id }).delete();
+      continue;
+    }
     linkedEntries += entries;
     await trx('invoice_lines').where({ id: line.id }).update({
-      total_litres: litres,
-      line_total: roundMoney(litres * Number(line.agreed_price)),
+      total_litres: roundMoney(Number((aggregate as any)?.litres || 0)),
+      line_total: roundMoney(Number((aggregate as any)?.amount || 0)),
     });
   }
 
+  const first: any = await trx('invoice_consumption as ic')
+    .join('invoice_lines as il', 'ic.invoice_line_id', 'il.id')
+    .join('shifts as s', 'ic.shift_id', 's.id')
+    .where('il.invoice_id', invoiceId)
+    .min({ date: 's.shift_date' })
+    .first();
+  if (first?.date) await trx('customer_invoices').where({ id: invoiceId }).update({ from_date: first.date });
   await recomputeInvoiceTotals(invoiceId, trx);
   return linkedEntries;
 }
@@ -144,26 +149,24 @@ async function addRowsToDraft(
   trx: Knex.Transaction,
   invoice: any,
   rows: any[],
-  agreedPrices: Record<string, number> = {},
 ) {
   const groups = groupConsumption(rows);
   const existingLines = await trx('invoice_lines').where({ invoice_id: invoice.id });
-  const lineByFuel = new Map(existingLines.map((line: any) => [String(line.fuel_type), line]));
+  const lineByPrice = new Map(existingLines.map((line: any) => [priceKey(line.fuel_type, line.agreed_price), line]));
 
-  for (const [fuelType, group] of Object.entries(groups)) {
-    let line: any = lineByFuel.get(fuelType);
+  for (const [key, group] of groups) {
+    let line: any = lineByPrice.get(key);
     if (!line) {
-      const averageRetail = group.litres > 0 ? group.retail / group.litres : 0;
-      const agreedPrice = normalizeAgreedPrice(agreedPrices[fuelType], averageRetail);
+      if (!(group.price > 0)) throw httpError(`A ${group.fuel} fill has no pump price.`, 409, 'INVALID_AGREED_PRICE');
       const [lineId] = await trx('invoice_lines').insert({
         invoice_id: invoice.id,
-        fuel_type: fuelType,
+        fuel_type: group.fuel,
         total_litres: 0,
-        agreed_price: agreedPrice,
+        agreed_price: group.price,
         line_total: 0,
       });
-      line = { id: Number(lineId), fuel_type: fuelType, agreed_price: agreedPrice };
-      lineByFuel.set(fuelType, line);
+      line = { id: Number(lineId) };
+      lineByPrice.set(key, line);
     }
     await reserveIds(trx, Number(line.id), group.ids);
   }
@@ -182,18 +185,13 @@ export async function createReservedInvoiceDraft(
   conn: Knex,
   input: DraftReservationInput,
 ) {
-  normalizeDateRange(input.fromDate, input.toDate);
+  normalizeUpTo(input.toDate);
   return conn.transaction(async (trx) => {
     await getAccount(trx, input.accountId);
-    const rows = await getReservableConsumption(
-      trx,
-      input.accountId,
-      input.fromDate,
-      input.toDate,
-    );
+    const rows = await getReservableConsumption(trx, input.accountId, input.toDate);
     if (rows.length === 0) {
       throw httpError(
-        'No unbilled consumption from closed shifts exists in this date range',
+        'No fuel from closed shifts is waiting to be invoiced up to this date.',
         400,
         'NO_RESERVABLE_CONSUMPTION',
       );
@@ -202,7 +200,7 @@ export async function createReservedInvoiceDraft(
     const [invoiceId] = await trx('customer_invoices').insert({
       account_id: input.accountId,
       invoice_number: `DRAFT-${input.accountId}-${randomUUID()}`,
-      from_date: input.fromDate,
+      from_date: rows[0].shift_date,
       to_date: input.toDate,
       issue_date: null,
       status: 'draft',
@@ -212,7 +210,7 @@ export async function createReservedInvoiceDraft(
       notes: input.notes || null,
     });
     const invoice = await trx('customer_invoices').where({ id: invoiceId }).first();
-    const reservation = await addRowsToDraft(trx, invoice, rows, input.agreedPrices);
+    const reservation = await addRowsToDraft(trx, invoice, rows);
     const created = await trx('customer_invoices').where({ id: invoiceId }).first();
     return { invoice: created, ...reservation };
   });
@@ -242,19 +240,8 @@ export async function refreshInvoiceDraftReservation(conn: Knex, invoiceId: numb
           'LEGACY_DRAFT_INCONSISTENT',
         );
       }
-      const prices = Object.fromEntries(
-        (await trx('invoice_lines').where({ invoice_id: invoiceId })).map((line: any) => [
-          String(line.fuel_type),
-          Number(line.agreed_price),
-        ]),
-      );
       await trx('invoice_lines').where({ invoice_id: invoiceId }).delete();
-      const rows = await getReservableConsumption(
-        trx,
-        Number(invoice.account_id),
-        invoice.from_date,
-        invoice.to_date,
-      );
+      const rows = await getReservableConsumption(trx, Number(invoice.account_id), invoice.to_date);
       if (rows.length === 0) {
         throw httpError(
           'No unbilled closed-shift consumption remains for this legacy draft.',
@@ -262,7 +249,7 @@ export async function refreshInvoiceDraftReservation(conn: Knex, invoiceId: numb
           'LEGACY_DRAFT_EMPTY',
         );
       }
-      const reservation = await addRowsToDraft(trx, invoice, rows, prices);
+      const reservation = await addRowsToDraft(trx, invoice, rows);
       const updated = await trx('customer_invoices').where({ id: invoiceId }).first();
       return { invoice: updated, legacy_upgraded: true, ...reservation };
     }
@@ -270,12 +257,7 @@ export async function refreshInvoiceDraftReservation(conn: Knex, invoiceId: numb
     if (invoice.reservation_status !== 'reserved') {
       throw httpError('Draft reservation state is invalid', 409, 'INVALID_RESERVATION_STATE');
     }
-    const rows = await getReservableConsumption(
-      trx,
-      Number(invoice.account_id),
-      invoice.from_date,
-      invoice.to_date,
-    );
+    const rows = await getReservableConsumption(trx, Number(invoice.account_id), invoice.to_date);
     const reservation = rows.length
       ? await addRowsToDraft(trx, invoice, rows)
       : {
@@ -323,9 +305,9 @@ export async function validateDraftReservationForIssue(
       this.whereNot('ic.account_id', invoice.account_id)
         .orWhereNot('il.invoice_id', invoice.id)
         .orWhereRaw('ic.fuel_type <> il.fuel_type')
+        .orWhereRaw('ROUND(ic.retail_price_at_time * 100) <> ROUND(il.agreed_price * 100)')
         .orWhereNull('s.id')
         .orWhereNot('s.status', 'closed')
-        .orWhere('s.shift_date', '<', invoice.from_date)
         .orWhere('s.shift_date', '>', invoice.to_date)
         .orWhereNotNull('ic.deleted_at')
         .orWhere(function (this: any) {

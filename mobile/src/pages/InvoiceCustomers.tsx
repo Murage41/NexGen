@@ -18,6 +18,9 @@ type MonitorCustomer = {
   last_unbilled_date?: string | null;
   last_consumption_date?: string | null;
   total_exposure: number;
+  over_limit?: boolean;
+  overdue_amount?: number;
+  not_invoiced_late?: boolean;
   fuels: Record<string, { litres: number; retail_amount: number; entries: number }>;
   latest_open_invoices: Array<{ id: number; invoice_number: string; status: string; issue_date?: string | null; balance: number }>;
   recent_unbilled_consumption: Array<{ id: number; shift_id: number; shift_date: string; fuel_type: string; litres: number; retail_amount: number }>;
@@ -151,6 +154,11 @@ export default function InvoiceCustomers() {
                   <div className="min-w-0">
                     <p className="font-semibold text-gray-800 truncate">{customer.name}</p>
                     <p className="text-xs text-gray-400">{customer.phone || 'No phone'}</p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {customer.over_limit && <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">Over limit</span>}
+                      {Number(customer.overdue_amount || 0) > 0 && <span className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">Overdue</span>}
+                      {customer.not_invoiced_late && <span className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">Not invoiced</span>}
+                    </div>
                   </div>
                   {expanded ? <ChevronDown size={18} className="text-gray-400" /> : <ChevronRight size={18} className="text-gray-400" />}
                 </div>

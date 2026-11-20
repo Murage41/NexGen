@@ -4,7 +4,18 @@ import { getRetailPriceAsOf } from '../invoiceAccounting';
 import { assertIssuedSourceUnlocked, invoiceSourceIsIssued } from '../issuedInvoiceSource';
 import { resolveConsumptionSource } from '../invoiceConsumption';
 import { roundMoney } from '../receivablePayments';
+import { evaluateCreditLimits, recordCreditOverride } from '../creditLimits';
 import { cents, closedShift, httpError, kes } from './common';
+
+// A customer taking more fuel on account through a correction is checked
+// against their limits, as a sale on the shift is; going past them is approved
+// with the correction (request.limit_override) and recorded like a shift's.
+async function limitCheck(conn: Conn, accountId: number, increase: number) {
+  if (!(increase > 0)) return null;
+  const account = await conn('credit_accounts').where({ id: accountId }).first();
+  const check = await evaluateCreditLimits(account, increase, conn);
+  return check.breaches.length ? { account, check } : null;
+}
 
 // Corrections of fuel on account (an invoice customer's fuel entry on a closed
 // shift). Fuel on account is how a metered sale was paid, like cash or M-Pesa:
@@ -80,12 +91,12 @@ async function checkPumpSales(conn: Conn, shiftId: number, fuel: string, litres:
   }
 }
 
-// A draft of the customer's that will take unbilled fuel from that day.
+// A draft of the customer's that will take unbilled fuel from that day: a
+// draft takes every unbilled fill up to its date.
 async function draftCovering(conn: Conn, accountId: number, date: string) {
   return conn('customer_invoices')
     .where({ account_id: accountId, status: 'draft' })
     .whereNull('deleted_at')
-    .where('from_date', '<=', date)
     .where('to_date', '>=', date)
     .orderBy('id')
     .first('id', 'invoice_number');
@@ -109,6 +120,7 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
     where = await entryStage(conn, target);
   }
 
+  let needsOverride = false;
   // The right entry, if there is one.
   let add: null | { account: { id: number; name: string }; shift: { id: number; date: string }; fuel: string; litres: number; price: number } = null;
   const litresIn = (fallback?: number) => {
@@ -210,10 +222,17 @@ async function plan(conn: Conn, req: CorrectionRequest): Promise<RulePlan> {
     );
     if (draft) effects.push(`It goes on ${invoiceName(draft)}, which is refreshed.`);
     else effects.push(`${add.account.name} is billed for it on their next invoice.`);
+    const taken = target && Number(owner!.id) === Number(add.account.id) ? roundMoney(Number(target.retail_amount)) : 0;
+    const over = await limitCheck(conn, add.account.id, roundMoney(amount - taken));
+    if (over) {
+      needsOverride = true;
+      effects.push(`Over ${add.account.name}'s credit limits: ${over.check.breaches.map((b) => b.message).join(' ')}`);
+      effects.push(req.limit_override ? 'Going past the limit is approved with this correction.' : 'Approve going past the limit to post it.');
+    }
   }
 
   const dates = lines.map((l) => (l.shift_id === from?.id ? from!.date : add!.shift.date)).sort();
-  return { effective_date: dates[0], lines, documents: [], drafts: [...drafts], effects };
+  return { effective_date: dates[0], lines, documents: [], drafts: [...drafts], effects, needs_override: needsOverride };
 }
 
 async function apply(trx: Knex.Transaction, planned: Plan, ctx: ApplyContext) {
@@ -240,6 +259,8 @@ async function apply(trx: Knex.Transaction, planned: Plan, ctx: ApplyContext) {
 
   let createdId: number | null = null;
   if (add) {
+    // The reversal above is already done, so the whole new amount is the increase.
+    const over = planned.needs_override ? await limitCheck(trx, Number(add.party_id), Number(add.amount)) : null;
     const source = target && add.fuel_type === target.fuel_type
       ? { pump_id: target.pump_id, tank_id: target.tank_id }
       : await resolveConsumptionSource(trx, { fuelType: add.fuel_type as 'petrol' | 'diesel' });
@@ -259,6 +280,11 @@ async function apply(trx: Knex.Transaction, planned: Plan, ctx: ApplyContext) {
       created_by_record_correction_id: ctx.correctionId,
       created_by_employee_id: ctx.actorId,
     });
+    if (over) {
+      await recordCreditOverride(trx, {
+        account: over.account, shiftId: add.shift_id, consumptionId: Number(createdId), check: over.check, approver: ctx.approver, recordedBy: ctx.actorId,
+      });
+    }
     out[add.seq] = { created_record_id: Number(createdId) };
   }
 

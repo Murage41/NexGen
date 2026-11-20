@@ -39,7 +39,12 @@ export default function Customers() {
       const billed: Row[] = (invoice.data.data?.customers || []).map((customer: any) => ({
         key: `invoice-${customer.id}`, id: customer.id, name: customer.name, kind: 'invoice' as const,
         owes: Number(customer.total_exposure || 0),
-        flags: Number(customer.draft_count || 0) > 0 ? ['Draft invoice'] : [],
+        flags: [
+          customer.over_limit ? 'Over limit' : '',
+          Number(customer.overdue_amount || 0) > 0 ? 'Overdue' : '',
+          customer.not_invoiced_late ? 'Not invoiced' : '',
+          Number(customer.draft_count || 0) > 0 ? 'Draft invoice' : '',
+        ].filter(Boolean),
       }));
       setRows([...money, ...billed].sort((a, b) => a.name.localeCompare(b.name)));
     }).catch((err) => console.error('[Customers:load]', err?.response?.data || err?.message))
@@ -108,7 +113,7 @@ export default function Customers() {
                   </td>
                   <td className="p-3">
                     {row.flags.map((flag) => (
-                      <span key={flag} className={`mr-1 px-2 py-0.5 rounded text-xs font-semibold ${flag === 'Draft invoice' ? 'bg-gray-100 text-gray-700' : 'bg-red-100 text-red-700'}`}>{flag}</span>
+                      <span key={flag} className={`mr-1 px-2 py-0.5 rounded text-xs font-semibold ${flag === 'Draft invoice' ? 'bg-gray-100 text-gray-700' : flag === 'Not invoiced' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>{flag}</span>
                     ))}
                   </td>
                   <td className={`p-3 text-right tabular-nums font-semibold ${row.owes > 0 ? 'text-gray-900' : 'text-gray-400'}`}>{kes(row.owes)}</td>

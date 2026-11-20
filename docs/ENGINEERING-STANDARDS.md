@@ -30,6 +30,10 @@ corrected by a new, dated entry that refers to the original.
   another in the same transaction (customer, employee, station, or revenue).
 - **Money arithmetic in cents** (`Math.round(x * 100)`), rounded back with the
   existing helpers (`roundMoney`, `toMoney`). Never accumulate floats.
+- **A breakdown must add up to its total.** Entry litres can have 3 decimals
+  (diesel main meter) while totals are rounded to 2, so rounding each row
+  separately drifts. Share the total out by largest remainder (`shareOut` in
+  `services/documents.ts`), and test with 3-decimal litres.
 - **Retired financial features need historical-data coverage.** Test with
   nonzero old fields and missing retired configuration, not only a fresh
   empty database. Check nested API records as well as aggregate responses.

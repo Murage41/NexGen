@@ -25,6 +25,7 @@ import {
   reverseInvoicePayment,
   updateCreditAccount,
   getInvoiceDocument,
+  getInvoiceStatement,
   correctionApi,
 } from '../services/api';
 import { CorrectionForm } from '../../../../shared/ui/Corrections';
@@ -421,6 +422,7 @@ export default function InvoiceCustomerWorkspace({
             <button onClick={() => onReceivePayment(customer.id)} className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700">
               <Wallet size={16} /> Receive Payment
             </button>
+            <DocumentButton load={() => getInvoiceStatement(customer.id)} label="Statement" className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded hover:bg-gray-50" />
             <button onClick={() => setDebitNote(true)} className="inline-flex items-center gap-2 px-3 py-2 border border-green-700 text-green-800 text-sm font-medium rounded hover:bg-green-50" title="Add a separate amount this customer owes; recorded fuel stays fixed">
               Debit note
             </button>

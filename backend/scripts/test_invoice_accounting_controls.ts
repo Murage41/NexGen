@@ -227,8 +227,8 @@ async function seedDraft(db: Knex) {
     shift_id: shiftId,
     fuel_type: 'petrol',
     litres: 10,
-    retail_price_at_time: 190,
-    retail_amount: 1900,
+    retail_price_at_time: 185,
+    retail_amount: 1850,
     invoice_line_id: lineId,
     entry_status: 'active',
   });
@@ -254,15 +254,15 @@ async function run() {
     });
     assert.equal(issued.invoice_number, 'CINV-20260730-001');
     assert.equal(issued.due_date, '2026-08-29');
-    assert.equal(money(issued.retail_baseline_amount), 1900);
-    assert.equal(money(issued.price_adjustment_amount), -50);
+    assert.equal(money(issued.retail_baseline_amount), 1850);
+    assert.equal(money(issued.price_adjustment_amount), 0, 'billed at the pump price');
     assert.equal(money((await db('credit_accounts').where({ id: accountId }).first()).balance), 1850);
 
     const issueEvent = await db('invoice_accounting_events')
       .where({ source_key: `invoice:${invoiceId}:issue` })
       .first();
     assert.equal(money(issueEvent.receivable_delta), 1850);
-    assert.equal(money(issueEvent.revenue_adjustment), -50);
+    assert.equal(money(issueEvent.revenue_adjustment), 0);
 
     const paymentResult = await recordInvoicePayment(db, {
       accountId,
@@ -380,7 +380,7 @@ async function run() {
       .first();
     assert.equal(money(eventTotals?.receivable), 0, 'Accounting events did not net receivables to zero');
     assert.equal(money(eventTotals?.cash), 0, 'Payment and reversal did not net cash to zero');
-    assert.equal(money(eventTotals?.revenueAdjustment), -1900, 'full credit offsets the original fuel revenue plus the invoice price adjustment');
+    assert.equal(money(eventTotals?.revenueAdjustment), -1850, 'full credit offsets the original fuel revenue');
     const audit = await auditReceivableIntegrity(db);
     assert.equal(audit.ok, true, JSON.stringify(audit.issues));
 

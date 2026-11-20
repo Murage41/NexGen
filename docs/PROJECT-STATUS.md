@@ -4,12 +4,12 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-11-12.
+Last updated: 2026-11-20.
 
 ## Station PC
 
-- **Runs update #25** (`16b9642`, installed 2026-11-11 per the owner's report
-  in project memory; see below), on top of #24 `dab2acb`, #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
+- **Runs update #26** (`1a428d9`, installed by 2026-11-17 per the owner's
+  report; see below), on top of #25 `16b9642`, #24 `dab2acb`, #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
   Shortages, Pay plan & details). Before it #20 `90e3022` (phone shift page
   in tabs, cash count first in Money) and #19 `c35dc4e` (desktop shift page
   in tabs, one-press close, "Record my shift"). Latest migration
@@ -64,9 +64,8 @@ Last updated: 2026-11-12.
   Suite `test:shift-history`. Needs a backup at install. History is latest
   first. The owner wants this and the next item on the station together, as
   one update (2026-11-05).
-- **Pending station update #26** (owner asked for the station commands
-  2026-11-12; pushed to `main` in the commit after `16b9642`; no migration,
-  no new packages, no phone rebuild): undo and delete recounts (`ROADMAP.md` item 4).
+- **Update #26 installed by 2026-11-17** (owner's report; station now at
+  `1a428d9`; no migration, no new packages, no phone rebuild): undo and delete recounts (`ROADMAP.md` item 4).
   Archiving a customer keeps their debts and payments (old shifts and reports
   no longer change); a supplier bill with any payment cannot be deleted;
   reversing a customer or supplier payment, or a shift's FIFO use, counts the
@@ -77,6 +76,20 @@ Last updated: 2026-11-12.
   removed. Suite `test:reversal-recounts`. Station data copy (to shift #157)
   had no archived customers and no drift: no repair needed. Next update
   number #27.
+- **Pending station update #27** (owner asked to update the station
+  2026-11-20; pushed to `main` in the commit after `1a428d9`; next update number #28): an invoice customer with fuel not yet invoiced or a draft invoice
+  cannot be removed or switched to money billing (one check in
+  `routes/creditAccounts.ts`, `invoiceWorkLeft`; suite
+  `test:reversal-recounts`). No screen offered Remove for invoice customers,
+  so it was reachable only through the server. Then the invoice review
+  (`ROADMAP.md` item 5, owner's go-ahead 2026-11-18): drafts take all
+  unbilled fuel up to a date, billed at the pump amounts with one line per fuel
+  and price (no From date, no typed prices); invoice PDFs list **Fuel by
+  shift**; Overdue / Over limit / Not invoiced flags and Today reminders for
+  invoice customers, desktop and phone; a Statement PDF; fuel corrections check
+  the credit limit. New suite `test:invoice-followup`; 50 suites. No database
+  change, no new packages; **the phone app needs a rebuild** (`npm run
+  build:mobile`).
 - **Also in #25:** one dated shortages list (latest first, red
   adds, green takes off, owed after each line; server `ledger` on the
   statement, no database change), **My Pay renamed My Account** with tabs Pay
@@ -88,7 +101,7 @@ Last updated: 2026-11-12.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and updates #18 to #26.
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #27.
   Pushed 2026-11-11 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the

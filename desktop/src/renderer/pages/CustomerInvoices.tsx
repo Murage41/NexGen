@@ -6,7 +6,6 @@ import {
   getCustomerInvoice,
   previewCustomerInvoice,
   createCustomerInvoiceDraft,
-  updateCustomerInvoiceLine,
   issueCustomerInvoice,
   refreshCustomerInvoiceDraft,
   voidCustomerInvoice,
@@ -88,11 +87,6 @@ const fmt = (n: number) =>
   `KES ${Number(n || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' });
-const firstOfMonth = () => {
-  const d = new Date(today());
-  d.setDate(1);
-  return d.toLocaleDateString('en-CA');
-};
 
 export default function CustomerInvoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -108,15 +102,12 @@ export default function CustomerInvoices() {
 
   // Generate (draft) modal
   const [showGenerate, setShowGenerate] = useState(false);
-  const [genForm, setGenForm] = useState({ account_id: '', from_date: firstOfMonth(), to_date: today(), notes: '' });
+  const [genForm, setGenForm] = useState({ account_id: '', to_date: today(), notes: '' });
   const [preview, setPreview] = useState<any>(null);
   const [previewing, setPreviewing] = useState(false);
-  const [agreedPrices, setAgreedPrices] = useState<{ petrol?: string; diesel?: string }>({});
 
   // Detail modal
   const [detail, setDetail] = useState<any | null>(null);
-  const [editingLineId, setEditingLineId] = useState<number | null>(null);
-  const [editPrice, setEditPrice] = useState('');
   const [refreshingDraft, setRefreshingDraft] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [refreshMessage, setRefreshMessage] = useState('');
@@ -287,17 +278,16 @@ export default function CustomerInvoices() {
   }
 
   function openGenerate(preselectedAccountId?: number) {
-    setGenForm({ account_id: preselectedAccountId ? String(preselectedAccountId) : '', from_date: firstOfMonth(), to_date: today(), notes: '' });
+    setGenForm({ account_id: preselectedAccountId ? String(preselectedAccountId) : '', to_date: today(), notes: '' });
     setPreview(null);
-    setAgreedPrices({});
     setError('');
     setShowGenerate(true);
     setWorkspaceCustomer(null);
   }
 
   async function runPreview() {
-    if (!genForm.account_id || !genForm.from_date || !genForm.to_date) {
-      setError('Select account and date range');
+    if (!genForm.account_id || !genForm.to_date) {
+      setError('Select the customer and the date to invoice up to');
       return;
     }
     try {
@@ -305,16 +295,9 @@ export default function CustomerInvoices() {
       setPreviewing(true);
       const res = await previewCustomerInvoice({
         account_id: Number(genForm.account_id),
-        from: genForm.from_date,
         to: genForm.to_date,
       });
       setPreview(res.data.data);
-      // Pre-fill agreed_prices with the suggested retail avg
-      const prices: any = {};
-      for (const l of res.data.data.lines) {
-        prices[l.fuel_type] = String(l.suggested_agreed_price);
-      }
-      setAgreedPrices(prices);
     } catch (err: any) {
       setError(err?.response?.data?.error || err?.message || 'Preview failed');
     } finally {
@@ -331,14 +314,9 @@ export default function CustomerInvoices() {
       setError('');
       const payload: any = {
         account_id: Number(genForm.account_id),
-        from_date: genForm.from_date,
         to_date: genForm.to_date,
         notes: genForm.notes || undefined,
-        agreed_prices: {},
       };
-      for (const [ft, v] of Object.entries(agreedPrices)) {
-        if (v !== undefined && v !== '') payload.agreed_prices[ft] = Number(v);
-      }
       await createCustomerInvoiceDraft(payload);
       setShowGenerate(false);
       await loadInvoices();
@@ -454,27 +432,6 @@ export default function CustomerInvoices() {
       setError(err?.response?.data?.error || err?.message || 'The reversal could not be posted.');
     } finally {
       setReasonBusy(false);
-    }
-  }
-
-  async function saveLinePrice(invoiceId: number, lineId: number) {
-    setDetailError('');
-    try {
-      const priceNum = Number(editPrice);
-      if (!Number.isFinite(priceNum) || priceNum <= 0) {
-        setDetailError('Enter a valid price');
-        return;
-      }
-      await updateCustomerInvoiceLine(invoiceId, lineId, { agreed_price: priceNum });
-      setEditingLineId(null);
-      setEditPrice('');
-      // Refresh detail
-      const res = await getCustomerInvoice(invoiceId);
-      setDetail(res.data.data);
-      await loadInvoices();
-      await loadMonitor();
-    } catch (err: any) {
-      setDetailError(err?.response?.data?.error || err?.message);
     }
   }
 
@@ -1085,31 +1042,18 @@ export default function CustomerInvoices() {
                   ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
-                  <input
-                    type="date"
-                    value={genForm.from_date}
-                    onChange={(e) => {
-                      setGenForm({ ...genForm, from_date: e.target.value });
-                      setPreview(null);
-                    }}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
-                  <input
-                    type="date"
-                    value={genForm.to_date}
-                    onChange={(e) => {
-                      setGenForm({ ...genForm, to_date: e.target.value });
-                      setPreview(null);
-                    }}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Invoice fuel up to</label>
+                <input
+                  type="date"
+                  value={genForm.to_date}
+                  max={today()}
+                  onChange={(e) => {
+                    setGenForm({ ...genForm, to_date: e.target.value });
+                    setPreview(null);
+                  }}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
               </div>
               <button
                 onClick={runPreview}
@@ -1121,56 +1065,35 @@ export default function CustomerInvoices() {
 
               {preview && (
                 <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                  <p className="text-xs text-gray-500 mb-2">
-                    Found {preview.entries} unbilled entries in range
-                  </p>
+                  {preview.entries > 0 && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      {preview.entries} fills, {preview.first_date} to {preview.last_date}
+                    </p>
+                  )}
                   {preview.lines.length === 0 ? (
-                    <p className="text-sm text-gray-400">No unbilled consumption in this range.</p>
+                    <p className="text-sm text-gray-400">No fuel waiting to be invoiced up to this date.</p>
                   ) : (
                     <table className="w-full text-xs">
                       <thead className="text-gray-500">
                         <tr>
                           <th className="text-left py-1">Fuel</th>
+                          <th className="text-right py-1">Price</th>
                           <th className="text-right py-1">Litres</th>
-                          <th className="text-right py-1">Avg retail</th>
-                          <th className="text-right py-1 w-24">Agreed price</th>
-                          <th className="text-right py-1">Line total</th>
+                          <th className="text-right py-1">Amount</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {preview.lines.map((l: any) => {
-                          const price = Number(agreedPrices[l.fuel_type as 'petrol' | 'diesel'] || l.suggested_agreed_price);
-                          const lineTotal = l.total_litres * price;
-                          return (
-                            <tr key={l.fuel_type} className="border-t border-gray-200">
-                              <td className="py-1 capitalize font-medium">{l.fuel_type}</td>
-                              <td className="text-right">{Number(l.total_litres).toLocaleString()}</td>
-                              <td className="text-right text-gray-500">{fmt(l.avg_retail_price)}</td>
-                              <td className="text-right">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={agreedPrices[l.fuel_type as 'petrol' | 'diesel'] ?? ''}
-                                  onChange={(e) =>
-                                    setAgreedPrices({ ...agreedPrices, [l.fuel_type]: e.target.value })
-                                  }
-                                  className="w-20 border border-gray-300 rounded px-1 py-0.5 text-right"
-                                />
-                              </td>
-                              <td className="text-right font-medium">{fmt(lineTotal)}</td>
-                            </tr>
-                          );
-                        })}
+                        {preview.lines.map((l: any) => (
+                          <tr key={`${l.fuel_type}-${l.price}`} className="border-t border-gray-200">
+                            <td className="py-1 capitalize font-medium">{l.fuel_type}</td>
+                            <td className="text-right text-gray-500">{fmt(l.price)}</td>
+                            <td className="text-right">{Number(l.total_litres).toLocaleString()}</td>
+                            <td className="text-right font-medium">{fmt(l.amount)}</td>
+                          </tr>
+                        ))}
                         <tr className="border-t-2 border-gray-300 font-bold">
-                          <td colSpan={4} className="py-1 text-right">Total</td>
-                          <td className="text-right">
-                            {fmt(
-                              preview.lines.reduce((s: number, l: any) => {
-                                const p = Number(agreedPrices[l.fuel_type as 'petrol' | 'diesel'] || l.suggested_agreed_price);
-                                return s + l.total_litres * p;
-                              }, 0),
-                            )}
-                          </td>
+                          <td colSpan={3} className="py-1 text-right">Total</td>
+                          <td className="text-right">{fmt(preview.lines.reduce((sum: number, l: any) => sum + Number(l.amount), 0))}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -1254,10 +1177,9 @@ export default function CustomerInvoices() {
                       <th className="text-left px-3 py-2">Description</th>
                       {!monetaryDocument && <>
                         <th className="text-right px-3 py-2">Litres</th>
-                        <th className="text-right px-3 py-2">Agreed price</th>
+                        <th className="text-right px-3 py-2">Price</th>
                       </>}
                       <th className="text-right px-3 py-2">Line total</th>
-                      {detail.status === 'draft' && <th className="w-10"></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1270,43 +1192,8 @@ export default function CustomerInvoices() {
                       <tr key={l.id} className="border-t border-gray-100">
                         <td className="px-3 py-2 capitalize font-medium">{l.fuel_type}</td>
                         <td className="px-3 py-2 text-right">{Number(l.total_litres).toLocaleString()}</td>
-                        <td className="px-3 py-2 text-right">
-                          {editingLineId === l.id ? (
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editPrice}
-                              onChange={(e) => setEditPrice(e.target.value)}
-                              className="w-20 border border-gray-300 rounded px-1 py-0.5 text-right"
-                              autoFocus
-                            />
-                          ) : (
-                            fmt(l.agreed_price)
-                          )}
-                        </td>
+                        <td className="px-3 py-2 text-right">{fmt(l.agreed_price)}</td>
                         <td className="px-3 py-2 text-right font-medium">{fmt(l.line_total)}</td>
-                        {detail.status === 'draft' && (
-                          <td className="px-2 py-2 text-center">
-                            {editingLineId === l.id ? (
-                              <button
-                                onClick={() => saveLinePrice(detail.id, l.id)}
-                                className="text-green-600 hover:bg-green-50 p-1 rounded"
-                              >
-                                <Check size={14} />
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  setEditingLineId(l.id);
-                                  setEditPrice(String(l.agreed_price));
-                                }}
-                                className="text-gray-400 hover:text-gray-700 p-1"
-                              >
-                                <Pencil size={13} />
-                              </button>
-                            )}
-                          </td>
-                        )}
                       </tr>
                     ))}
                     <tr className="border-t-2 border-gray-200 font-bold bg-gray-50">
@@ -1314,7 +1201,6 @@ export default function CustomerInvoices() {
                         Total
                       </td>
                       <td className="px-3 py-2 text-right">{fmt(detail.total_amount)}</td>
-                      {detail.status === 'draft' && <td></td>}
                     </tr>
                     {Number(detail.balance) !== Number(detail.total_amount) && detail.status !== 'draft' && (
                       <tr className="text-sm">

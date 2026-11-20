@@ -65,7 +65,7 @@ async function main() {
     const invoice = async (account: number) => {
       const [shift] = await db('shifts').insert({ employee_id: attendant, shift_date: today, start_time: `${today}T06:00:00Z`, status: 'closed', wage_paid: 0 });
       const [entry] = await db('invoice_consumption').insert({ account_id: account, shift_id: shift, pump_id: pump, tank_id: tank, fuel_type: 'diesel', litres: 10, retail_price_at_time: 100, retail_amount: 1000, entry_status: 'active' });
-      const draft = good(await call('POST', '/inv', { account_id: account, from_date: today, to_date: today, agreed_prices: { diesel: 100 } }));
+      const draft = good(await call('POST', '/inv', { account_id: account, to_date: today }));
       const issued = good(await call('POST', `/inv/${draft.id}/issue`, {}), 200);
       return { ...issued, entry, shift };
     };

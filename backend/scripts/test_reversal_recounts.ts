@@ -28,6 +28,8 @@ async function main() {
   const { default: supplierPaymentsRouter } = await import('../src/routes/supplierPayments');
   const { default: fuelDeliveriesRouter } = await import('../src/routes/fuelDeliveries');
   const { default: shiftsRouter } = await import('../src/routes/shifts');
+  const { default: customerInvoicesRouter } = await import('../src/routes/customerInvoices');
+  const { createReservedInvoiceDraft } = await import('../src/services/invoiceDraftReservations');
 
   let server: any;
   try {
@@ -39,6 +41,7 @@ async function main() {
     app.use('/supplier-payments', supplierPaymentsRouter);
     app.use('/fuel-deliveries', fuelDeliveriesRouter);
     app.use('/shifts', shiftsRouter);
+    app.use('/customer-invoices', customerInvoicesRouter);
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>((r) => server.once('listening', r));
     const port = server.address().port;
@@ -92,6 +95,53 @@ async function main() {
       assert.equal(refused.status, 400, 'a customer who owes cannot be archived even when the stored balance says 0');
       assert.match(refused.body.error, /300\.00/);
       assert.equal((await db('credit_accounts').where({ id: owing }).first()).deleted_at, null);
+    }
+
+    // ---- 1b. An invoice customer with fuel still to bill stays ----
+    {
+      const [customer] = await db('credit_accounts').insert({ name: 'Monthly Haulers', type: 'customer', billing_mode: 'invoice', balance: 0, payment_terms_days: 30 });
+      const fuel = (shiftId: number, litres: number, extra: Record<string, unknown> = {}) => db('invoice_consumption')
+        .insert({ account_id: customer, shift_id: shiftId, fuel_type: 'diesel', litres, retail_price_at_time: 170, retail_amount: litres * 170, ...extra })
+        .then(([id]) => Number(id));
+      const first = await closedShift('2026-10-02');
+      const second = await closedShift('2026-10-05');
+      // Already billed on a paid invoice, and an entry a correction removed: neither is left to bill.
+      const [paid] = await db('customer_invoices').insert({ account_id: customer, invoice_number: 'INV-HAUL-1', from_date: '2026-09-01', to_date: '2026-09-30', status: 'draft', total_amount: 1700, balance: 1700 });
+      const [paidLine] = await db('invoice_lines').insert({ invoice_id: paid, fuel_type: 'diesel', total_litres: 10, agreed_price: 170, line_total: 1700 });
+      await fuel(await closedShift('2026-09-10'), 10, { invoice_line_id: paidLine });
+      await db('customer_invoices').where({ id: paid }).update({ issue_date: '2026-09-30', status: 'paid', balance: 0 });
+      await fuel(first, 40, { deleted_at: '2026-10-03 08:00:00', entry_status: 'reversed' });
+      await fuel(second, 30, { deleted_at: '2026-10-06 08:00:00' }); // removed before entries had a status
+      const entries = [await fuel(first, 100), await fuel(first, 25.5), await fuel(second, 50)];
+
+      const refused = await call('DELETE', `/credit-accounts/${customer}`);
+      assert.equal(refused.status, 400, 'fuel not yet invoiced stops the removal');
+      assert.equal(refused.body.code, 'INVOICE_WORK_LEFT');
+      assert.match(refused.body.error, /175\.50 L of fuel not yet invoiced \(2 shifts, 2 Oct 2026 to 5 Oct 2026\)/);
+      const switched = await call('PUT', `/credit-accounts/${customer}`, { billing_mode: 'money' });
+      assert.equal(switched.status, 400, 'the same fuel stops a switch to money billing');
+      assert.match(switched.body.error, /175\.50 L .* before switching them to money billing/);
+
+      // Fuel on a shift still open counts too.
+      const [open] = await db('shifts').insert({ employee_id: attendant, shift_date: '2026-10-09', start_time: '2026-10-09T06:00:00.000Z', status: 'open' });
+      const onOpen = await fuel(Number(open), 20);
+      assert.match((await call('DELETE', `/credit-accounts/${customer}`)).body.error, /195\.50 L .*3 shifts, 2 Oct 2026 to 9 Oct 2026/);
+      await db('invoice_consumption').where({ id: onOpen }).update({ deleted_at: '2026-10-09 09:00:00', entry_status: 'deleted' });
+
+      // A draft holds the fuel: still refused, now for the draft.
+      const draft = await createReservedInvoiceDraft(db, { accountId: Number(customer), toDate: '2026-10-31' });
+      const draftRefused = await call('DELETE', `/credit-accounts/${customer}`);
+      assert.equal(draftRefused.status, 400, 'a draft invoice stops the removal');
+      assert.match(draftRefused.body.error, /has a draft invoice/);
+      assert.match((await call('PUT', `/credit-accounts/${customer}`, { billing_mode: 'money' })).body.error, /has a draft invoice/);
+
+      // Deleting the draft puts the fuel back to bill; correcting it away lets the customer go.
+      assert.equal((await call('DELETE', `/customer-invoices/${draft.invoice.id}`)).status, 200);
+      assert.match((await call('DELETE', `/credit-accounts/${customer}`)).body.error, /175\.50 L/);
+      await db('invoice_consumption').whereIn('id', entries).update({ deleted_at: '2026-10-20 08:00:00', entry_status: 'reversed' });
+      const removed = await call('DELETE', `/credit-accounts/${customer}`);
+      assert.equal(removed.status, 200, JSON.stringify(removed.body));
+      assert.ok((await db('credit_accounts').where({ id: customer }).first()).deleted_at, 'removed once nothing is left to bill');
     }
 
     // ---- 2. A paid supplier bill cannot be deleted ----

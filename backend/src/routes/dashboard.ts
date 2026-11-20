@@ -10,6 +10,7 @@ import { getCurrentReceivableTotals } from '../services/receivableReporting';
 import { totalOwedByAttendants } from '../services/employeeVariances';
 import { decorateShiftStaleness, listStaleOpenShifts } from '../services/shiftOperations';
 import { lowStockTanks, tanksWithStockNow } from '../services/tankStock';
+import { getInvoiceCustomerMonitor } from '../services/invoiceCustomerMonitor';
 
 const router = Router();
 
@@ -435,6 +436,19 @@ router.get('/', async (req: any, res) => {
       weekly_sales: weeklySales,
       // Phase 11: reconciliation health
       drift_check: driftSummary,
+      // Invoice customers to act on: fuel waiting too long to be invoiced, or
+      // invoices past their due date (services/invoiceCustomerMonitor.ts).
+      invoice_alerts: ((await getInvoiceCustomerMonitor(db, { recentLimit: 1 })).customers as any[])
+        .filter((c) => c.not_invoiced_late || c.overdue_amount > 0)
+        .map((c) => ({
+          account_id: c.id,
+          name: c.name,
+          not_invoiced_late: c.not_invoiced_late,
+          not_invoiced_since: c.first_unbilled_date,
+          not_invoiced_amount: c.unbilled_retail_amount,
+          overdue_amount: c.overdue_amount,
+          days_past_due: c.days_past_due,
+        })),
     };
 
     res.json({ success: true, data: fullData });

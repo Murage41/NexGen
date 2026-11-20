@@ -332,3 +332,4 @@ export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/$
 // Public picture: usable directly in an <img>, including the sign-in page.
 export const stationLogoUrl = () => `${baseURL}/station-profile/logo`;
 export const getInvoiceDocument = (id: number) => api.get(`/customer-invoices/${id}/document`, { responseType: 'blob' });
+export const getInvoiceStatement = (accountId: number) => api.get(`/customer-invoices/customers/${accountId}/statement`, { responseType: 'blob' });

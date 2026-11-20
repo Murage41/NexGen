@@ -190,17 +190,15 @@ export const getInvoiceCustomerConsumption = (
   },
 ) => api.get(`/customer-invoices/customers/${accountId}/consumption`, { params });
 export const getCustomerInvoice = (id: number) => api.get(`/customer-invoices/${id}`);
-export const previewCustomerInvoice = (params: { account_id: number; from: string; to: string }) =>
+export const previewCustomerInvoice = (params: { account_id: number; to: string }) =>
   api.get('/customer-invoices/preview/scan', { params });
 export const createCustomerInvoiceDraft = (data: {
   account_id: number;
-  from_date: string;
   to_date: string;
-  agreed_prices?: { petrol?: number; diesel?: number };
   notes?: string;
 }) => api.post('/customer-invoices', data);
-export const updateCustomerInvoiceLine = (invoiceId: number, lineId: number, data: { agreed_price: number }) =>
-  api.put(`/customer-invoices/${invoiceId}/lines/${lineId}`, data);
+export const getInvoiceStatement = (accountId: number, from?: string) =>
+  api.get(`/customer-invoices/customers/${accountId}/statement`, { params: from ? { from } : {}, responseType: 'blob' });
 export const issueCustomerInvoice = (id: number) => api.post(`/customer-invoices/${id}/issue`);
 export const refreshCustomerInvoiceDraft = (id: number) => api.post(`/customer-invoices/${id}/refresh`);
 export const voidCustomerInvoice = (id: number, data: { reason: string }) => api.post(`/customer-invoices/${id}/void`, data);

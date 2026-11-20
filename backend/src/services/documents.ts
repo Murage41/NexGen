@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import type { Knex } from 'knex';
 import { getStationProfile, stationLogo } from './stationProfile';
-import { documentDefinition, litresLine, longDate, renderPdf, type DocumentInput } from './documentLayout';
+import { documentDefinition, fuelName, kes, litresLine, longDate, money2, renderPdf, type DocumentInput, type DocumentSection } from './documentLayout';
+import { invoiceCustomerCredit } from './receivablePayments';
 
 // Stored documents (M8). An issued invoice, debit-note bill or credit note gets
 // its PDF once, made from the station profile as it is then, and that same file
@@ -54,6 +55,203 @@ async function customer(conn: Conn, accountId: number) {
   return { name: account?.name || '', phone: account?.phone || null, kra_pin: account?.kra_pin || null, terms: Number(account?.payment_terms_days || 0) };
 }
 
+// Shares a total out over parts: each part's exact value is in units `scale`
+// times finer than the result; parts are rounded down and the units still
+// missing go to the largest remainders, so the parts add up to `total`
+// exactly. Null when that cannot be done (the parts do not match the total).
+function shareOut(exact: number[], scale: number, total: number): number[] | null {
+  const parts = exact.map((value) => Math.floor(value / scale));
+  let missing = total - parts.reduce((a, b) => a + b, 0);
+  if (missing < 0 || missing > parts.length) return null;
+  const byRemainder = exact.map((value, index) => ({ index, rest: value % scale })).sort((a, b) => b.rest - a.rest || a.index - b.index);
+  for (const { index } of byRemainder) {
+    if (missing === 0) break;
+    parts[index] += 1;
+    missing -= 1;
+  }
+  return parts;
+}
+
+// Fuel by shift: an invoice's fills per shift and line (fuel and pump price),
+// each at the amount recorded at the pump, so the rows add up to the invoice.
+// Meters give litres to 3 decimals and the line rounds the total to 2, so the
+// litres are shared out (shareOut). Left out when the fills do not add up to
+// the line (an invoice from before lines were billed at pump amounts).
+async function fuelByShift(conn: Conn, lines: any[]): Promise<DocumentSection | undefined> {
+  const fuelLines = lines.filter((line) => line.fuel_type !== 'adjustment');
+  if (fuelLines.length === 0) return undefined;
+  const entries: any[] = await conn('invoice_consumption as ic')
+    .join('shifts as s', 'ic.shift_id', 's.id')
+    .whereIn('ic.invoice_line_id', fuelLines.map((line) => line.id))
+    .whereNull('ic.deleted_at')
+    .where((q) => q.whereNull('ic.entry_status').orWhere('ic.entry_status', 'active'))
+    .groupBy('ic.invoice_line_id', 'ic.shift_id', 's.shift_date')
+    .select('ic.invoice_line_id as line_id', 'ic.shift_id', 's.shift_date')
+    .sum({ litres: 'ic.litres' })
+    .sum({ amount: 'ic.retail_amount' });
+
+  const rows: Array<{ date: string; shift: string; fuel: string; centilitres: number; cents: number; day: string; shiftId: number; order: number }> = [];
+  for (const [order, line] of fuelLines.entries()) {
+    const own = entries.filter((entry) => Number(entry.line_id) === Number(line.id));
+    if (own.length === 0) return undefined;
+    // Millilitres shared out to centilitres; amounts in whole cents.
+    const centilitres = shareOut(own.map((entry) => Math.round(Number(entry.litres) * 1000)), 10, Math.round(Number(line.total_litres) * 100));
+    const cents = own.map((entry) => Math.round(Number(entry.amount) * 100));
+    if (!centilitres || cents.reduce((a, b) => a + b, 0) !== Math.round(Number(line.line_total) * 100)) return undefined;
+    own.forEach((entry, index) => rows.push({
+      date: longDate(entry.shift_date),
+      shift: `#${entry.shift_id}`,
+      fuel: fuelName(line.fuel_type),
+      centilitres: centilitres[index],
+      cents: cents[index],
+      day: String(entry.shift_date),
+      shiftId: Number(entry.shift_id),
+      order,
+    }));
+  }
+  rows.sort((a, b) => a.day.localeCompare(b.day) || a.shiftId - b.shiftId || a.order - b.order);
+  const sum = (pick: (row: (typeof rows)[number]) => number) => rows.reduce((total, row) => total + pick(row), 0) / 100;
+  return {
+    title: 'Fuel by shift',
+    columns: [
+      { header: 'Date', width: 80 }, { header: 'Shift', width: 55 }, { header: 'Fuel', width: '*' },
+      { header: 'Litres', width: 70, right: true }, { header: 'Amount (KES)', width: 95, right: true },
+    ],
+    rows: rows.map((row) => [row.date, row.shift, row.fuel, money2(row.centilitres / 100), money2(row.cents / 100)]),
+    total: ['Total', '', '', money2(sum((row) => row.centilitres)), money2(sum((row) => row.cents))],
+  };
+}
+
+const STATEMENT_EVENTS: Record<string, string> = {
+  invoice_issue: 'Invoice',
+  invoice_void: 'Voided',
+  invoice_payment: 'Payment',
+  invoice_payment_reversal: 'Payment reversed',
+  credit_note: 'Credit note',
+  debit_note: 'Debit note',
+  credit_note_reversal: 'Credit note reversed',
+  debit_note_reversal: 'Debit note reversed',
+};
+
+const dayBefore = (date: string) => new Date(Date.parse(`${date}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+const daysFrom = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+
+// Statement of account for an invoice customer, as at today: the balance
+// brought forward, every invoice, payment and note since `fromDate` with the
+// running balance, the open invoices with their days overdue, the ageing, and
+// fuel taken but not yet invoiced. Made on demand and not saved: it shows the
+// account as it stands when printed (Business Central's customer statement).
+export async function statementDocument(conn: Conn, accountId: number, fromDate: string, today: string) {
+  const account = await conn('credit_accounts').where({ id: accountId }).whereNull('deleted_at').first();
+  if (!account || account.type !== 'customer' || account.billing_mode !== 'invoice') {
+    throw httpError('Invoice customer not found.', 404, 'ACCOUNT_NOT_FOUND');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fromDate || '')) || fromDate > today) {
+    throw httpError('Choose the date the statement starts from.', 400, 'INVALID_DATE');
+  }
+  const base = await documentBase(conn);
+  const party = await customer(conn, accountId);
+  const cents = (value: unknown) => Math.round(Number(value || 0) * 100);
+
+  const opening: any = await conn('invoice_accounting_events')
+    .where({ account_id: accountId }).where('posting_date', '<', fromDate).sum({ total: 'receivable_delta' }).first();
+  const events: any[] = await conn('invoice_accounting_events as e')
+    .leftJoin('customer_invoices as i', 'e.invoice_id', 'i.id')
+    .leftJoin('invoice_adjustment_notes as n', 'e.adjustment_note_id', 'n.id')
+    .leftJoin('invoice_payments as p', 'e.payment_id', 'p.id')
+    .where('e.account_id', accountId)
+    .where('e.posting_date', '>=', fromDate)
+    .where('e.posting_date', '<=', today)
+    .orderBy('e.posting_date').orderBy('e.id')
+    .select('e.posting_date', 'e.event_type', 'e.receivable_delta', 'i.invoice_number', 'i.document_kind', 'n.note_number', 'p.payment_method', 'p.reference');
+  let running = cents(opening?.total);
+  const broughtForward = running;
+  let charged = 0;
+  let credited = 0;
+  const activity = events.map((event) => {
+    const delta = cents(event.receivable_delta);
+    running += delta;
+    if (delta > 0) charged += delta; else credited += delta;
+    const kind = event.event_type === 'invoice_issue' && event.document_kind === 'debit_note' ? 'Debit note' : STATEMENT_EVENTS[event.event_type] || 'Entry';
+    const paid = event.event_type === 'invoice_payment' ? [event.payment_method, event.reference].filter(Boolean).join(' ') : '';
+    return [longDate(event.posting_date), String(event.note_number || event.invoice_number || ''), paid ? `${kind}, ${paid}` : kind, money2(delta / 100), money2(running / 100)];
+  });
+
+  const open: any[] = await conn('customer_invoices')
+    .where({ account_id: accountId }).whereNull('deleted_at').whereIn('status', ['issued', 'partial']).where('balance', '>', 0)
+    .orderBy('due_date').orderBy('id')
+    .select('invoice_number', 'issue_date', 'due_date', 'balance');
+  const ageing = [0, 0, 0, 0, 0]; // not yet due, 1-30, 31-60, 61-90, over 90 days
+  const openRows = open.map((invoice) => {
+    const late = Math.max(0, daysFrom(String(invoice.due_date).slice(0, 10), today));
+    ageing[late === 0 ? 0 : late <= 30 ? 1 : late <= 60 ? 2 : late <= 90 ? 3 : 4] += cents(invoice.balance);
+    return [String(invoice.invoice_number), longDate(invoice.issue_date), longDate(invoice.due_date), late ? String(late) : '', money2(invoice.balance)];
+  });
+  const held = cents(await invoiceCustomerCredit(accountId, conn));
+
+  // Fuel taken and not yet on an issued invoice (unbilled, or held by a draft).
+  const waiting: any = await conn('invoice_consumption as ic')
+    .join('shifts as s', 'ic.shift_id', 's.id')
+    .leftJoin('invoice_lines as il', 'ic.invoice_line_id', 'il.id')
+    .leftJoin('customer_invoices as ci', 'il.invoice_id', 'ci.id')
+    .where('ic.account_id', accountId)
+    .whereNull('ic.deleted_at')
+    .where((q) => q.whereNull('ic.entry_status').orWhere('ic.entry_status', 'active'))
+    .where((q) => q.whereNull('ic.invoice_line_id').orWhere('ci.status', 'draft'))
+    .sum({ litres: 'ic.litres' }).sum({ amount: 'ic.retail_amount' })
+    .min({ first: 's.shift_date' }).max({ last: 's.shift_date' })
+    .first();
+
+  const notes = [
+    party.terms > 0 ? `Invoices are due ${party.terms} days after they are issued.` : 'Invoices are due on receipt.',
+    ...(Number(waiting?.litres || 0) > 0
+      ? [`Fuel taken and not yet invoiced: ${money2(waiting.litres)} L, ${kes(waiting.amount)} (${longDate(waiting.first)} to ${longDate(waiting.last)}). It goes on your next invoice.`]
+      : []),
+  ];
+  const totals: DocumentInput['totals'] = [
+    ...(held > 0 ? [{ label: 'Credit held for your next invoice', amount: -held / 100 }] : []),
+    { label: 'Balance due', amount: running / 100, strong: true },
+  ];
+
+  return renderPdf(documentDefinition({
+    ...base,
+    title: 'STATEMENT',
+    number: longDate(today),
+    details: [['Statement date', longDate(today)], ['Activity from', longDate(fromDate)]],
+    customer: party,
+    lines: [
+      { description: `Balance on ${longDate(dayBefore(fromDate))}`, litres: null, price: null, amount: broughtForward / 100 },
+      { description: 'Invoices and debit notes', litres: null, price: null, amount: charged / 100 },
+      { description: 'Payments and credits', litres: null, price: null, amount: credited / 100 },
+    ],
+    totals,
+    notes,
+    sections: [
+      {
+        title: 'Account activity',
+        columns: [
+          { header: 'Date', width: 72 }, { header: 'Document', width: 100 }, { header: 'Details', width: '*' },
+          { header: 'Amount (KES)', width: 85, right: true }, { header: 'Balance (KES)', width: 90, right: true },
+        ],
+        rows: activity,
+      },
+      {
+        title: 'Open invoices',
+        columns: [
+          { header: 'Invoice', width: 110 }, { header: 'Issued', width: 80 }, { header: 'Due', width: 80 },
+          { header: 'Days overdue', width: '*', right: true }, { header: 'Balance (KES)', width: 95, right: true },
+        ],
+        rows: openRows,
+      },
+      {
+        title: 'Ageing',
+        columns: ['Not yet due', '1 to 30 days', '31 to 60 days', '61 to 90 days', 'Over 90 days'].map((header) => ({ header, width: '*' as const, right: true })),
+        rows: open.length ? [ageing.map((value) => money2(value / 100))] : [],
+      },
+    ],
+  }));
+}
+
 // An invoice or DN- debit-note bill.
 export async function invoiceDocument(conn: Conn, invoiceId: number, actorId?: number | null) {
   const existing = await storedDocument(conn, 'customer_invoice', invoiceId);
@@ -66,7 +264,9 @@ export async function invoiceDocument(conn: Conn, invoiceId: number, actorId?: n
   const party = await customer(conn, Number(invoice.account_id));
   const isDebitNote = invoice.document_kind === 'debit_note';
 
-  const lines = (await conn('invoice_lines').where({ invoice_id: invoice.id }).orderBy('fuel_type').orderBy('id'))
+  const lineRows = await conn('invoice_lines').where({ invoice_id: invoice.id }).orderBy('fuel_type').orderBy('id');
+  const byShift = isDebitNote ? undefined : await fuelByShift(conn, lineRows);
+  const lines = lineRows
     .map((line: any) => isDebitNote && line.fuel_type === 'adjustment'
       ? { description: 'Monetary debit adjustment', litres: null, price: null, amount: Number(line.line_total) }
       : litresLine(line.fuel_type, line.total_litres, line.agreed_price, line.line_total));
@@ -108,6 +308,7 @@ export async function invoiceDocument(conn: Conn, invoiceId: number, actorId?: n
     lines,
     totals,
     notes,
+    sections: byShift ? [byShift] : [],
   }));
   return save(conn, 'customer_invoice', invoice.id, invoice.invoice_number, pdf, actorId);
 }

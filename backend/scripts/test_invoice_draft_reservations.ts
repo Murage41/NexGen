@@ -158,13 +158,11 @@ async function testReservationLifecycle() {
 
     const draft = await createReservedInvoiceDraft(db, {
       accountId: 1,
-      fromDate: '2026-07-01',
       toDate: '2026-07-03',
-      agreedPrices: { petrol: 185, diesel: 175 },
     });
     assert.equal(draft.added_entries, 2, 'Open-shift consumption must not be reserved');
     assert.equal(draft.reserved_entries, 2);
-    assert.equal(Number(draft.invoice.total_amount), 2725);
+    assert.equal(Number(draft.invoice.total_amount), 2800, 'billed at the amounts recorded at the pump');
     assert.equal(draft.invoice.reservation_status, 'reserved');
 
     const initialRows = await db('invoice_consumption').orderBy('id');
@@ -175,7 +173,6 @@ async function testReservationLifecycle() {
     await assert.rejects(
       () => createReservedInvoiceDraft(db, {
         accountId: 1,
-        fromDate: '2026-07-01',
         toDate: '2026-07-03',
       }),
       (error: any) => error.code === 'NO_RESERVABLE_CONSUMPTION',
@@ -197,11 +194,11 @@ async function testReservationLifecycle() {
     const refreshed = await refreshInvoiceDraftReservation(db, Number(draft.invoice.id));
     assert.equal(refreshed.added_entries, 1);
     assert.equal(refreshed.reserved_entries, 3);
-    const petrolLine = await db('invoice_lines')
+    const petrolLines = (await db('invoice_lines')
       .where({ invoice_id: draft.invoice.id, fuel_type: 'petrol' })
-      .first();
-    assert.equal(Number(petrolLine.agreed_price), 185, 'Refresh changed the agreed price');
-    assert.equal(Number(petrolLine.total_litres), 12);
+      .orderBy('agreed_price'))
+      .map((line: any) => [Number(line.agreed_price), Number(line.total_litres), Number(line.line_total)]);
+    assert.deepEqual(petrolLines, [[190, 10, 1900], [192, 2, 384]], 'a fill at a new pump price gets its own line');
 
     await db.transaction(async (trx) => {
       const released = await releaseInvoiceReservation(trx, Number(draft.invoice.id));
@@ -253,7 +250,8 @@ async function testLegacyUpgradeAndInvalidMutation() {
 
     const upgraded = await refreshInvoiceDraftReservation(db, Number(invoiceId));
     assert.equal(upgraded.legacy_upgraded, true);
-    assert.equal(Number((await db('invoice_lines').where({ invoice_id: invoiceId }).first()).agreed_price), 170);
+    const upgradedLine = await db('invoice_lines').where({ invoice_id: invoiceId }).first();
+    assert.deepEqual([Number(upgradedLine.agreed_price), Number(upgradedLine.line_total)], [180, 1260], 'a legacy draft is billed at the pump amount');
 
     await db('invoice_consumption').where({ id: 10 }).update({ entry_status: 'reversed' });
     await assert.rejects(
@@ -264,6 +262,52 @@ async function testLegacyUpgradeAndInvalidMutation() {
       (error: any) => error.code === 'RESERVED_CONSUMPTION_INVALID',
       'A reserved row changed after drafting must block issue',
     );
+  } finally {
+    await db.destroy();
+  }
+}
+
+// Every unbilled fill up to the date, however old; one line per fuel and pump
+// price, at the amounts recorded at the pump.
+async function testUpToDateAtPumpAmounts() {
+  const db = connection(':memory:');
+  try {
+    await createSchema(db);
+    await seedBase(db);
+    await db('shifts').insert([
+      { id: 4, shift_date: '2026-06-15', status: 'closed' },
+      { id: 5, shift_date: '2026-07-20', status: 'closed' },
+    ]);
+    await db('invoice_consumption').insert([
+      consumption(30, 4, 'diesel', 10, 229),
+      consumption(31, 1, 'diesel', 5, 227),
+      consumption(32, 3, 'diesel', 2.5, 227),
+      { ...consumption(33, 3, 'diesel', 21.664, 230.8), retail_amount: 5000 },
+      consumption(34, 5, 'petrol', 3, 216),
+      consumption(35, 2, 'petrol', 4, 216),
+    ]);
+    const draft = await createReservedInvoiceDraft(db, { accountId: 1, toDate: '2026-07-10' });
+    assert.equal(draft.reserved_entries, 4, 'every closed fill up to the date, not the later one or the open shift');
+    assert.equal(draft.invoice.from_date, '2026-06-15', 'the period starts at the first fill');
+    assert.equal(draft.invoice.to_date, '2026-07-10');
+    const lines = async () => (await db('invoice_lines').where({ invoice_id: draft.invoice.id }).orderBy('agreed_price'))
+      .map((line: any) => [line.fuel_type, Number(line.agreed_price), Number(line.total_litres), Number(line.line_total)]);
+    assert.deepEqual(await lines(), [['diesel', 227, 7.5, 1702.5], ['diesel', 229, 10, 2290], ['diesel', 230.8, 21.66, 5000]]);
+    assert.equal(Number(draft.invoice.total_amount), 8992.5, 'the invoice equals the pump amounts');
+
+    // A fill whose price no longer matches its line stops the issue.
+    await db('invoice_consumption').where({ id: 31 }).update({ retail_price_at_time: 228 });
+    await assert.rejects(
+      () => db.transaction(async (trx) => validateDraftReservationForIssue(trx, await trx('customer_invoices').where({ id: draft.invoice.id }).first())),
+      (error: any) => error.code === 'RESERVED_CONSUMPTION_INVALID',
+    );
+    await db('invoice_consumption').where({ id: 31 }).update({ retail_price_at_time: 227 });
+
+    // A fill taken off the draft (as a correction does) empties its line, which goes.
+    await db('invoice_consumption').where({ id: 33 }).update({ invoice_line_id: null, deleted_at: '2026-07-11 08:00:00', entry_status: 'reversed' });
+    await refreshInvoiceDraftReservation(db, Number(draft.invoice.id));
+    assert.deepEqual(await lines(), [['diesel', 227, 7.5, 1702.5], ['diesel', 229, 10, 2290]]);
+    assert.equal(Number((await db('customer_invoices').where({ id: draft.invoice.id }).first()).total_amount), 3992.5);
   } finally {
     await db.destroy();
   }
@@ -287,16 +331,8 @@ async function testConcurrentReservation() {
   const second = connection(filename);
   try {
     const attempts = await Promise.allSettled([
-      createReservedInvoiceDraft(first, {
-        accountId: 1,
-        fromDate: '2026-07-01',
-        toDate: '2026-07-01',
-      }),
-      createReservedInvoiceDraft(second, {
-        accountId: 1,
-        fromDate: '2026-07-01',
-        toDate: '2026-07-01',
-      }),
+      createReservedInvoiceDraft(first, { accountId: 1, toDate: '2026-07-01' }),
+      createReservedInvoiceDraft(second, { accountId: 1, toDate: '2026-07-01' }),
     ]);
     assert.equal(attempts.filter((attempt) => attempt.status === 'fulfilled').length, 1);
     assert.equal(attempts.filter((attempt) => attempt.status === 'rejected').length, 1);
@@ -317,6 +353,7 @@ async function testConcurrentReservation() {
 async function main() {
   await testReservationLifecycle();
   await testLegacyUpgradeAndInvalidMutation();
+  await testUpToDateAtPumpAmounts();
   await testConcurrentReservation();
   console.log('Invoice draft reservation tests passed');
 }

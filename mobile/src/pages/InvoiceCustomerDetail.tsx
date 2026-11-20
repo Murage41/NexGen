@@ -21,6 +21,7 @@ import {
   getInvoicePayments,
   updateCreditAccount,
   getInvoiceDocument,
+  getInvoiceStatement,
   correctionApi,
 } from '../services/api';
 import { DocumentButton } from '../../../shared/ui/DocumentButton';
@@ -477,6 +478,9 @@ export default function InvoiceCustomerDetail() {
 
       {tab === 'invoices' && (
         <div className="space-y-3">
+          <div className="flex justify-end">
+            <DocumentButton load={() => getInvoiceStatement(accountId)} label="Statement" className="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700" />
+          </div>
           {invoices.map((invoice) => (
             <div key={invoice.id} className="bg-white border border-gray-100 rounded-lg p-3 shadow-sm">
               <div className="flex items-start justify-between gap-3">

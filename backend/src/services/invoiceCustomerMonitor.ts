@@ -1,6 +1,12 @@
 import type { Knex } from 'knex';
+import { daysBetween } from './creditLimits';
+import { getKenyaDate } from '../utils/timezone';
 
 const round2 = (n: number) => Math.round(Number(n || 0) * 100) / 100;
+
+// Fuel waiting longer than this to be invoiced is flagged: a month of fuel
+// plus a few days to issue the invoice.
+export const NOT_INVOICED_ALERT_DAYS = 35;
 
 function rawRows(result: any): any[] {
   if (Array.isArray(result)) return result;
@@ -10,10 +16,12 @@ function rawRows(result: any): any[] {
 
 export type InvoiceCustomerMonitorOptions = {
   recentLimit?: number;
+  today?: string;
 };
 
 export async function getInvoiceCustomerMonitor(qb: Knex, opts: InvoiceCustomerMonitorOptions = {}) {
   const recentLimit = Math.max(1, Math.min(10, Number(opts.recentLimit || 5)));
+  const today = opts.today || getKenyaDate();
 
   const accounts = await qb('credit_accounts as ca')
     .whereNull('ca.deleted_at')
@@ -24,9 +32,25 @@ export async function getInvoiceCustomerMonitor(qb: Knex, opts: InvoiceCustomerM
       'ca.name',
       'ca.phone',
       'ca.balance as cached_outstanding_balance',
+      'ca.credit_limit',
       'ca.created_at',
     )
     .orderBy('ca.name', 'asc');
+
+  // Past its due date and not fully paid: overdue, whether or not the
+  // customer has a repayment limit (the limit only decides whether new fuel
+  // is refused).
+  const overdue = await qb('customer_invoices')
+    .whereNull('deleted_at')
+    .whereIn('status', ['issued', 'partial'])
+    .where('balance', '>', 0)
+    .where('due_date', '<', today)
+    .select('account_id')
+    .min({ oldest_due_date: 'due_date' })
+    .sum({ overdue_amount: 'balance' })
+    .groupBy('account_id');
+  const overdueByAccount: Record<number, any> = {};
+  for (const row of overdue as any[]) overdueByAccount[Number(row.account_id)] = row;
 
   const openInvoices = await qb('customer_invoices')
     .whereNull('deleted_at')
@@ -204,15 +228,27 @@ export async function getInvoiceCustomerMonitor(qb: Knex, opts: InvoiceCustomerM
     }
   }
 
+  const limits: Record<number, number | null> = {};
+  for (const account of accounts) limits[Number(account.id)] = account.credit_limit == null ? null : Number(account.credit_limit);
   const customers = Object.values(customerMap)
-    .map((customer: any) => ({
-      ...customer,
-      total_exposure: round2(
-        customer.issued_balance
-        + customer.draft_total
-        + customer.unbilled_retail_amount,
-      ),
-    }))
+    .map((customer: any) => {
+      const late = overdueByAccount[customer.id];
+      const oldestDue = late?.oldest_due_date ? String(late.oldest_due_date).slice(0, 10) : null;
+      const totalExposure = round2(customer.issued_balance + customer.draft_total + customer.unbilled_retail_amount);
+      const notInvoicedDays = customer.first_unbilled_date ? daysBetween(String(customer.first_unbilled_date).slice(0, 10), today) : 0;
+      const limit = limits[customer.id];
+      return {
+        ...customer,
+        total_exposure: totalExposure,
+        credit_limit: limit,
+        over_limit: limit != null && totalExposure > limit,
+        overdue_amount: round2(late?.overdue_amount),
+        oldest_due_date: oldestDue,
+        days_past_due: oldestDue ? daysBetween(oldestDue, today) : 0,
+        not_invoiced_days: notInvoicedDays,
+        not_invoiced_late: notInvoicedDays > NOT_INVOICED_ALERT_DAYS,
+      };
+    })
     .sort((a: any, b: any) =>
       b.total_exposure - a.total_exposure ||
       b.unbilled_litres - a.unbilled_litres ||

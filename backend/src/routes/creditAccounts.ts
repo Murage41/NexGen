@@ -16,12 +16,47 @@ import { createCreditAccountSchema, updateCreditAccountSchema } from '../schemas
 import { evaluateCreditLimits } from '../services/creditLimits';
 import { approvalBindings, resolveApprover } from '../services/approval';
 import { readAccountBalance, recomputeAccountBalance } from '../services/accountBalance';
+import { longDate } from '../services/documentLayout';
 import { normalizeIdempotencyKey, runIdempotent } from '../services/idempotency';
 
 const router = Router();
 router.use(requireAuth);
 
 const hasLimits = (account: any) => account.credit_limit != null || account.credit_age_limit_days != null;
+
+// Invoice work still to finish for a customer: live fuel on no invoice yet
+// (open or closed shifts) and draft invoices, whose fuel is reserved. Removing
+// the customer or switching them to money billing takes both off the invoice
+// lists, so that fuel might never be billed; both actions are refused until
+// it is invoiced, corrected or the draft is issued or voided.
+async function invoiceWorkLeft(accountId: number, name: string, action: string): Promise<string | null> {
+  const fuel: any = await db('invoice_consumption as ic')
+    .join('shifts as s', 'ic.shift_id', 's.id')
+    .where('ic.account_id', accountId)
+    .whereNull('ic.deleted_at')
+    .whereNull('ic.invoice_line_id')
+    .where((q) => q.whereNull('ic.entry_status').orWhere('ic.entry_status', 'active'))
+    .sum({ litres: 'ic.litres' })
+    .countDistinct({ shifts: 'ic.shift_id' })
+    .min({ first: 's.shift_date' })
+    .max({ last: 's.shift_date' })
+    .first();
+  const shifts = Number(fuel?.shifts || 0);
+  if (shifts > 0) {
+    const litres = Number(fuel.litres || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const dates = fuel.first === fuel.last ? longDate(fuel.first) : `${longDate(fuel.first)} to ${longDate(fuel.last)}`;
+    return `${name} has ${litres} L of fuel not yet invoiced (${shifts} shift${shifts === 1 ? '' : 's'}, ${dates}). Invoice it, or correct entries recorded by mistake, before ${action}.`;
+  }
+  const drafts: any = await db('customer_invoices')
+    .where({ account_id: accountId, status: 'draft' })
+    .whereNull('deleted_at')
+    .count({ count: 'id' })
+    .first();
+  if (Number(drafts?.count || 0) > 0) {
+    return `${name} has a draft invoice. Issue it or void it before ${action}.`;
+  }
+  return null;
+}
 
 // Attendants read only their own employee account. A customer's history,
 // phone and invoices are for administrators (M6: least privilege).
@@ -309,22 +344,14 @@ router.put('/:id', requireAdmin, validate(updateCreditAccountSchema), async (req
             code: 'INVOICE_CREDIT_HELD',
           });
         }
-        const unbilled = await db('invoice_consumption')
-          .where({ account_id: account.id })
-          .whereNull('deleted_at')
-          .whereNull('invoice_line_id')
-          .count('* as c')
-          .first();
-        if (Number((unbilled as any)?.c || 0) > 0) {
-          return res.status(400).json({
-            success: false,
-            error: 'Cannot switch to money mode: unbilled invoice consumption exists. Invoice or clear those first.',
-          });
+        const workLeft = await invoiceWorkLeft(Number(account.id), account.name, 'switching them to money billing');
+        if (workLeft) {
+          return res.status(400).json({ success: false, error: workLeft, code: 'INVOICE_WORK_LEFT' });
         }
         const unpaidInv = await db('customer_invoices')
           .where({ account_id: account.id })
           .whereNull('deleted_at')
-          .whereIn('status', ['draft', 'issued', 'partial'])
+          .whereIn('status', ['issued', 'partial'])
           .count('* as c')
           .first();
         if (Number((unpaidInv as any)?.c || 0) > 0) {
@@ -452,6 +479,10 @@ router.delete('/:id', requireAdmin, async (req, res) => {
         success: false,
         error: `${account.name} holds KES ${held.toFixed(2)} in credit. Refund it before removing the account.`,
       });
+    }
+    const workLeft = await invoiceWorkLeft(Number(account.id), account.name, 'removing the customer');
+    if (workLeft) {
+      return res.status(400).json({ success: false, error: workLeft, code: 'INVOICE_WORK_LEFT' });
     }
 
     await db.transaction(async (trx) => {

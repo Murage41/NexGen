@@ -36,7 +36,11 @@ When an entry would break a limit, nothing is recorded until an administrator
 approves it on that device (signed in on the phone, or name and PIN). The
 approval covers exactly that entry and lasts 10 minutes. Five wrong PINs lock
 that administrator on that device for 15 minutes. Every approval is kept on
-the customer. The customer list shows **Over limit** and **Overdue**.
+the customer. The customer list shows **Over limit** and **Overdue**. For
+invoice customers, Overdue means an invoice past its due date, whether or not a
+repayment limit is set, and **Not invoiced** means fuel waiting more than 35
+days to be invoiced. Both also show on **Today** (desktop and the
+administrator's phone home); a tap opens the customer.
 
 ## Money customers
 
@@ -58,11 +62,14 @@ the customer. The customer list shows **Over limit** and **Overdue**.
    pumps sold. It is valued at the pump price for accountability.
 2. **Review** the customer's fuel history (filter by date, shift, fuel, status)
    against their issue book.
-3. **Create a draft invoice.** It reserves the selected fuel so no other draft
-   can take it. Refresh it to add later fuel; voiding it releases the fuel.
-4. **Issue** it at the agreed price, with payment terms and due date. A price
-   different from the pump price is posted as an explicit difference. The
-   customer owes the invoice amount.
+3. **Create a draft invoice up to a date.** It takes every fill not yet
+   invoiced from closed shifts up to that date, however old, so nothing is left
+   between invoices; no other draft can take them. Each fill is billed at the
+   amount recorded at the pump, one line per fuel and pump price (Diesel at
+   227.00, Diesel at 230.80), so the invoice matches the pump receipts. Refresh
+   it to add fuel from shifts closed later; deleting it releases the fuel.
+4. **Issue** it, with payment terms and due date. The customer owes the
+   invoice amount.
 5. **Record payments** against invoices (date, method, reference, amount).
    Overpayments are refused. A wrong payment is reversed with a reason.
    Invoice payments made at the office are not shift money.
@@ -79,13 +86,33 @@ the customer. The customer list shows **Over limit** and **Overdue**.
   bill is voided.
 - Wrong customer: credit note on the wrong one, debit bill on the right one.
 
+**Before issue**, a wrong fill on a closed shift is fixed with a Correction. A
+correction that puts more fuel on a customer than their credit limit allows
+needs the limit approved with it, as a sale on the shift does.
+
+**Removing an invoice customer**, or switching them to money billing, also
+needs no fuel waiting to be invoiced (open or closed shifts) and no draft
+invoice. The message says how many litres and from which dates: invoice it,
+or correct entries recorded by mistake, first.
+
 ## Documents
 
 Invoices, debit notes and credit notes are PDFs with the station's logo and
 details ([Station PC](STATION-PC.md)). Each is saved when issued and the same
-file is shown every time after. Desktop: open the invoice → **PDF**. Phone
-(administrators): Invoice Customers → customer → Invoices → **PDF**. Every
-document says it is not a tax invoice: tax invoices come from KRA eTIMS
+file is shown every time after. Under the amount due, an invoice lists
+**Fuel by shift**: date, shift, fuel, litres and the amount recorded at the
+pump, one row per shift and line, adding up exactly to the invoice (meters give
+litres to 3 decimals; the rows share out the rounding). Invoices issued before
+this keep the PDF they were saved with. Desktop: open the invoice → **PDF**. Phone
+(administrators): Invoice Customers → customer → Invoices → **PDF**.
+
+The **Statement** (desktop: the customer's page; phone: Invoices tab) is made
+when you open it, as at today, and not saved: balance brought forward, every
+invoice, payment and note since the first of last month with the running
+balance, open invoices with days overdue, ageing, and fuel taken but not yet
+invoiced. Send it to the customer each month.
+
+Every document says it is not a tax invoice: tax invoices come from KRA eTIMS
 through POSitive.
 
 ## Checks

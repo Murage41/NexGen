@@ -23,6 +23,11 @@ analyses stay in `D:\NexGen\.claude\plans\`.
    diligence before code.
 4. **Undo and delete recounts** (owner asked 2026-11-12 how reversals work;
    chose "all, money bugs first"). Plan below; built for update #26.
+5. **Invoice customers: billed as sold, nothing left unbilled, followed up**
+   (owner, 2026-11-17: removal guard and lines per shift; asked for a full
+   invoice review the same day; 2026-11-18 agreed the review's plan without
+   the discount per litre and the reference per fill). Plan below; built on
+   branch `claude/project-thread-kh1f1p` for #27.
 
 Done: shift date on the open-shift form and B2 (money-only invoice notes)
 both went to the station with #18.
@@ -302,9 +307,69 @@ a payment half-removed it.
 - Won't change: undo of a payment correction re-pays debts oldest first, so
   which debt shows as paid can differ; totals are exact.
 
+## Invoice customers (item 5), 2026-11-17
+
+**Today:** removing a customer (`routes/creditAccounts.ts`, DELETE) checked
+unpaid issued invoices and held credit only, so an invoice customer with fuel
+not yet invoiced or a draft could be removed and that fuel dropped off the
+invoice lists (reachable through the server only: no screen offers Remove for
+invoice customers). The switch to money billing already checked both. The
+invoice PDF (`services/documents.ts`) shows one line per fuel; the desktop
+invoice screen already lists each shift entry.
+
+**What changes**
+- One check, `invoiceWorkLeft`, for removal and the switch to money: live fuel
+  on no invoice (open or closed shifts) or a draft invoice refuses it, saying
+  the litres, shifts and dates. Built; suite `test:reversal-recounts`.
+- The invoice PDF keeps the fuel summary and amount due, then a **Fuel by
+  shift** table (date, shift, fuel, litres, amount at the invoice price).
+  Litres (meters give 3 decimals) and amounts are shared out by largest
+  remainder so the rows add up exactly to each line; an invoice whose entries
+  don't match its lines keeps one line per fuel. PDF only
+  (`services/documents.ts`, `fuelByShift`), no database change; invoices
+  already issued keep their saved PDF. A month is about 2 to 3 pages. Built; suite `test:station-documents`.
+- Practice: a customer with open entries is blocked, not deleted
+  (https://learn.microsoft.com/en-us/dynamics365/business-central/receivables-how-block-customers);
+  one invoice for many deliveries keeps each delivery traceable
+  (https://learn.microsoft.com/en-us/dynamics365/business-central/sales-how-to-combine-shipments-on-a-single-invoice);
+  fleet customers check fuel invoices transaction by transaction
+  (https://www.automotive-fleet.com/146368/how-to-audit-fleet-fuel-invoices).
+- Won't show vehicle or issue-book numbers (NexGen doesn't record them).
+
+**Invoice review, 2026-11-17** (doc: https://claude.ai/artifact/VBijrN7d9QikRCFgY6D92h).
+Found on the station data copy: a draft took only fuel between its From and
+To dates, so a sale older than the From date was never billed; the default
+price was one rounded average per fuel, which overcharged an invoice slightly;
+invoices went out 5 to 6 weeks late; Overdue showed only with a repayment
+limit, which the customer did not have; fuel corrections skipped the credit
+limit. Built (no database change):
+- A draft takes every unbilled closed-shift fill up to one date (no From
+  date); lines are one per fuel and pump price, each line the sum of the
+  amounts recorded at the pump; typed prices and the line price editor are
+  gone (`services/invoiceDraftReservations.ts`). Fuel by shift rows show the
+  pump amounts. Suites `test:invoice-draft-reservations`, `test:station-documents`.
+- Overdue (any invoice past its due date), Over limit and Not invoiced (fuel
+  waiting over 35 days) for invoice customers, on the Customers lists and as
+  Today reminders, desktop and phone (`services/invoiceCustomerMonitor.ts`).
+- Statement of account PDF, made when opened and not saved: balance brought
+  forward, activity with running balance, open invoices, ageing, fuel not yet
+  invoiced (`statementDocument`). Suite `test:invoice-followup`.
+- Fuel corrections that raise what a customer owes check the credit limit and
+  record the approval (`correctionRules/fuelOnAccount.ts`, `test:corrections`).
+- Practice: KRA eTIMS needs an e-invoice for every fuel sale in real time
+  (https://www.kra.go.ke/business/etims-electronic-tax-invoice-management-system/learn-about-etims/etims-fuel-station-system);
+  statements, reminders and ageing to collect
+  (https://learn.microsoft.com/en-us/dynamics365/business-central/receivables-collect-outstanding-balances);
+  bill what was delivered, nothing left behind
+  (https://www.odoo.com/documentation/17.0/applications/sales/sales/invoicing/invoicing_policy.html);
+  fuel cards bill monthly and tie each sale to a vehicle
+  (https://nationaloil.co.ke/fuel-cards/).
+- Not built (owner, 2026-11-18): a discount per litre, a reference per fill.
+  Open with the owner: payment terms and a credit limit for the invoice
+  customer; whether POSitive issues an eTIMS receipt per credit fill.
+
 ## Later, in order
 
-- **B3** Editable unbilled invoice fuel, draft refresh, limit and litre checks.
 - **B4** Expense corrections (category, date, amount).
 - **B5** Employee debts added by hand and targeted repayments.
 - **B6** Office customer/invoice payments, employee receipts, refunds.

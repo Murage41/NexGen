@@ -32,7 +32,7 @@ import {
   getInvoiceConsumptionHistory,
   type ConsumptionHistoryStatus,
 } from '../services/invoiceConsumptionHistory';
-import { creditNoteDocument, invoiceDocument, saveDocumentAfterPosting } from '../services/documents';
+import { creditNoteDocument, invoiceDocument, saveDocumentAfterPosting, statementDocument } from '../services/documents';
 
 const router = Router();
 // Invoices, balances and consumption are administrators' figures (M6).
@@ -76,6 +76,23 @@ router.get('/customers/monitor', async (req, res) => {
     res.json({ success: true, data });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /customers/:accountId/statement?from=YYYY-MM-DD: the statement of account
+// as at today, as a PDF made when asked (not saved). Activity is listed from
+// `from`, by default the first day of last month.
+router.get('/customers/:accountId/statement', async (req: any, res) => {
+  try {
+    const today = getKenyaDate();
+    const [year, month] = today.split('-').map(Number);
+    const lastMonth = new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 10);
+    const pdf = await statementDocument(db, Number(req.params.accountId), String(req.query.from || lastMonth), today);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="statement-${today}.pdf"`);
+    res.send(pdf);
+  } catch (err: any) {
+    res.status(err.http || 500).json({ success: false, error: err.message, code: err.code });
   }
 });
 
@@ -431,60 +448,60 @@ router.get('/:id', async (req, res) => {
 // Query: ?account_id=&from=&to=
 router.get('/preview/scan', async (req, res) => {
   try {
-    const { account_id, from, to } = req.query as any;
-    if (!account_id || !from || !to) {
-      return res.status(400).json({ success: false, error: 'account_id, from, to required' });
+    const { account_id, to } = req.query as any;
+    if (!account_id || !to) {
+      return res.status(400).json({ success: false, error: 'account_id and to required' });
     }
 
-    const rows = await getReservableConsumption(
-      db,
-      Number(account_id),
-      String(from),
-      String(to),
-    );
+    const rows = await getReservableConsumption(db, Number(account_id), String(to));
 
-    // Group by fuel_type
-    const byFuel: Record<string, { total_litres: number; total_retail: number; count: number }> = {};
+    // What the draft would hold: one line per fuel and pump price.
+    const byPrice = new Map<string, { fuel_type: string; price: number; litres: number; amount: number; count: number }>();
     for (const r of rows) {
-      const ft = r.fuel_type;
-      if (!byFuel[ft]) byFuel[ft] = { total_litres: 0, total_retail: 0, count: 0 };
-      byFuel[ft].total_litres += Number(r.litres || 0);
-      byFuel[ft].total_retail += Number(r.retail_amount || 0);
-      byFuel[ft].count += 1;
+      const key = `${r.fuel_type}|${Math.round(Number(r.retail_price_at_time) * 100)}`;
+      const line = byPrice.get(key) || { fuel_type: String(r.fuel_type), price: Number(r.retail_price_at_time), litres: 0, amount: 0, count: 0 };
+      line.litres += Number(r.litres || 0);
+      line.amount += Number(r.retail_amount || 0);
+      line.count += 1;
+      byPrice.set(key, line);
     }
-    const lines = Object.entries(byFuel).map(([fuel_type, v]) => {
-      const avgRetail = v.total_litres > 0 ? v.total_retail / v.total_litres : 0;
-      return {
-        fuel_type,
-        total_litres: Math.round(v.total_litres * 100) / 100,
-        avg_retail_price: Math.round(avgRetail * 100) / 100,
-        suggested_agreed_price: Math.round(avgRetail * 100) / 100,
-        retail_total: Math.round(v.total_retail * 100) / 100,
-        entry_count: v.count,
-      };
-    });
+    const lines = [...byPrice.values()].map((line) => ({
+      fuel_type: line.fuel_type,
+      price: line.price,
+      total_litres: Math.round(line.litres * 100) / 100,
+      amount: Math.round(line.amount * 100) / 100,
+      entry_count: line.count,
+    }));
 
-    res.json({ success: true, data: { account_id: Number(account_id), from, to, lines, entries: rows.length } });
+    res.json({
+      success: true,
+      data: {
+        account_id: Number(account_id),
+        to,
+        first_date: rows[0]?.shift_date || null,
+        last_date: rows.length ? rows[rows.length - 1].shift_date : null,
+        lines,
+        entries: rows.length,
+      },
+    });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.http || 500).json({ success: false, error: err.message });
   }
 });
 
 // POST / — create a DRAFT invoice from unbilled consumption.
-// Body: { account_id, from_date, to_date, agreed_prices?: { petrol?: number, diesel?: number }, notes? }
-// Creates invoice lines and atomically reserves the exact closed-shift rows.
+// Body: { account_id, to_date, notes? }. Every unbilled closed-shift fill up to
+// to_date is reserved, each at the amount recorded at the pump.
 router.post('/', requireAdmin, async (req, res) => {
   try {
-    const { account_id, from_date, to_date, agreed_prices, notes } = req.body;
-    if (!account_id || !from_date || !to_date) {
-      return res.status(400).json({ success: false, error: 'account_id, from_date, to_date required' });
+    const { account_id, to_date, notes } = req.body;
+    if (!account_id || !to_date) {
+      return res.status(400).json({ success: false, error: 'account_id and to_date required' });
     }
 
     const result = await createReservedInvoiceDraft(db, {
       accountId: Number(account_id),
-      fromDate: String(from_date),
       toDate: String(to_date),
-      agreedPrices: agreed_prices,
       notes,
     });
     res.status(201).json({
@@ -497,46 +514,6 @@ router.post('/', requireAdmin, async (req, res) => {
     });
   } catch (err: any) {
     const status = err.http || (String(err.code || '').includes('SQLITE_BUSY') ? 409 : 500);
-    res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-// PUT /:id/lines/:lineId — edit agreed_price (only while draft)
-router.put('/:id/lines/:lineId', requireAdmin, async (req, res) => {
-  try {
-    const invoiceId = Number(req.params.id);
-    const lineId = Number(req.params.lineId);
-    const { agreed_price } = req.body;
-
-    const invoice = await db('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first();
-    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
-    if (invoice.status !== 'draft') {
-      return res.status(400).json({ success: false, error: 'Only draft invoices can be edited' });
-    }
-
-    const priceNum = Number(agreed_price);
-    if (!Number.isFinite(priceNum) || priceNum <= 0) {
-      return res.status(400).json({ success: false, error: 'agreed_price must be greater than zero' });
-    }
-
-    await db.transaction(async (trx) => {
-      const current = await trx('customer_invoices').where({ id: invoiceId }).whereNull('deleted_at').first();
-      if (!current || current.status !== 'draft') throw Object.assign(new Error('Only draft invoices can be edited.'), { http: 409 });
-      const line = await trx('invoice_lines').where({ id: lineId, invoice_id: invoiceId }).first();
-      if (!line) throw Object.assign(new Error('Line not found'), { http: 404 });
-      const lineTotal = Math.round(Number(line.total_litres) * priceNum * 100) / 100;
-      await trx('invoice_lines').where({ id: lineId }).update({
-        agreed_price: priceNum,
-        line_total: lineTotal,
-      });
-      await recomputeInvoiceTotals(invoiceId, trx);
-    });
-
-    const updated = await db('customer_invoices').where({ id: invoiceId }).first();
-    const lines = await db('invoice_lines').where({ invoice_id: invoiceId }).orderBy('fuel_type');
-    res.json({ success: true, data: { ...updated, lines } });
-  } catch (err: any) {
-    const status = err.http || 500;
     res.status(status).json({ success: false, error: err.message });
   }
 });

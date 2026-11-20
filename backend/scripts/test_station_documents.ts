@@ -112,8 +112,8 @@ async function main() {
     console.log('PASS profile and logo: everyone reads, administrators change, PNG or JPEG under 2 MB');
 
     // ---- B. Documents ----
-    const invoiceFor = async (from: number) => {
-      const draft = await call('POST', '/inv', desktop, { account_id: account, from_date: daysAgo(from), to_date: today, agreed_prices: { diesel: 190 } });
+    const invoiceFor = async () => {
+      const draft = await call('POST', '/inv', desktop, { account_id: account, to_date: today });
       assert.equal(draft.status, 201, JSON.stringify(draft.body));
       const issued = await call('POST', `/inv/${draft.body.data.id}/issue`, desktop, {});
       assert.equal(issued.status, 200, JSON.stringify(issued.body));
@@ -122,7 +122,7 @@ async function main() {
     const stored = (kind: string, id: number) => db('stored_documents').where({ kind, record_id: id }).first();
 
     await fuel(await closedShift(daysAgo(20)), 50);
-    const inv1 = await invoiceFor(40);
+    const inv1 = await invoiceFor();
     assert.equal(await stored('customer_invoice', inv1.id), undefined, 'no profile yet: issuing still works, the document waits');
     const blocked = await call('GET', `/inv/${inv1.id}/document`);
     assert.equal(blocked.status, 409);
@@ -148,7 +148,7 @@ async function main() {
     console.log('PASS an invoice issued before the profile gets its PDF when first opened, then never changes');
 
     await fuel(await closedShift(daysAgo(2)), 20);
-    const inv2 = await invoiceFor(5);
+    const inv2 = await invoiceFor();
     const saved2 = await stored('customer_invoice', inv2.id);
     assert(saved2, 'saved the moment it was issued');
     assert(pdfText(Buffer.from(saved2.content)).includes('Renamed Station'), 'with the profile as it was then');
@@ -176,24 +176,76 @@ async function main() {
     assert.equal(dn.status, 201, JSON.stringify(dn.body));
     const bill = dn.body.data.debit_note;
     const dnText = pdfText(Buffer.from((await stored('customer_invoice', bill.id)).content));
+    assert(!dnText.includes('Fuel by shift'), 'a debit note has no fuel by shift');
     for (const expected of ['DEBIT NOTE', bill.invoice_number, `Corrects`, inv2.invoice_number, 'Reason: Agreed additional charge']) {
       assert(dnText.includes(expected), `debit note shows "${expected}"`);
     }
 
     await fuel(await closedShift(daysAgo(1)), 10);
-    const inv3 = await invoiceFor(1);
+    const inv3 = await invoiceFor();
     const inv3Text = pdfText(Buffer.from((await stored('customer_invoice', inv3.id)).content));
     assert(inv3Text.includes(`Less credit (${note.note_number})`), 'the held credit shows on the next invoice');
     console.log('PASS invoices, debit-note bills and credit notes are saved when issued, with credit carried to the next invoice');
 
     await fuel(await closedShift(today), 5);
-    const draft = await call('POST', '/inv', desktop, { account_id: account, from_date: today, to_date: today, agreed_prices: { diesel: 190 } });
+    const draft = await call('POST', '/inv', desktop, { account_id: account, to_date: today });
     assert.equal(draft.status, 201, JSON.stringify(draft.body));
     assert.equal((await call('GET', `/inv/${draft.body.data.id}/document`)).status, 400, 'a draft has no document');
     assert.equal(await stored('customer_invoice', draft.body.data.id), undefined);
     assert.equal((await call('GET', `/inv/${inv1.id}/document`, attendantSession)).status, 403, 'documents are for administrators');
     assert.equal((await call('GET', '/inv/999999/document')).status, 404);
     console.log('PASS drafts and attendants are refused');
+
+    // ---- B2. Fuel by shift ----
+    {
+      const [hauler] = await db('credit_accounts').insert({ name: 'Shift Lines Ltd', phone: '0700000002', type: 'customer', billing_mode: 'invoice', balance: 0, payment_terms_days: 30 });
+      const take = (shiftId: number, fuelType: string, litres: number, price: number, amount = Math.round(litres * price * 100) / 100) =>
+        db('invoice_consumption').insert({
+          account_id: hauler, shift_id: shiftId, pump_id: pump, tank_id: tank, fuel_type: fuelType, litres,
+          retail_price_at_time: price, retail_amount: amount, entry_status: 'active',
+        });
+      const s1 = await closedShift(daysAgo(6));
+      const s2 = await closedShift(daysAgo(5));
+      const s3 = await closedShift(daysAgo(4));
+      await take(s1, 'diesel', 100, 229);
+      await take(s2, 'diesel', 12.02, 229);
+      await take(s2, 'petrol', 15, 216);
+      await take(s2, 'diesel', 8, 229); // two entries on one shift make one row
+      // The price changed: a KES 5,000 sale of 21.664 L at 230.80 is billed as sold.
+      await take(s3, 'diesel', 21.664, 230.8, 5000);
+      // Meters give 3 decimals: 1.004 + 1.004 + 1.004 = 3.012 L, billed as 3.01 L.
+      const s4 = await closedShift(daysAgo(3));
+      const s5 = await closedShift(daysAgo(3));
+      await take(s4, 'petrol', 1.004, 216);
+      await take(s5, 'petrol', 1.004, 216);
+      await take(s1, 'petrol', 1.004, 216);
+      const draft2 = await call('POST', '/inv', desktop, { account_id: hauler, to_date: daysAgo(3) });
+      assert.equal(draft2.status, 201, JSON.stringify(draft2.body));
+      const issued2 = await call('POST', `/inv/${draft2.body.data.id}/issue`, desktop, {});
+      assert.equal(issued2.status, 200, JSON.stringify(issued2.body));
+      assert.equal(Number(issued2.body.data.total_amount), 36375.16, 'the pump amounts, nothing averaged');
+      assert.equal(Number(issued2.body.data.price_adjustment_amount), 0);
+      const text = pdfText(Buffer.from((await stored('customer_invoice', issued2.body.data.id)).content));
+      // Lines: diesel at 229 (120.02 L, 27,484.58), diesel at 230.80 (21.66 L,
+      // 5,000.00), petrol at 216 (18.01 L, 3,890.58). Rows at the pump amounts.
+      for (const expected of ['Fuel by shift', `#${s1}`, `#${s2}`, `#${s3}`, '229.00', '230.80', '27,484.58', '3,890.58',
+        '22,900.00', '4,584.58', '3,240.00', '216.86', '21.66', '1.01', '159.69', '36,375.16']) {
+        assert(text.includes(expected), `fuel by shift shows "${expected}"`);
+      }
+      assert(!text.includes('12.02') && !text.includes('8.00'), 'entries on the same shift and fuel are one row');
+      const order = [text.indexOf('22,900.00'), text.indexOf('4,584.58'), text.lastIndexOf('3,240.00'), text.lastIndexOf('5,000.00')];
+      assert.deepEqual([...order].sort((a, b) => a - b), order, 'rows run by date and shift');
+      console.log('PASS invoices list the fuel on each shift, adding up exactly to the invoice');
+
+      // An older invoice whose entries do not add up to its line keeps one line per fuel.
+      const [older] = await db('customer_invoices').insert({ account_id: hauler, invoice_number: 'INV-OLD-1', from_date: daysAgo(30), to_date: daysAgo(30), status: 'draft', total_amount: 1900, balance: 1900, due_date: today });
+      const [olderLine] = await db('invoice_lines').insert({ invoice_id: older, fuel_type: 'diesel', total_litres: 10, agreed_price: 190, line_total: 1900 });
+      await db('invoice_consumption').insert({ account_id: hauler, shift_id: await closedShift(daysAgo(30)), fuel_type: 'diesel', litres: 7, retail_price_at_time: 190, retail_amount: 1330, entry_status: 'active', invoice_line_id: olderLine });
+      await db('customer_invoices').where({ id: older }).update({ status: 'issued', issue_date: daysAgo(30) });
+      const olderText = pdfText((await call('GET', `/inv/${older}/document`)).buffer);
+      assert(olderText.includes('1,900.00') && !olderText.includes('Fuel by shift'), 'an invoice whose entries do not match keeps one line per fuel');
+      console.log('PASS an older invoice that does not add up has no fuel by shift');
+    }
 
     // ---- C. Backups carry every document ----
     fs.mkdirSync(path.join(UPLOADED_FILES_DIR, 'fuel-deliveries'), { recursive: true });
