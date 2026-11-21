@@ -23,15 +23,28 @@ On desktop and phone a shift page has four parts: **Readings** (opens first),
 money added/removed), **Close** (pay and the result) and **History**
 (activity, original close, corrections). A closed shift opens on **Result**.
 
+On the phone an open shift shows three steps under the attendant's name:
+**Readings**, **Count** and (administrators) **Close**. Each turns green with a
+tick when done; tap one to do it. Close lights up once the count is in. The
+small arrows beside the name go to the previous and next shift. Recording
+has four tabs in the order the work happens: Readings, Debts, Money out, Count.
+
 Record, through their own forms:
 
 - **Readings:** the closing figure on each pump's display. NexGen keeps a
   running total past each meter rollover; screens show the pump's own figure.
-- **Credit sales** to money customers, and **fuel on account** (litres) for
-  invoice customers. Breaking a customer's limit needs an administrator's
-  approval ([Customers](CUSTOMERS.md)).
+- **Debts** (Add debt): tap Customer for the list of customers (search at the
+  top), then Petrol, Diesel or Other, then litres or amount: type either and the
+  other fills in at this shift's pump price. A KES 10,000 sale is kept as
+  exactly KES 10,000. Other (oil, gas, a cash loan) is an amount only, for money
+  customers. A money customer owes the amount; an invoice customer's fill goes
+  on their next invoice. Breaking a customer's limit needs an administrator's
+  approval ([Customers](CUSTOMERS.md)). Fuel on account can't be more than that
+  fuel's pumps sold on the shift, checked at close.
 - **Expenses** paid from the till (never wages).
-- **Debt payments**: a customer paying old credit into this till.
+- **Debt payments**: a customer paying old credit into this till. For M-Pesa
+  the **M-Pesa code** (10 letters and digits) is required, and a code already on
+  another payment is refused.
 - **Cash remaining** and **M-Pesa balance**: the money actually held now,
   including the opening funds. Do not subtract the opening float.
 - **Direct wage paid from this shift** (close form): for a daily-paid
@@ -61,7 +74,8 @@ reversed, never deleted.
 
 In **Close**, press **Close shift**. NexGen checks that the readings and the
 cash/M-Pesa count are saved (no tick boxes), shows the pay taken and the
-result, and closes on one more press. It works out:
+result, and closes on one more press. **Notes** (optional) keeps anything to
+remember about the shift; it shows on the closed shift's Result. It works out:
 
 ```text
 expected = opening cash + opening M-Pesa + sales from the pumps

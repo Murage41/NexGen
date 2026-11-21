@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { checkedPaymentCode } from '../services/paymentReference';
 import db from '../database';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
@@ -98,7 +99,7 @@ router.post('/', requireAdmin, validate(createSupplierPaymentSchema), async (req
         amount,
         payment_method: payment_method || 'bank_transfer',
         payment_date,
-        reference: reference || null,
+        reference: await checkedPaymentCode(trx, payment_method || 'bank_transfer', reference),
         notes: notes || null,
       });
 

@@ -168,6 +168,8 @@ async function apply(trx: Knex.Transaction, planned: Plan, ctx: ApplyContext) {
   const reason = `${ctx.number}: ${ctx.reason}`;
   const reverse = planned.lines.find((l) => l.action === 'reverse');
   const add = planned.lines.find((l) => l.action === 'add');
+  // The replacement keeps the original's M-Pesa or bank code (freed by the reversal).
+  const original = reverse ? await trx('credit_payments').where({ id: Number(reverse.target_id) }).first('reference', 'payment_method') : null;
   if (reverse) accounts.push(Number((await reverseReceipt(trx, Number(reverse.target_id), ctx.correctionId, reason, ctx.actorId)).account_id));
   if (add) {
     const shift = await trx('shifts').where({ id: add.shift_id }).first('shift_date');
@@ -179,6 +181,7 @@ async function apply(trx: Knex.Transaction, planned: Plan, ctx: ApplyContext) {
       payment_type: 'account',
       date: String(shift.shift_date).slice(0, 10),
       notes: reason,
+      reference: original && original.payment_method === add.method ? original.reference || null : null,
       status: 'posted',
       shift_id: add.shift_id,
       // Pays their debts when settled below; the rest is their credit.

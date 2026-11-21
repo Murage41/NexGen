@@ -79,7 +79,7 @@ async function main() {
     const originalPdf = await stored('customer_invoice', original.id);
     const source = await db('invoice_consumption').where({ id: original.entry }).first();
     const lines = await db('invoice_lines').where({ invoice_id: original.id });
-    const payment = good(await call('POST', '/inv/payments', { account_id: a, amount: 800, payment_method: 'mpesa' }));
+    const payment = good(await call('POST', '/inv/payments', { account_id: a, amount: 800, payment_method: 'mpesa', reference: 'QC11CC0001' }));
     const paymentsBefore = await db('invoice_payments').orderBy('id');
     const allocationsBefore = await db('invoice_payment_allocations').orderBy('id');
     const credit = (await note(original.id, 300)).note;
@@ -166,7 +166,7 @@ async function main() {
         invoiceId: inlineInvoice.id, adjustmentNoteId: inlineId, eventType: 'debit_note', postingDate: today,
         receivableDelta: 200, revenueAdjustment: 200, documentAmount: 200, reason: 'Historical inline supplementary bill' });
     });
-    good(await call('POST', '/inv/payments', { account_id: e, amount: 1200, payment_method: 'bank' }));
+    good(await call('POST', '/inv/payments', { account_id: e, amount: 1200, payment_method: 'bank', reference: 'BANK-169' }));
     const inlinePayments = await db('invoice_payments').where({ account_id: e });
     const inlineAllocations = await db('invoice_payment_allocations').where({ invoice_id: inlineInvoice.id });
     const inlineCredit = (await note(inlineInvoice.id, 1200)).note;

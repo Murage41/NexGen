@@ -81,8 +81,11 @@ async function checkPumpSales(conn: Conn, shiftId: number, fuel: string, litres:
     .first();
   const others = active(conn('invoice_consumption').where({ shift_id: shiftId, fuel_type: fuel }));
   if (exceptEntryId) others.whereNot({ id: exceptEntryId });
-  const onAccount: any = await others.sum({ litres: 'litres' }).first();
-  if (cents(onAccount?.litres) + cents(litres) > cents(sold?.litres)) {
+  const invoiced: any = await others.sum({ litres: 'litres' }).first();
+  // Money debts entered as fuel are on account too (update #28).
+  const credited: any = await conn('shift_credits').where({ shift_id: shiftId, fuel_type: fuel }).whereNull('deleted_at').sum({ litres: 'litres' }).first();
+  const onAccount = { litres: Number(invoiced?.litres || 0) + Number(credited?.litres || 0) };
+  if (cents(onAccount.litres) + cents(litres) > cents(sold?.litres)) {
     throw httpError(
       `The ${fuel} pumps sold ${Number(sold?.litres || 0).toFixed(2)} L in shift #${shiftId}; ${Number(onAccount?.litres || 0).toFixed(2)} L of it are already on account.`,
       400,

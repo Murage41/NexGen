@@ -399,6 +399,7 @@ router.post('/:id/payments', requireAdmin, async (req, res) => {
       paymentMethod,
       paymentDate,
       notes,
+      reference: req.body.reference || null,
     });
 
     res.status(201).json({

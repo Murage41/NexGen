@@ -29,6 +29,7 @@ import supplierInvoicesRouter from './routes/supplierInvoices';
 import supplierPaymentsRouter from './routes/supplierPayments';
 import payrollRouter from './routes/payroll';
 import operationsRouter from './routes/operations';
+import paymentCodesRouter from './routes/paymentCodes';
 import stationProfileRouter, { serveStationLogo } from './routes/stationProfile';
 import { pruneCompletedIdempotencyRecords } from './services/idempotency';
 
@@ -206,6 +207,7 @@ app.use('/api/supplier-invoices', supplierInvoicesRouter);
 app.use('/api/supplier-payments', supplierPaymentsRouter);
 app.use('/api/payroll', payrollRouter);
 app.use('/api/operations', operationsRouter);
+app.use('/api/payment-codes', paymentCodesRouter);
 app.use('/api/station-profile', stationProfileRouter);
 
 const mobileDist = path.join(__dirname, '../../mobile/dist');

@@ -1,11 +1,14 @@
 import { ShiftFunds, validOpeningAmount } from '../../../shared/ui/ShiftFunds';
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, reverseShiftCreditReceipt, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories, createOperationKey, attendantApproval } from '../services/api';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { getShift, updateReadings, updateCollections, addShiftExpense, deleteShiftExpense, addShiftCredit, deleteShiftCredit, reverseShiftCreditReceipt, getCreditAccounts, addInvoiceConsumption, deleteInvoiceConsumption, getCurrentPrices, addShiftCreditReceipt, getExpenseCategories, createOperationKey, attendantApproval, addPaymentCode } from '../services/api';
+import { CustomerField, CustomerPicker } from '../../../shared/ui/CustomerPicker';
+import { DebtFields, debtBody, debtReady, emptyDebt, type DebtFigures } from '../../../shared/ui/DebtFields';
+import { AddCode, PaymentCodeField, codeReady } from '../../../shared/ui/PaymentCode';
 import { CreditLimitPrompt, isCreditLimitBreach } from '../../../shared/ui/CreditLimitPrompt';
 import { useAuth } from '../context/AuthContext';
 import PageHeader from '../components/PageHeader';
-import { Save, Plus, Trash2, Search, Banknote, RefreshCw } from 'lucide-react';
+import { Save, Plus, Trash2, Search, Banknote, RefreshCw, X } from 'lucide-react';
 import { clearShiftDraft, clearShiftDraftSection, readShiftDraft, writeShiftDraft } from '../utils/shiftDraft';
 
 type SyncState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'review';
@@ -52,15 +55,19 @@ export default function ShiftRecord() {
   const [expenses, setExpenses] = useState<any[]>([]);
   const [newExp, setNewExp] = useState({ category: '', description: '', amount: '' });
   const [newCredit, setNewCredit] = useState({ customer_name: '', amount: '', description: '', account_id: null as number | null });
-  const [newReceipt, setNewReceipt] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
-  // Phase 3B: invoice-mode form — shown only when the selected account is invoice-mode
-  const [newInvoice, setNewInvoice] = useState({
-    fuel_type: 'petrol' as 'petrol' | 'diesel',
-    litres: '',
-    pump_id: '',
-  });
+  const [newReceipt, setNewReceipt] = useState({ account_id: '', amount: '', payment_method: 'cash', notes: '', reference: '' });
+  // Debts and debt payments are entered in light sheets (update #28).
+  const [sheet, setSheet] = useState<'debt' | 'payment' | null>(null);
+  const [picker, setPicker] = useState<'debt' | 'payment' | null>(null);
+  const [debt, setDebt] = useState<DebtFigures>(emptyDebt());
+  const [shiftPrices, setShiftPrices] = useState<{ petrol?: number | null; diesel?: number | null } | null>(null);
   const [selectedBillingMode, setSelectedBillingMode] = useState<'money' | 'invoice' | null>(null);
-  const [tab, setTab] = useState<'readings' | 'collections' | 'credits' | 'expenses'>('readings');
+  // The shift page's step bar opens a tab directly (?tab=readings | collections).
+  const [searchParams] = useSearchParams();
+  const startTab = searchParams.get('tab');
+  const [tab, setTab] = useState<'readings' | 'collections' | 'credits' | 'expenses'>(
+    startTab === 'collections' || startTab === 'credits' || startTab === 'expenses' ? startTab : 'readings',
+  );
   const [readingSync, setReadingSync] = useState<SyncState>('idle');
   const [collectionSync, setCollectionSync] = useState<SyncState>('idle');
   const [readingsDirty, setReadingsDirty] = useState(false);
@@ -86,17 +93,14 @@ export default function ShiftRecord() {
   // Credit account search
   const [creditAccounts, setCreditAccounts] = useState<any[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<string[]>(PREDEFINED_EXPENSE_CATEGORIES);
-  const [accountSearch, setAccountSearch] = useState('');
-  const [showAccountDropdown, setShowAccountDropdown] = useState(false);
   // A credit or fuel-on-account entry the server held back for a limit, awaiting
   // an administrator's approval. Resubmitted exactly as attempted.
   const [creditBreach, setCreditBreach] = useState<{ kind: 'credit' | 'consumption'; details: any; payload: any } | null>(null);
-  const searchRef = useRef<HTMLDivElement>(null);
   const [priceByFuel, setPriceByFuel] = useState<Record<string, number>>({});
 
   useEffect(() => { loadShift(); loadCreditAccounts(); loadCurrentPrices(); loadExpenseCategories(); }, [id]);
   // An approval covers exactly what was attempted; editing the entry withdraws it.
-  useEffect(() => { setCreditBreach(null); }, [newCredit.account_id, newCredit.amount, newInvoice.fuel_type, newInvoice.litres]);
+  useEffect(() => { setCreditBreach(null); }, [newCredit.account_id, debt.fuel, debt.litres, debt.amount]);
 
   useEffect(() => {
     if (!readingsDirty || shiftStatus !== 'open' || readingSync !== 'dirty') return;
@@ -220,6 +224,7 @@ export default function ShiftRecord() {
         setCollectionSync(draft?.collections ? 'dirty' : 'idle');
       }
       setShiftCredits(d.shift_credits || []);
+      setShiftPrices(d.pump_prices || null);
       setCreditReceipts(d.credit_receipts || []);
       setInvoiceConsumption(d.invoice_consumption || []);
       setExpenses(d.expenses || []);
@@ -426,15 +431,6 @@ export default function ShiftRecord() {
     }
   }
 
-  function handleAddCredit() {
-    if (!newCredit.account_id || !newCredit.amount) return;
-    return submitCredit({
-      account_id: newCredit.account_id,
-      amount: parseFloat(newCredit.amount),
-      description: newCredit.description,
-    });
-  }
-
   // An approved retry (limit_override) rethrows, so the approval prompt shows why.
   async function submitCredit(payload: any) {
     setCreditError('');
@@ -447,7 +443,8 @@ export default function ShiftRecord() {
       creditOperation.current = null;
       setCreditBreach(null);
       setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
-      setAccountSearch('');
+      setDebt(emptyDebt());
+      setSheet(null);
       await loadShift();
     } catch (err: any) {
       if (payload.limit_override) throw err;
@@ -467,6 +464,7 @@ export default function ShiftRecord() {
         amount,
         payment_method: newReceipt.payment_method,
         notes: newReceipt.notes || undefined,
+        reference: newReceipt.payment_method === 'cash' ? undefined : newReceipt.reference,
       };
       await addShiftCreditReceipt(
         parseInt(id!),
@@ -474,7 +472,8 @@ export default function ShiftRecord() {
         pendingOperationKey(receiptOperation, 'credit-receipt', payload),
       );
       receiptOperation.current = null;
-      setNewReceipt({ account_id: '', amount: '', payment_method: 'cash', notes: '' });
+      setNewReceipt({ account_id: '', amount: '', payment_method: 'cash', notes: '', reference: '' });
+      setSheet(null);
       await loadShift();
       await loadCreditAccounts();
     } catch (err: any) {
@@ -488,41 +487,6 @@ export default function ShiftRecord() {
     }
   }
 
-  // Phase 3B: add a litre consumption entry for an invoice-mode customer.
-  // No amount is collected — server computes retail_amount from fuel_prices.
-  async function handleAddInvoice() {
-    if (!newCredit.account_id || !newInvoice.litres) return;
-    const litresNum = parseFloat(newInvoice.litres);
-    setCreditError('');
-    if (!Number.isFinite(litresNum) || litresNum <= 0) {
-      setCreditError('Litres must be a positive number');
-      return;
-    }
-    const matchingSources = readings.filter((reading) => reading.fuel_type === newInvoice.fuel_type);
-    const selectedPumpId = newInvoice.pump_id
-      ? Number(newInvoice.pump_id)
-      : matchingSources.length === 1
-        ? Number(matchingSources[0].pump_id)
-        : null;
-    if (matchingSources.length === 0) {
-      setCreditError('No pump or nozzle is available for this fuel on the shift.');
-      return;
-    }
-    if (
-      !selectedPumpId
-      || !matchingSources.some((source) => Number(source.pump_id) === selectedPumpId)
-    ) {
-      setCreditError('Select the pump or nozzle that supplied these litres.');
-      return;
-    }
-    return submitInvoice({
-      account_id: newCredit.account_id,
-      fuel_type: newInvoice.fuel_type,
-      litres: litresNum,
-      pump_id: selectedPumpId,
-    });
-  }
-
   async function submitInvoice(payload: any) {
     setCreditError('');
     try {
@@ -533,10 +497,10 @@ export default function ShiftRecord() {
       );
       invoiceOperation.current = null;
       setCreditBreach(null);
-      setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
       setNewCredit({ customer_name: '', amount: '', description: '', account_id: null });
-      setAccountSearch('');
       setSelectedBillingMode(null);
+      setDebt(emptyDebt());
+      setSheet(null);
       await loadShift();
     } catch (err: any) {
       if (payload.limit_override) throw err;
@@ -556,17 +520,23 @@ export default function ShiftRecord() {
     }
   }
 
-  function selectAccount(account: any) {
-    setNewCredit({ ...newCredit, customer_name: account.name, account_id: account.id });
-    setAccountSearch(account.name);
-    setShowAccountDropdown(false);
-    setSelectedBillingMode((account.billing_mode as 'money' | 'invoice') || 'money');
+  // One Add debt for every customer: a money customer owes the amount; an
+  // invoice customer's fill is billed later at the same pump amount.
+  function handleAddDebt() {
+    if (!newCredit.account_id || !debtReady(debt)) return;
+    const body = debtBody(debt);
+    if (selectedBillingMode === 'invoice') {
+      if (body.fuel_type === 'other') return;
+      return submitInvoice({ account_id: newCredit.account_id, fuel_type: body.fuel_type, litres: body.litres, amount: body.amount });
+    }
+    return submitCredit({ account_id: newCredit.account_id, ...body });
   }
 
-  const filteredAccounts = creditAccounts.filter(a =>
-    a.type === 'customer' && a.name.toLowerCase().includes(accountSearch.toLowerCase())
-  );
-  const invoiceSources = readings.filter((reading) => reading.fuel_type === newInvoice.fuel_type);
+  function selectAccount(account: any) {
+    if (account.billing_mode === 'invoice' && debt.fuel === 'other') setDebt(emptyDebt('diesel'));
+    setNewCredit({ ...newCredit, customer_name: account.name, account_id: account.id });
+    setSelectedBillingMode((account.billing_mode as 'money' | 'invoice') || 'money');
+  }
 
   async function handleRemoveReceipt(receipt: any) {
     if (!confirm(`Remove this payment of KES ${Number(receipt.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })} from ${receipt.account_name}? They will owe it again and it leaves this shift's drawer total. It stays on record as reversed.`)) return;
@@ -658,12 +628,17 @@ export default function ShiftRecord() {
     );
   }
 
+  // In the order the work happens: the cash count comes last.
   const tabs = [
     { key: 'readings', label: 'Readings' },
-    { key: 'collections', label: shiftFunds.reconciliation_basis === 'balances_v1' ? 'Closing funds' : 'Sales Money' },
-    { key: 'credits', label: 'Credits' },
-    { key: 'expenses', label: 'Money Out' },
+    { key: 'credits', label: 'Debts' },
+    { key: 'expenses', label: 'Money out' },
+    { key: 'collections', label: 'Count' },
   ] as const;
+  const debtAccount = creditAccounts.find((a: any) => a.id === newCredit.account_id);
+  const debtCustomer = debtAccount
+    ? { id: debtAccount.id, name: debtAccount.name, owes: Number(debtAccount.outstanding_balance || 0), tag: debtAccount.billing_mode === 'invoice' ? 'Invoice' : null }
+    : null;
 
   const totalCredits = shiftCredits.reduce((s: number, c: any) => s + c.amount, 0);
   const totalCreditReceipts = creditReceipts.reduce((s: number, r: any) => s + Number(r.amount), 0);
@@ -880,6 +855,21 @@ export default function ShiftRecord() {
       {/* Credits Tab (Itemized) */}
       {tab === 'credits' && (
         <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => { setCreditError(''); setCreditBreach(null); setSheet('debt'); }}
+              className="flex items-center justify-center gap-1 rounded-xl bg-gray-800 py-3 text-sm font-semibold text-white">
+              <Plus size={16} /> Add debt
+            </button>
+            <button type="button" onClick={() => { setReceiptError(''); setSheet('payment'); }}
+              className="flex items-center justify-center gap-1 rounded-xl bg-green-600 py-3 text-sm font-semibold text-white">
+              <Banknote size={16} /> Debt payment
+            </button>
+          </div>
+
+          {shiftCredits.length === 0 && invoiceConsumption.length === 0 && creditReceipts.length === 0 && (
+            <p className="py-6 text-center text-sm text-gray-400">No debts or debt payments on this shift yet.</p>
+          )}
+
           {shiftCredits.map(c => (
             <div key={c.id} className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between">
               <div>
@@ -887,268 +877,163 @@ export default function ShiftRecord() {
                 {c.description && <p className="text-xs text-gray-400">{c.description}</p>}
               </div>
               <div className="flex items-center gap-2">
-                <span className="font-medium text-sm">KES {c.amount.toLocaleString()}</span>
+                <span className="font-medium text-sm">KES {Number(c.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
                 {isAdmin && (
                   <button onClick={() => handleDeleteCredit(c.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>
                 )}
               </div>
             </div>
           ))}
-          {/* Phase 3B: invoice-mode litre entries — retail_amount counts toward shift balance */}
           {invoiceConsumption.map(c => (
             <div key={`inv-${c.id}`} className="bg-white rounded-xl p-3 shadow-sm flex items-center justify-between border-l-4 border-purple-400">
               <div>
                 <p className="text-sm font-medium">{c.account_name}</p>
                 <p className="text-xs text-gray-500">
-                  {Number(c.litres).toLocaleString()} L {c.fuel_type} @ KES {Number(c.retail_price_at_time).toFixed(2)}
+                  {Number(c.litres).toLocaleString('en-KE', { maximumFractionDigits: 3 })} L {c.fuel_type} @ KES {Number(c.retail_price_at_time).toFixed(2)}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm">KES {Number(c.retail_amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
                 {isAdmin && (c.issued_source_locked
-                  ? <span className="text-xs text-gray-500">Issued consumption is fixed. Use an invoice note on the station PC.</span>
+                  ? <span className="text-xs text-gray-500">On an issued invoice</span>
                   : !c.invoice_line_id && <button onClick={() => handleDeleteInvoice(c.id)} className="text-red-400 p-1"><Trash2 size={16} /></button>)}
               </div>
             </div>
           ))}
           {(totalCredits > 0 || totalInvoice > 0) && (
             <div className="bg-gray-50 rounded-xl p-3 flex justify-between text-sm font-bold">
-              <span>Total Credits {totalInvoice > 0 && <span className="text-xs font-normal text-gray-500">(incl. invoice)</span>}</span>
+              <span>Debts</span>
               <span>KES {(totalCredits + totalInvoice).toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
             </div>
           )}
-          <div className="bg-white rounded-xl p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-medium text-gray-700 flex items-center gap-1">
-                <Banknote size={15} /> Debt Payments Received
-              </p>
-              {!balanceBased && totalCreditReceipts > 0 && (
-                <span className="text-sm font-bold text-green-700">
-                  KES {totalCreditReceipts.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                </span>
-              )}
-            </div>
 
-            {creditReceipts.length > 0 && (
-              <div className="space-y-2 mb-3">
-                {creditReceipts.map((r: any) => (
-                  <div key={r.id} className="bg-green-50 rounded-lg p-2 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-800">{r.account_name}</p>
-                      <p className="text-xs text-green-700 capitalize">{r.payment_method}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-green-700">
-                        KES {Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                      </span>
-                      {isAdmin && shiftStatus === 'open' && (
-                        <button onClick={() => handleRemoveReceipt(r)} className="text-red-400 p-1" aria-label="Remove payment">
-                          <Trash2 size={16} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
+          {creditReceipts.length > 0 && (
+            <div className="bg-white rounded-xl p-3 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-700 flex items-center gap-1"><Banknote size={15} /> Debt payments</p>
+                <span className="text-sm font-bold text-green-700">KES {totalCreditReceipts.toLocaleString('en-KE', { minimumFractionDigits: 2 })}</span>
               </div>
-            )}
-
-            {receiptAccounts.length === 0 ? (
-              <p className="text-xs text-gray-400">No money-mode customer balances available for collection.</p>
-            ) : (
-              <div className="space-y-2">
-                <select
-                  value={newReceipt.account_id}
-                  onChange={e => setNewReceipt({ ...newReceipt, account_id: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm bg-white"
-                >
-                  <option value="">Select customer balance...</option>
-                  {receiptAccounts.map((a: any) => {
-                    const balance = Number(a.outstanding_balance ?? a.balance ?? 0);
-                    return (
-                      <option key={a.id} value={a.id}>
-                        {a.name} - KES {balance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                      </option>
-                    );
-                  })}
-                </select>
-
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newReceipt.amount}
-                  onChange={e => setNewReceipt({ ...newReceipt, amount: e.target.value })}
-                  placeholder="Payment amount"
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm"
-                />
-                {selectedReceiptAccount && (
-                  <p className={`text-xs ${receiptAmount > selectedReceiptBalance ? 'text-red-600' : 'text-gray-400'}`}>
-                    Max payable: KES {selectedReceiptBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}
-                  </p>
-                )}
-
-                <div className="grid grid-cols-2 gap-2">
-                  {['cash', 'mpesa'].map(method => (
-                    <button
-                      key={method}
-                      type="button"
-                      onClick={() => setNewReceipt({ ...newReceipt, payment_method: method })}
-                      className={`py-2.5 rounded-lg text-sm font-medium capitalize border ${newReceipt.payment_method === method ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                    >
-                      {method === 'mpesa' ? 'M-Pesa' : 'Cash'}
-                    </button>
-                  ))}
-                </div>
-
-
-                {receiptError && <p className="text-sm text-red-600">{receiptError}</p>}
-                <button
-                  onClick={handleAddCreditReceipt}
-                  disabled={!newReceipt.account_id || !newReceipt.amount || receiptAmount > selectedReceiptBalance}
-                  className="w-full bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50"
-                >
-                  <Plus size={16} /> Record Payment
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="bg-white rounded-xl p-4 shadow-sm">
-            <p className="text-sm font-medium text-gray-700 mb-2">Add Credit</p>
-
-            {/* Searchable account dropdown. Customers are added in Credits, not typed in here. */}
-              <div className="relative mb-2" ref={searchRef}>
-                <div className="relative">
-                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    value={accountSearch}
-                    onChange={e => {
-                      setAccountSearch(e.target.value);
-                      setShowAccountDropdown(true);
-                      if (!e.target.value) {
-                        setNewCredit({ ...newCredit, customer_name: '', account_id: null });
-                        setSelectedBillingMode(null);
-                        setNewInvoice({ fuel_type: 'petrol', litres: '', pump_id: '' });
-                      }
-                    }}
-                    onFocus={() => setShowAccountDropdown(true)}
-                    placeholder="Search customer account..."
-                    className="w-full border border-gray-300 rounded-lg p-3 pl-9 text-sm"
-                  />
-                </div>
-                {showAccountDropdown && (
-                  <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                    {filteredAccounts.map(a => (
-                      <button
-                        key={a.id}
-                        onClick={() => selectAccount(a)}
-                        className="w-full text-left px-4 py-3 border-b border-gray-50 flex items-center justify-between hover:bg-gray-50"
-                      >
-                        <div>
-                          <p className="text-sm font-medium text-gray-800">{a.name}</p>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${a.type === 'customer' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                              {a.type}
-                            </span>
-                            {a.billing_mode === 'invoice' && (
-                              <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
-                                Invoice
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        {Number(a.outstanding_balance) > 0 && (
-                          <span className="text-xs text-red-500">KES {Number(a.outstanding_balance).toLocaleString()}</span>
-                        )}
-                      </button>
-                    ))}
-                    <p className="px-4 py-3 text-xs text-gray-500">
-                      {isAdmin ? 'Customer not listed? Add them in Credits first.' : 'Customer not listed? Ask an administrator to add them.'}
+              {creditReceipts.map((r: any) => (
+                <div key={r.id} className="bg-green-50 rounded-lg p-2 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{r.account_name}</p>
+                    <p className="text-xs text-green-700">
+                      {r.payment_method === 'mpesa' ? 'M-Pesa' : r.payment_method === 'cash' ? 'Cash' : r.payment_method}
+                      {r.reference ? ` · ${r.reference}` : ''}
                     </p>
+                    {isAdmin && !r.reference && (
+                      <div className="mt-1"><AddCode method={r.payment_method} save={(code) => addPaymentCode({ kind: 'debt_payment', id: r.id, reference: code })} onSaved={() => void loadShift()} /></div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-green-700">
+                      KES {Number(r.amount).toLocaleString('en-KE', { minimumFractionDigits: 2 })}
+                    </span>
+                    {isAdmin && shiftStatus === 'open' && (
+                      <button onClick={() => handleRemoveReceipt(r)} className="text-red-400 p-1" aria-label="Remove payment">
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {sheet === 'debt' && (
+            <div className="mobile-modal-overlay flex items-end justify-center" onClick={() => setSheet(null)}>
+              <div className="mobile-bottom-sheet max-w-lg max-h-[90vh] overflow-y-auto rounded-t-2xl p-5 bg-white" onClick={(e) => e.stopPropagation()}>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-gray-800">Add debt</h3>
+                  <button type="button" onClick={() => setSheet(null)} className="p-1 text-gray-400" aria-label="Close"><X size={20} /></button>
+                </div>
+                <div className="space-y-3">
+                  <CustomerField value={debtCustomer} onOpen={() => setPicker('debt')} />
+                  {debtCustomer && (
+                    <DebtFields value={debt} onChange={setDebt} prices={shiftPrices} allowOther={selectedBillingMode !== 'invoice'} />
+                  )}
+                  <button type="button" onClick={handleAddDebt} disabled={!debtCustomer || !debtReady(debt)}
+                    className="w-full bg-gray-800 text-white py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40">
+                    <Plus size={16} /> Add debt
+                  </button>
+                  {creditError && <p className="text-sm text-red-600">{creditError}</p>}
+                  {creditBreach && (
+                    <CreditLimitPrompt
+                      key={JSON.stringify(creditBreach.payload)}
+                      breach={creditBreach.details}
+                      approval={isAdmin ? undefined : attendantApproval}
+                      purpose={creditBreach.kind === 'credit' ? 'credit_override' : 'consumption_override'}
+                      subject={creditBreach.kind === 'credit'
+                        ? { account_id: creditBreach.payload.account_id, shift_id: Number(id), amount: creditBreach.payload.amount }
+                        : { account_id: creditBreach.payload.account_id, shift_id: Number(id), fuel_type: creditBreach.payload.fuel_type, litres: creditBreach.payload.litres }}
+                      onApprove={(fields) => creditBreach.kind === 'credit'
+                        ? submitCredit({ ...creditBreach.payload, ...fields })
+                        : submitInvoice({ ...creditBreach.payload, ...fields })}
+                      onCancel={() => setCreditBreach(null)}
+                      inputClassName="w-full border border-gray-300 rounded-lg p-3 text-sm bg-white"
+                      actionLabel="Approve and add debt"
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {sheet === 'payment' && (
+            <div className="mobile-modal-overlay flex items-end justify-center" onClick={() => setSheet(null)}>
+              <div className="mobile-bottom-sheet max-w-lg max-h-[90vh] overflow-y-auto rounded-t-2xl p-5 bg-white" onClick={(e) => e.stopPropagation()}>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-gray-800">Debt payment</h3>
+                  <button type="button" onClick={() => setSheet(null)} className="p-1 text-gray-400" aria-label="Close"><X size={20} /></button>
+                </div>
+                {receiptAccounts.length === 0 ? (
+                  <p className="text-sm text-gray-400">No customer owes anything that can be paid now.</p>
+                ) : (
+                  <div className="space-y-3">
+                    <CustomerField value={selectedReceiptAccount ? { id: selectedReceiptAccount.id, name: selectedReceiptAccount.name, owes: selectedReceiptBalance } : null}
+                      placeholder="Choose who is paying" onOpen={() => setPicker('payment')} />
+                    <input type="number" inputMode="decimal" step="0.01" value={newReceipt.amount}
+                      onChange={e => setNewReceipt({ ...newReceipt, amount: e.target.value })}
+                      placeholder="Amount (KES)" className="w-full border border-gray-300 rounded-lg p-3 text-sm" />
+                    {selectedReceiptAccount && receiptAmount > selectedReceiptBalance && (
+                      <p className="text-xs text-red-600">They owe KES {selectedReceiptBalance.toLocaleString('en-KE', { minimumFractionDigits: 2 })}.</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      {['cash', 'mpesa'].map(method => (
+                        <button key={method} type="button" onClick={() => setNewReceipt({ ...newReceipt, payment_method: method })}
+                          className={`py-2.5 rounded-lg text-sm font-medium border ${newReceipt.payment_method === method ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-300'}`}>
+                          {method === 'mpesa' ? 'M-Pesa' : 'Cash'}
+                        </button>
+                      ))}
+                    </div>
+                    <PaymentCodeField method={newReceipt.payment_method} value={newReceipt.reference} onChange={(reference) => setNewReceipt({ ...newReceipt, reference })} />
+                    <button type="button" onClick={handleAddCreditReceipt}
+                      disabled={!newReceipt.account_id || !newReceipt.amount || receiptAmount > selectedReceiptBalance || !codeReady(newReceipt.payment_method, newReceipt.reference)}
+                      className="w-full bg-green-600 text-white py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40">
+                      <Plus size={16} /> Record payment
+                    </button>
+                    {receiptError && <p className="text-sm text-red-600">{receiptError}</p>}
                   </div>
                 )}
               </div>
+            </div>
+          )}
 
-            {selectedBillingMode === 'invoice' ? (
-              <>
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 mb-2 text-xs text-purple-800">
-                  Invoice-mode customer — record <strong>litres & fuel type</strong>. Amount is tallied at retail price for the shift balance; final invoice uses the agreed price.
-                </div>
-                <div className="flex gap-2 mb-2">
-                  <button
-                    onClick={() => setNewInvoice({
-                      ...newInvoice,
-                      fuel_type: 'petrol',
-                      pump_id: readings.filter((reading) => reading.fuel_type === 'petrol').length === 1
-                        ? String(readings.find((reading) => reading.fuel_type === 'petrol')?.pump_id || '')
-                        : '',
-                    })}
-                    className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${newInvoice.fuel_type === 'petrol' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                  >Petrol</button>
-                  <button
-                    onClick={() => setNewInvoice({
-                      ...newInvoice,
-                      fuel_type: 'diesel',
-                      pump_id: readings.filter((reading) => reading.fuel_type === 'diesel').length === 1
-                        ? String(readings.find((reading) => reading.fuel_type === 'diesel')?.pump_id || '')
-                        : '',
-                    })}
-                    className={`flex-1 py-2.5 rounded-lg text-sm font-medium border ${newInvoice.fuel_type === 'diesel' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                  >Diesel</button>
-                </div>
-                {invoiceSources.length > 0 && (
-                  <select
-                    value={newInvoice.pump_id || (invoiceSources.length === 1 ? String(invoiceSources[0].pump_id) : '')}
-                    onChange={e => setNewInvoice({ ...newInvoice, pump_id: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm bg-white"
-                  >
-                    {invoiceSources.length > 1 && <option value="">Select pump / nozzle</option>}
-                    {invoiceSources.map((source) => (
-                      <option key={source.pump_id} value={source.pump_id}>
-                        {[source.pump_label, source.nozzle_label].filter(Boolean).join(' / ')}
-                        {' - '}{Number(source.litres_sold || 0).toFixed(2)} L sold
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <input type="number" step="0.01" value={newInvoice.litres} onChange={e => setNewInvoice({ ...newInvoice, litres: e.target.value })}
-                  placeholder="Litres" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
-                <button onClick={handleAddInvoice}
-                  className="w-full bg-purple-600 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1">
-                  <Plus size={16} /> Record Litres
-                </button>
-              </>
-            ) : (
-              <>
-                <input value={newCredit.description} onChange={e => setNewCredit({ ...newCredit, description: e.target.value })}
-                  placeholder="Details of the debt" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
-                <input type="number" value={newCredit.amount} onChange={e => setNewCredit({ ...newCredit, amount: e.target.value })}
-                  placeholder="Amount" className="w-full border border-gray-300 rounded-lg p-3 mb-2 text-sm" />
-                <button onClick={handleAddCredit}
-                  className="w-full bg-gray-800 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1">
-                  <Plus size={16} /> Add Credit
-                </button>
-              </>
-            )}
-            {creditError && <p className="text-sm text-red-600 mt-2">{creditError}</p>}
-            {creditBreach && (
-              <div className="mt-3">
-                <CreditLimitPrompt
-                  key={JSON.stringify(creditBreach.payload)}
-                  breach={creditBreach.details}
-                  approval={isAdmin ? undefined : attendantApproval}
-                  purpose={creditBreach.kind === 'credit' ? 'credit_override' : 'consumption_override'}
-                  subject={creditBreach.kind === 'credit'
-                    ? { account_id: creditBreach.payload.account_id, shift_id: Number(id), amount: creditBreach.payload.amount }
-                    : { account_id: creditBreach.payload.account_id, shift_id: Number(id), fuel_type: creditBreach.payload.fuel_type, litres: creditBreach.payload.litres }}
-                  onApprove={(fields) => creditBreach.kind === 'credit'
-                    ? submitCredit({ ...creditBreach.payload, ...fields })
-                    : submitInvoice({ ...creditBreach.payload, ...fields })}
-                  onCancel={() => setCreditBreach(null)}
-                  inputClassName="w-full border border-gray-300 rounded-lg p-3 text-sm bg-white"
-                  actionLabel={creditBreach.kind === 'credit' ? 'Approve and add credit' : 'Approve and record litres'}
-                />
-              </div>
-            )}
-          </div>
+          <CustomerPicker
+            open={picker === 'debt'}
+            customers={creditAccounts.filter((a: any) => a.type === 'customer').map((a: any) => ({ id: a.id, name: a.name, owes: Number(a.outstanding_balance || 0), tag: a.billing_mode === 'invoice' ? 'Invoice' : null }))}
+            onPick={(c) => { const account = creditAccounts.find((a: any) => a.id === c.id); if (account) selectAccount(account); setPicker(null); }}
+            onClose={() => setPicker(null)}
+          />
+          <CustomerPicker
+            open={picker === 'payment'}
+            title="Who is paying?"
+            order="owes"
+            customers={receiptAccounts.map((a: any) => ({ id: a.id, name: a.name, owes: Number(a.outstanding_balance ?? a.balance ?? 0) }))}
+            emptyText="No customer owes anything that can be paid now."
+            onPick={(c) => { setNewReceipt({ ...newReceipt, account_id: String(c.id) }); setPicker(null); }}
+            onClose={() => setPicker(null)}
+          />
         </div>
       )}
 

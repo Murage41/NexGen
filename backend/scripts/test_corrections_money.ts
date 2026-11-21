@@ -100,8 +100,8 @@ async function main() {
       return id as number;
     };
     const sale = async (shiftId: number, account: number, amount: number) => ok(await call('POST', `/shifts/${shiftId}/credits`, desktop, { account_id: account, amount })).id;
-    const receipt = async (shiftId: number, account: number, amount: number, method: string) =>
-      ok(await call('POST', `/shifts/${shiftId}/credit-receipts`, desktop, { account_id: account, amount, payment_method: method })).id as number;
+    const receipt = async (shiftId: number, account: number, amount: number, method: string, reference?: string) =>
+      ok(await call('POST', `/shifts/${shiftId}/credit-receipts`, desktop, { account_id: account, amount, payment_method: method, reference })).id as number;
     const expense = async (shiftId: number, category: string, amount: number) =>
       ok(await call('POST', `/shifts/${shiftId}/expenses`, desktop, { category, amount, description: `${category} paid` })).id as number;
 
@@ -118,7 +118,7 @@ async function main() {
     // S2: 18,000 sold; debts paid 2,800 (alpha 1,500 + 300 cash, gamma 1,000 M-Pesa); over 200.
     const s2 = await shiftRun(100, async (id) => {
       ids.r1 = await receipt(id, alpha, 1500, 'cash');
-      ids.r2 = await receipt(id, gamma, 1000, 'mpesa');
+      ids.r2 = await receipt(id, gamma, 1000, 'mpesa', 'QM11MM0001');
       ids.r3 = await receipt(id, alpha, 300, 'cash');
     }, 14200, 6000);
     // S3: 9,000 sold, balanced.

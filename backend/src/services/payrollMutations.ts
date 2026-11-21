@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { checkedPaymentCode } from './paymentReference';
 import {
   money,
   positiveMoney,
@@ -119,6 +120,7 @@ export async function recordPayrollPayment(
   }
   const [id] = await db('payroll_payments').insert({
     ...input,
+    reference: await checkedPaymentCode(db, input.payment_method, input.reference),
     amount,
     payroll_line_id: lineId,
     employee_id: line.employee_id,

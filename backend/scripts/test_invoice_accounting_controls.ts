@@ -268,6 +268,7 @@ async function run() {
       accountId,
       amount: 1000,
       paymentMethod: 'mpesa',
+      reference: 'QD11DD0001',
       paymentDate: '2026-07-31',
     });
     const paymentId = Number(paymentResult.payment.id);

@@ -42,6 +42,7 @@ async function createSchema(db: Knex) {
     t.timestamp('created_at').defaultTo(db.fn.now());
   });
   await db.schema.createTable('credit_payments', (t) => {
+    t.string('reference').nullable();
     t.increments('id').primary();
     t.integer('credit_id').nullable();
     t.integer('account_id').nullable();
@@ -65,6 +66,7 @@ async function createSchema(db: Knex) {
     t.decimal('amount', 14, 2).notNullable();
     t.string('method').notNullable();
     t.string('refund_date').notNullable();
+    t.string('reference').nullable();
     t.string('status').notNullable().defaultTo('posted');
   });
   await db.schema.createTable('customer_refund_allocations', (t) => {
@@ -204,6 +206,7 @@ async function testInvoicePayments(db: Knex) {
     amount: 6000,
     paymentMethod: 'mpesa',
     paymentDate: '2026-07-03',
+    reference: 'QA11AA0001',
   });
   assert(first.allocations.length === 1, 'First payment should allocate only to the oldest invoice');
   assert(first.allocations[0].invoice_id === invoiceA, 'Invoice FIFO order is incorrect');
@@ -223,6 +226,7 @@ async function testInvoicePayments(db: Knex) {
     amount: 9000,
     paymentMethod: 'bank_transfer',
     paymentDate: '2026-07-04',
+    reference: 'BANK-REF-1',
   });
   assert(final.allocations.length === 2, 'Final invoice payment should finish two invoices');
   assert(money(final.outstanding_balance) === 0, 'Fully paid invoice account should have zero balance');
@@ -310,6 +314,7 @@ async function testMoneyPayments(db: Knex) {
     paymentMethod: 'mpesa',
     paymentDate: '2026-07-04',
     shiftId: receivingShift,
+    reference: 'QA11AA0002',
   });
   const account = await db('credit_accounts').where({ id: accountId }).first();
   assert(money(account.balance) === 800, 'Account cache should retain only the open-shift credit');
@@ -399,6 +404,7 @@ async function testConcurrentInvoicePayments(dbFile: string, setupDb: Knex) {
         amount: 60,
         paymentMethod: 'mpesa',
         paymentDate: '2026-07-03',
+        reference: 'QA11AA0003',
       }),
     ]);
     assert(attempts.some((attempt) => attempt.status === 'fulfilled'), 'Both concurrent payments failed');

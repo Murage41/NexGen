@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { checkedPaymentCode } from './paymentReference';
 import { readAccountBalance, recomputeAccountBalance } from './accountBalance';
 import { getKenyaDate } from '../utils/timezone';
 import { recountCreditBalance } from './cacheRecounts';
@@ -16,6 +17,7 @@ export type MoneyPaymentInput = {
   paymentDate: string;
   notes?: string | null;
   shiftId?: number | null;
+  reference?: string | null;
 };
 
 export type InvoicePaymentInput = {
@@ -265,7 +267,7 @@ export async function recordInvoicePayment(conn: Knex, input: InvoicePaymentInpu
       amount,
       payment_method: paymentMethod,
       payment_date: input.paymentDate,
-      reference: input.reference || null,
+      reference: await checkedPaymentCode(trx, paymentMethod, input.reference),
       notes: input.notes || null,
       status: 'posted',
       received_into: receivingAccount,
@@ -473,6 +475,7 @@ export async function recordMoneyAccountPaymentInTransaction(
     );
   }
 
+  const reference = await checkedPaymentCode(trx, input.paymentMethod, input.reference);
   const [paymentId] = await trx('credit_payments').insert({
     credit_id: null,
     account_id: input.accountId,
@@ -480,6 +483,7 @@ export async function recordMoneyAccountPaymentInTransaction(
     payment_method: input.paymentMethod,
     payment_type: 'account',
     date: input.paymentDate,
+    reference,
     notes: input.notes || null,
     status: 'posted',
     ...(input.shiftId ? { shift_id: input.shiftId } : {}),
@@ -710,7 +714,7 @@ export async function refundCustomerCredit(
     amount,
     method: input.method,
     refund_date: date,
-    reference: String(input.reference || '').trim().slice(0, 100) || null,
+    reference: await checkedPaymentCode(trx, input.method, input.reference),
     status: 'posted',
     approved_by_employee_id: input.approver.id,
     approved_by_name: input.approver.name,

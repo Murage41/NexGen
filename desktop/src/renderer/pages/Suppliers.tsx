@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   getSuppliers, createSupplier, updateSupplier, deleteSupplier,
-  getSupplier, createSupplierPayment, getFuelDeliveries,
+  getSupplier, createSupplierPayment, getFuelDeliveries, addPaymentCode,
 } from '../services/api';
+import { AddCode } from '../../../../shared/ui/PaymentCode';
 import { Truck, Plus, Pencil, Trash2, X, CreditCard, ChevronRight } from 'lucide-react';
 import { getKenyaDate } from '../utils/timezone';
 
@@ -392,7 +393,7 @@ export default function Suppliers() {
                       <td className="p-3 text-right tabular-nums font-semibold text-green-700">{money(pay.amount)}</td>
                       <td className="p-3">{PAYMENT_METHODS.find(m => m.value === pay.payment_method)?.label || pay.payment_method}</td>
                       <td className="p-3 text-gray-500">
-                        {pay.reference || ''}
+                        {pay.reference || <AddCode method={pay.payment_method} save={(code) => addPaymentCode({ kind: 'supplier_payment', id: pay.id, reference: code })} onSaved={() => detail && void loadDetail(detail.id)} />}
                         {pay.notes && <span className="block text-xs text-gray-400">{pay.notes}</span>}
                       </td>
                     </tr>

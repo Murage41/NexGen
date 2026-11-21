@@ -26,8 +26,11 @@ analyses stay in `D:\NexGen\.claude\plans\`.
 5. **Invoice customers: billed as sold, nothing left unbilled, followed up**
    (owner, 2026-11-17: removal guard and lines per shift; asked for a full
    invoice review the same day; 2026-11-18 agreed the review's plan without
-   the discount per litre and the reference per fill). Plan below; built on
-   branch `claude/project-thread-kh1f1p` for #27.
+   the discount per litre and the reference per fill). Plan below; on the
+   station as #27.
+6. **Shift screens: debts, payment codes, closing** (owner, 2026-11-20; agreed
+   2026-11-21 without a notes box on Add debt, and with the close notes back).
+   Plan below; built for #28.
 
 Done: shift date on the open-shift form and B2 (money-only invoice notes)
 both went to the station with #18.
@@ -367,6 +370,38 @@ limit. Built (no database change):
 - Not built (owner, 2026-11-18): a discount per litre, a reference per fill.
   Open with the owner: payment terms and a credit limit for the invoice
   customer; whether POSitive issues an eTIMS receipt per credit fill.
+
+## Shift screens (item 6), 2026-11-20
+
+Plan doc: https://claude.ai/artifact/CLscgEDXKK7aJqdK5LDwT8 (mockups in the
+thread). **Found:** debt payments (`credit_payments`) had no code column and
+shift/office payment forms no code box (the M-Pesa debt payments on the data
+copy had none); invoice, supplier and payroll codes were optional. A money
+debt was an amount, an invoice customer's a litres figure with a pump choice
+used only for a per-pump check. Add Credit's search opened the keyboard over
+a short list; debt payments used the phone's dark list. On the phone, Record
+and Close sat below all tab content.
+
+**Built** (migration `20261121_058_payment_codes_and_debt_fuel`):
+- One code rule (`services/paymentReference.ts`): required for M-Pesa, bank and
+  cheque on every payment table, M-Pesa 10 letters and digits, unique across
+  live payments (a reversal frees it); `POST /payment-codes` adds a missing
+  code once to an older payment. Corrections keep a receipt's original code.
+- Debts in litres or amount at the shift's pump price (`fuelDebtFigures`):
+  money debts keep fuel, litres and price on `shift_credits`; invoice fills
+  keep the amount as shown; no pump choice. Fuel on account is checked per
+  fuel at close and in corrections, money fuel debts included.
+- Shared light customer picker, litres-or-amount fields and code box
+  (`shared/ui/CustomerPicker.tsx`, `DebtFields.tsx`, `PaymentCode.tsx`); phone
+  step bar Readings · Count · Close; recording tabs Readings · Debts · Money
+  out · Count with Add debt and Debt payment sheets; notes back on Close.
+- Suite `test:shift-debts-codes`; older suites given valid codes.
+- Practice: forecourt tills set a sale by amount or volume and work out the
+  other from the price
+  (https://docs.verifone.com/commander-user-reference-guides/commander-user-references/commander-user-reference-57.00/fuel-sales);
+  the M-Pesa code is the key for matching the statement and spotting
+  duplicates (https://tallysolutions.com/ssa/business-guides/reconcile-mpesa-bank-payments-kenya/).
+- Won't solve: NexGen can't confirm a code is real; old debts keep no litres.
 
 ## Later, in order
 

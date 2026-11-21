@@ -189,7 +189,7 @@ async function main() {
     console.log('PASS reversing a credit note takes its credit back');
 
     // 9. A paid debit note can't be voided: a credit note corrects it.
-    r = await call('POST', '/inv/payments', { account_id: delta, amount: 3700, payment_method: 'mpesa', reference: 'QX1' });
+    r = await call('POST', '/inv/payments', { account_id: delta, amount: 3700, payment_method: 'mpesa', reference: 'QX11XX0001' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     r = await call('POST', `/inv/${dn2.id}/void`, { reason: 'trying to void a paid bill' });
     assert.equal(r.status, 400);

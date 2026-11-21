@@ -1,6 +1,7 @@
 import { Link, useSearchParams } from 'react-router-dom';
+import { AddCode, PaymentCodeField, codeReady } from '../../../../shared/ui/PaymentCode';
 import { useState, useEffect, Fragment } from 'react';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, balanceMoveApi, desktopApproval } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, balanceMoveApi, desktopApproval, addPaymentCode } from '../services/api';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 import { CustomerCreditPanel } from '../../../../shared/ui/CustomerCredit';
 import { MoveBalanceButton } from '../../../../shared/ui/BalanceMove';
@@ -22,6 +23,7 @@ export default function CreditAccounts() {
     payment_method: 'cash',
     payment_date: getKenyaDate(),
     notes: '',
+    reference: '',
   });
   const [showAccountModal, setShowAccountModal] = useState(false);
   // null while creating a customer; the account being edited otherwise.
@@ -92,6 +94,7 @@ export default function CreditAccounts() {
       payment_method: 'cash',
       payment_date: getKenyaDate(),
       notes: '',
+      reference: '',
     });
     setPaymentError(null);
     setShowPaymentModal(true);
@@ -105,6 +108,7 @@ export default function CreditAccounts() {
       payment_method: paymentForm.payment_method,
       date: paymentForm.payment_date,
       notes: paymentForm.notes || null,
+      reference: paymentForm.payment_method === 'cash' ? null : paymentForm.reference,
     };
     try {
       await addAccountPayment(paymentTarget.id, payload);
@@ -402,6 +406,8 @@ export default function CreditAccounts() {
                                             <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">
                                               {p.payment_method === 'mpesa' ? 'M-Pesa' : p.payment_method === 'bank_transfer' ? 'Bank' : p.payment_method === 'cheque' ? 'Cheque' : 'Cash'}
                                             </span>
+                                            {p.reference && <span className="ml-2 text-xs text-gray-500">{p.reference}</span>}
+                                            {!p.reference && p.id && <span className="ml-2"><AddCode method={p.payment_method} save={(code) => addPaymentCode({ kind: 'debt_payment', id: p.id, reference: code })} onSaved={() => void refreshAfterRefund()} /></span>}
                                           </td>
                                           <td className="p-2 text-gray-500">{p.notes || '-'}</td>
                                         </tr>
@@ -490,12 +496,16 @@ export default function CreditAccounts() {
                   <option value="bank_transfer">Bank Transfer</option>
                   <option value="cheque">Cheque</option>
                 </select>
+                <div className="mt-2">
+                  <PaymentCodeField method={paymentForm.payment_method} value={paymentForm.reference} onChange={(reference) => setPaymentForm({ ...paymentForm, reference })}
+                    className="w-full rounded-lg border border-gray-300 p-2 uppercase tracking-wide" />
+                </div>
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setShowPaymentModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                   Cancel
                 </button>
-                <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                <button type="submit" disabled={!codeReady(paymentForm.payment_method, paymentForm.reference)} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
                   Record Payment
                 </button>
               </div>

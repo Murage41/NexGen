@@ -167,7 +167,12 @@ async function main() {
     );
     assert(valid.by_fuel.petrol.remaining_litres === 20, 'Petrol remaining litres are wrong');
     assert(valid.by_fuel.diesel.remaining_litres === 15, 'Diesel remaining litres are wrong');
-    assert(valid.missing_source_entries === 1, 'Missing source count is wrong');
+    // Money debts entered as fuel count too; Other debts never do.
+    const withCredits = validateInvoiceConsumptionAgainstReadings(
+      [{ pump_id: dieselPump, fuel_type: 'diesel', litres_sold: 40 }],
+      [{ fuel_type: 'diesel', litres: 25 }, { fuel_type: 'diesel', litres: 10 }, { fuel_type: 'other', litres: 99 }],
+    );
+    assert(withCredits.by_fuel.diesel.remaining_litres === 5, 'Money fuel debts are on account too');
 
     await expectError(
       () => validateInvoiceConsumptionAgainstReadings(
@@ -182,14 +187,22 @@ async function main() {
           { pump_id: petrolPump, fuel_type: 'petrol', litres_sold: 50 },
           { pump_id: secondPetrolPump, fuel_type: 'petrol', litres_sold: 50 },
         ],
-        [{ pump_id: petrolPump, fuel_type: 'petrol', litres: 60 }],
+        [{ pump_id: petrolPump, fuel_type: 'petrol', litres: 100.5 }],
       ),
-      'source sold only 50.00 L',
+      'sold only 100.00 L of petrol',
+    );
+    // One pump can supply more than its own reading: the check is per fuel.
+    validateInvoiceConsumptionAgainstReadings(
+      [
+        { pump_id: petrolPump, fuel_type: 'petrol', litres_sold: 50 },
+        { pump_id: secondPetrolPump, fuel_type: 'petrol', litres_sold: 50 },
+      ],
+      [{ pump_id: petrolPump, fuel_type: 'petrol', litres: 60 }],
     );
 
     console.log('PASS additive invoice-consumption migration is repeatable');
     console.log('PASS tank, fuel, pump, and automatic-source validation');
-    console.log('PASS shift fuel and per-pump litre over-allocation guards');
+    console.log('PASS litres on account checked per fuel, money fuel debts included');
   } finally {
     await db.destroy();
     for (const suffix of ['', '-wal', '-shm']) {

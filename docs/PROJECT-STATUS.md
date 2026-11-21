@@ -4,12 +4,12 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-11-20.
+Last updated: 2026-11-21.
 
 ## Station PC
 
-- **Runs update #26** (`1a428d9`, installed by 2026-11-17 per the owner's
-  report; see below), on top of #25 `16b9642`, #24 `dab2acb`, #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
+- **Runs update #27** (`9453542`, installed 2026-11-20 per the owner's
+  report; see below), on top of #26 `1a428d9`, #25 `16b9642`, #24 `dab2acb`, #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
   Shortages, Pay plan & details). Before it #20 `90e3022` (phone shift page
   in tabs, cash count first in Money) and #19 `c35dc4e` (desktop shift page
   in tabs, one-press close, "Record my shift"). Latest migration
@@ -76,8 +76,8 @@ Last updated: 2026-11-20.
   removed. Suite `test:reversal-recounts`. Station data copy (to shift #157)
   had no archived customers and no drift: no repair needed. Next update
   number #27.
-- **Pending station update #27** (owner asked to update the station
-  2026-11-20; pushed to `main` in the commit after `1a428d9`; next update number #28): an invoice customer with fuel not yet invoiced or a draft invoice
+- **Update #27 installed 2026-11-20** (owner's report; station now at `9453542`; no pending station update; next update
+  number #28): an invoice customer with fuel not yet invoiced or a draft invoice
   cannot be removed or switched to money billing (one check in
   `routes/creditAccounts.ts`, `invoiceWorkLeft`; suite
   `test:reversal-recounts`). No screen offered Remove for invoice customers,
@@ -90,6 +90,15 @@ Last updated: 2026-11-20.
   the credit limit. New suite `test:invoice-followup`; 50 suites. No database
   change, no new packages; **the phone app needs a rebuild** (`npm run
   build:mobile`).
+- **Pending station update #28** (owner asked for the station commands
+  2026-11-21; pushed to `main` in the commit after `9453542`; next update
+  number #29; `ROADMAP.md` item 6): payment codes required
+  for M-Pesa/bank/cheque on every payment, never reused, Add code on older
+  payments; debts in litres or amount at the pump price for every customer, no
+  pump choice, litres checked per fuel; light customer picker; phone step bar
+  Readings · Count · Close; notes back on Close. Migration
+  `20261121_058_payment_codes_and_debt_fuel` (needs a backup at install);
+  phone rebuild. Suite `test:shift-debts-codes`; 51 suites.
 - **Also in #25:** one dated shortages list (latest first, red
   adds, green takes off, owed after each line; server `ledger` on the
   statement, no database change), **My Pay renamed My Account** with tabs Pay
@@ -101,7 +110,7 @@ Last updated: 2026-11-20.
 
 ## Development PC
 
-- `main` holds B2, the #17 merge, the docs cut and updates #18 to #27.
+- `main` holds B2, the #17 merge, the docs cut and updates #18 to #28.
   Pushed 2026-11-11 (owner asked). No worktrees; work in
   `D:\NexGen` on a branch.
 - Local-only archive branches (never push): `archive/old-phase-2b` (the

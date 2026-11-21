@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { checkedPaymentCode } from './paymentReference';
 import { getKenyaDate } from '../utils/timezone';
 import { positiveMoney, settlementError } from './employeeDebt';
 
@@ -631,11 +632,10 @@ export async function recordVarianceRepayment(
     throw settlementError('Choose cash, M-Pesa or bank transfer.', 400);
   }
   const date = validDate(input.date);
-  const reference = String(input.reference || '').trim().slice(0, 100);
-  // A correction's replacement keeps the original's notes instead.
-  if (method !== 'cash' && !reference && !links.correctionId) {
-    throw settlementError('Enter the M-Pesa or bank reference.', 400);
-  }
+  // A correction's replacement keeps the original's notes instead of a new code.
+  const reference = links.correctionId && !String(input.reference || '').trim()
+    ? ''
+    : (await checkedPaymentCode(trx, method, input.reference)) || '';
   const notes = String(input.notes || '').trim().slice(0, 500);
   const shiftId = input.shift_id ? Number(input.shift_id) : null;
   if (shiftId && !links.correctionId) {
@@ -665,6 +665,7 @@ export async function recordVarianceRepayment(
     payment_type: 'staff_debt',
     date,
     shift_id: shiftId,
+    reference: reference || null,
     notes: [reference, notes].filter(Boolean).join(': ') || null,
     status: 'posted',
     created_by_employee_id: actorId,

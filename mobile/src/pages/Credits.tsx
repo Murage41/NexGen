@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { CreditCard, Phone, ChevronRight, Trash2, Users, Briefcase, ArrowDownCircle, ArrowUpCircle, Banknote, UserPlus, Pencil, X } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
-import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, balanceMoveApi } from '../services/api';
+import { getCreditAccounts, getCreditAccount, deleteCreditAccount, addAccountPayment, createCreditAccount, updateCreditAccount, refundCustomerCredit, balanceMoveApi, addPaymentCode } from '../services/api';
+import { AddCode, PaymentCodeField, codeReady } from '../../../shared/ui/PaymentCode';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../shared/ui/CustomerAccountForm';
 import { CustomerCreditPanel } from '../../../shared/ui/CustomerCredit';
 import { MoveBalanceButton } from '../../../shared/ui/BalanceMove';
@@ -20,7 +21,7 @@ export default function Credits() {
   const [showPayment, setShowPayment] = useState(false);
   const [paymentAccount, setPaymentAccount] = useState<any>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ amount: '', payment_method: 'cash', notes: '' });
+  const [paymentForm, setPaymentForm] = useState({ amount: '', payment_method: 'cash', notes: '', reference: '' });
   const [paymentError, setPaymentError] = useState('');
   const [detailError, setDetailError] = useState('');
   // Admin customer form: null when closed, account null when adding.
@@ -85,7 +86,7 @@ export default function Credits() {
 
   function openAccountPayment(account: any) {
     setPaymentAccount(account);
-    setPaymentForm({ amount: '', payment_method: 'cash', notes: '' });
+    setPaymentForm({ amount: '', payment_method: 'cash', notes: '', reference: '' });
     setPaymentError('');
     setShowPayment(true);
   }
@@ -99,10 +100,11 @@ export default function Credits() {
         payment_method: paymentForm.payment_method,
         date: getKenyaDate(),
         notes: paymentForm.notes || undefined,
+        reference: paymentForm.payment_method === 'cash' ? undefined : paymentForm.reference,
       });
       setShowPayment(false);
       setPaymentAccount(null);
-      setPaymentForm({ amount: '', payment_method: 'cash', notes: '' });
+      setPaymentForm({ amount: '', payment_method: 'cash', notes: '', reference: '' });
       try {
         await openAccount(selectedAccount);
       } catch {
@@ -273,13 +275,15 @@ export default function Credits() {
                       <div className="flex items-center gap-2">
                         <ArrowDownCircle size={14} className="text-green-500 shrink-0" />
                         <span className="text-sm font-medium text-green-700">{fmt(p.amount)}</span>
-                        <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full">{p.payment_method}</span>
+                        <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full">{p.payment_method === 'mpesa' ? 'M-Pesa' : p.payment_method}</span>
+                        {p.reference && <span className="text-xs text-gray-500">{p.reference}</span>}
                       </div>
                       <div className="text-xs text-gray-400">
                         {new Date(p.date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })}
                       </div>
                     </div>
                     {p.notes && <p className="text-xs text-gray-400 mt-1 ml-5">{p.notes}</p>}
+                    {isAdmin && !p.reference && p.id && <div className="mt-1 ml-5"><AddCode method={p.payment_method} save={(code) => addPaymentCode({ kind: 'debt_payment', id: p.id, reference: code })} onSaved={() => void openAccount(selectedAccount)} /></div>}
                   </div>
                 ))}
               </div>
@@ -356,10 +360,12 @@ export default function Credits() {
                     <option value="mpesa">M-Pesa</option>
                   </select>
                 </div>
+                <PaymentCodeField method={paymentForm.payment_method} value={paymentForm.reference} onChange={(reference) => setPaymentForm({ ...paymentForm, reference })}
+                  className="w-full border border-gray-200 rounded-xl p-3 text-sm uppercase tracking-wide" />
                 {paymentError && <p className="text-sm text-red-600">{paymentError}</p>}
                 <button
                   onClick={handlePayment}
-                  disabled={submitting || !paymentForm.amount}
+                  disabled={submitting || !paymentForm.amount || !codeReady(paymentForm.payment_method, paymentForm.reference)}
                   className="w-full bg-green-600 text-white py-3 rounded-xl text-base font-medium disabled:opacity-50 mt-2"
                 >
                   {submitting ? 'Processing...' : 'Record Payment'}

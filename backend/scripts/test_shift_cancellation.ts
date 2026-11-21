@@ -54,6 +54,7 @@ async function createSchema(db: Knex) {
     t.timestamp('deleted_at').nullable();
   });
   await db.schema.createTable('credit_payments', (t) => {
+    t.string('reference').nullable();
     t.increments('id').primary();
     t.integer('credit_id').nullable();
     t.integer('account_id').nullable();

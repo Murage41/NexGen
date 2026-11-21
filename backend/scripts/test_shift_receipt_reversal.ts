@@ -92,7 +92,7 @@ async function main() {
     console.log('PASS a removed payment is reversed: the customer owes it again, it leaves the shift and statement, and stays on record');
 
     // The customer can then pay correctly.
-    const again = await call('POST', `/shifts/${open}/credit-receipts`, attendantSession, { account_id: customer, amount: 1500, payment_method: 'mpesa' });
+    const again = await call('POST', `/shifts/${open}/credit-receipts`, attendantSession, { account_id: customer, amount: 1500, payment_method: 'mpesa', reference: 'QR11RR0001' });
     assert.equal(again.status, 201);
     assert.equal(await cached(), 0);
     console.log('PASS the correct payment can be recorded afterwards');

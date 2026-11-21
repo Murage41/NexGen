@@ -20,7 +20,9 @@ import {
   getInvoiceCustomerMonitor,
   getCreditNoteDocument,
   getInvoiceDocument,
+  addPaymentCode,
 } from '../services/api';
+import { AddCode } from '../../../../shared/ui/PaymentCode';
 import { FileText, Plus, X, Send, Ban, Trash2, Pencil, Check, DollarSign, Wallet, Users, Droplets, AlertTriangle, Clock, RefreshCw } from 'lucide-react';
 import InvoiceCustomerWorkspace from '../components/InvoiceCustomerWorkspace';
 import { DocumentButton } from '../../../../shared/ui/DocumentButton';
@@ -786,7 +788,7 @@ export default function CustomerInvoices() {
                           <span className="block text-[11px] font-medium text-red-600">Reversed</span>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-gray-500 text-xs">{p.reference || '—'}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{p.reference || (p.status === 'reversed' ? '—' : <AddCode method={p.payment_method} save={(code) => addPaymentCode({ kind: 'invoice_payment', id: p.id, reference: code })} onSaved={() => void loadPayments()} />)}</td>
                       <td className="px-4 py-2.5 text-right font-semibold">{fmt(p.amount)}</td>
                       <td className="px-4 py-2.5 text-xs">
                         {(p.allocations || []).length === 0 ? (

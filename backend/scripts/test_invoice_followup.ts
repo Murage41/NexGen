@@ -73,7 +73,7 @@ async function main() {
     await fuel(haul, d50, 'diesel', 50, 210);
     await invoice(haul, daysAgo(60), daysAgo(60)); // 20,000, due the same day
     await invoice(haul, daysAgo(45), daysAgo(45)); // 10,500
-    await recordInvoicePayment(db, { accountId: haul, amount: 5000, paymentMethod: 'mpesa', paymentDate: daysAgo(30), reference: 'QK12' });
+    await recordInvoicePayment(db, { accountId: haul, amount: 5000, paymentMethod: 'mpesa', paymentDate: daysAgo(30), reference: 'QK12AB34CD' });
     await fuel(haul, d40, 'diesel', 10, 210); // not invoiced for 40 days
     await fuel(haul, d10, 'petrol', 5, 200);
     await fuel(limited, d10, 'diesel', 10, 210); // 2,100 against a 1,000 limit
@@ -114,7 +114,7 @@ async function main() {
     // ---- 3. The statement of account ----
     const text = pdfText(await statementDocument(db, haul, daysAgo(50), today));
     for (const expected of ['STATEMENT', `Balance on ${longDate(daysAgo(51))}`, '20,000.00', '10,500.00', '-5,000.00', '30,500.00',
-      'Payment, mpesa QK12', '25,500.00', 'Days overdue', 'Open invoices', 'Ageing', '31 to 60 days',
+      'Payment, mpesa QK12AB34CD', '25,500.00', 'Days overdue', 'Open invoices', 'Ageing', '31 to 60 days',
       'Fuel taken and not yet invoiced: 15.00 L', 'KES 3,100.00', 'Invoices are due on receipt.', 'This is not a tax invoice.']) {
       assert(text.includes(expected), `statement shows "${expected}"`);
     }

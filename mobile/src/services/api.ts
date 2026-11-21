@@ -137,13 +137,13 @@ export const deleteWageDeduction = (shiftId: number) => api.delete(`/shifts/${sh
 export const setOpeningReadings = (shiftId: number, readings: any[]) => api.put(`/shifts/${shiftId}/opening-readings`, { readings });
 export const getStaffDebts = (employeeId: number) => api.get(`/shifts/staff-debts/${employeeId}`);
 export const repayDebt = (shiftId: number, amount: number) => api.put(`/shifts/${shiftId}/repay-debt`, { amount });
-export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }, operationKey?: string) =>
+export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string; reference?: string }, operationKey?: string) =>
   api.post(`/shifts/${shiftId}/credit-receipts`, data, operationConfig(operationKey));
 // Admin-only, open shift only. The payment is reversed (kept on record), not
 // deleted: the customer owes it again and it leaves the drawer total.
 export const reverseShiftCreditReceipt = (shiftId: number, paymentId: number) =>
   api.post(`/shifts/${shiftId}/credit-receipts/${paymentId}/reverse`);
-export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; pump_id?: number | null; tank_id?: number | null; fuel_type: 'petrol' | 'diesel'; litres: number }, operationKey?: string) =>
+export const addInvoiceConsumption = (shiftId: number, data: { account_id: number; fuel_type: 'petrol' | 'diesel'; litres?: number; amount?: number }, operationKey?: string) =>
   api.post(`/shifts/${shiftId}/invoice-consumption`, data, operationConfig(operationKey));
 export const updateInvoiceConsumption = (shiftId: number, entryId: number, data: { litres?: number; pump_id?: number | null; tank_id?: number | null }) =>
   api.put(`/shifts/${shiftId}/invoice-consumption/${entryId}`, data);
@@ -333,3 +333,5 @@ export const createPayrollSupplement = (id: number) => api.post(`/payroll/runs/$
 export const stationLogoUrl = () => `${baseURL}/station-profile/logo`;
 export const getInvoiceDocument = (id: number) => api.get(`/customer-invoices/${id}/document`, { responseType: 'blob' });
 export const getInvoiceStatement = (accountId: number) => api.get(`/customer-invoices/customers/${accountId}/statement`, { responseType: 'blob' });
+// Adds the M-Pesa or bank code to an older payment recorded without one.
+export const addPaymentCode = (data: { kind: string; id: number; reference: string }) => api.post('/payment-codes', data);

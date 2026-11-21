@@ -44,9 +44,18 @@ administrator's phone home); a tap opens the customer.
 
 ## Money customers
 
-- **Credit sales** are recorded on the shift.
+- **Debts** are recorded on the shift (Add debt): fuel in litres or amount at
+  the shift's pump price ("Diesel 44.053 L at 227.00"), or Other for an amount.
 - **Payments** are recorded on a shift (**Debt Collections**, into that till)
   and pay the oldest debts first. A payment cannot be more than they owe.
+
+**Payment codes.** Every payment by M-Pesa, bank or cheque needs its code (M-Pesa
+code, bank reference or cheque number): debt payments, office payments,
+refunds, invoice, supplier and payroll payments. An M-Pesa code is 10 letters
+and digits; a code already on another payment is refused, the usual sign of a
+payment entered twice. A reversed payment frees its code. Older payments with
+no code show **Add code** for an administrator: it adds the code once and
+changes nothing else.
 - **Credit on account:** when a correction or balance move leaves a customer
   having paid more than they owe, the extra is their credit. It pays their next
   credit automatically, or is paid back with **Refund** (amount, cash or
@@ -57,9 +66,9 @@ administrator's phone home); a tap opens the customer.
 
 ## Invoice customers
 
-1. **Record fuel on the shift:** customer, fuel, litres (and the pump when
-   several can supply that fuel). NexGen checks the litres against what the
-   pumps sold. It is valued at the pump price for accountability.
+1. **Record fuel on the shift** (Add debt): customer, fuel, then litres or
+   amount at the shift's pump price. No pump is asked for. NexGen checks the
+   fuel on account against what that fuel's pumps sold.
 2. **Review** the customer's fuel history (filter by date, shift, fuel, status)
    against their issue book.
 3. **Create a draft invoice up to a date.** It takes every fill not yet

@@ -1,5 +1,6 @@
 import type { Knex } from 'knex';
 import { roundMoney } from './receivablePayments';
+import { getRetailPriceAsOf } from './invoiceAccounting';
 
 type DbConnection = Knex | Knex.Transaction;
 
@@ -80,81 +81,62 @@ export async function resolveConsumptionSource(
   };
 }
 
+// Fuel on account (invoice customers, and money customers whose debt was
+// entered as fuel) can never be more than that fuel's pumps sold on the shift.
+// Checked per fuel: the pump a fill came from is not recorded (update #28).
 export type InvoiceLitreValidation = {
   by_fuel: Record<string, { sold_litres: number; invoice_litres: number; remaining_litres: number }>;
-  by_pump: Record<number, { sold_litres: number; invoice_litres: number; remaining_litres: number }>;
-  missing_source_entries: number;
 };
 
 export function validateInvoiceConsumptionAgainstReadings(
   readings: any[],
-  consumption: any[],
+  onAccount: Array<{ fuel_type?: unknown; litres?: unknown }>,
   toleranceLitres = 0.01,
 ): InvoiceLitreValidation {
   const byFuel: InvoiceLitreValidation['by_fuel'] = {};
-  const byPump: InvoiceLitreValidation['by_pump'] = {};
-
-  for (const reading of readings) {
-    const fuelType = String(reading.fuel_type || '');
-    const pumpId = Number(reading.pump_id);
-    const sold = Number(reading.litres_sold || 0);
-    if (!byFuel[fuelType]) {
-      byFuel[fuelType] = { sold_litres: 0, invoice_litres: 0, remaining_litres: 0 };
-    }
-    byFuel[fuelType].sold_litres += sold;
-    if (pumpId) {
-      if (!byPump[pumpId]) {
-        byPump[pumpId] = { sold_litres: 0, invoice_litres: 0, remaining_litres: 0 };
-      }
-      byPump[pumpId].sold_litres += sold;
-    }
+  const totals = (fuel: string) => (byFuel[fuel] ||= { sold_litres: 0, invoice_litres: 0, remaining_litres: 0 });
+  for (const reading of readings) totals(String(reading.fuel_type || '')).sold_litres += Number(reading.litres_sold || 0);
+  for (const entry of onAccount) {
+    const fuel = String(entry.fuel_type || '');
+    if (fuel !== 'petrol' && fuel !== 'diesel') continue;
+    totals(fuel).invoice_litres += Number(entry.litres || 0);
   }
-
-  let missingSourceEntries = 0;
-  for (const entry of consumption) {
-    const fuelType = String(entry.fuel_type || '');
-    const litres = Number(entry.litres || 0);
-    if (!byFuel[fuelType]) {
-      byFuel[fuelType] = { sold_litres: 0, invoice_litres: 0, remaining_litres: 0 };
-    }
-    byFuel[fuelType].invoice_litres += litres;
-
-    const pumpId = Number(entry.pump_id || 0);
-    if (!pumpId) {
-      missingSourceEntries += 1;
-      continue;
-    }
-    if (!byPump[pumpId]) {
-      byPump[pumpId] = { sold_litres: 0, invoice_litres: 0, remaining_litres: 0 };
-    }
-    byPump[pumpId].invoice_litres += litres;
-  }
-
-  for (const [fuelType, totals] of Object.entries(byFuel)) {
-    totals.sold_litres = roundMoney(totals.sold_litres);
-    totals.invoice_litres = roundMoney(totals.invoice_litres);
-    totals.remaining_litres = roundMoney(totals.sold_litres - totals.invoice_litres);
-    if (totals.invoice_litres - totals.sold_litres > toleranceLitres) {
+  for (const [fuelType, row] of Object.entries(byFuel)) {
+    row.sold_litres = roundMoney(row.sold_litres);
+    row.invoice_litres = roundMoney(row.invoice_litres);
+    row.remaining_litres = roundMoney(row.sold_litres - row.invoice_litres);
+    if (row.invoice_litres - row.sold_litres > toleranceLitres) {
       throw validationError(
-        `Invoice-customer ${fuelType} consumption is ${totals.invoice_litres.toFixed(2)} L, but this shift sold only ${totals.sold_litres.toFixed(2)} L of ${fuelType}.`,
+        `Fuel on account is ${row.invoice_litres.toFixed(2)} L of ${fuelType}, but this shift sold only ${row.sold_litres.toFixed(2)} L of ${fuelType}.`,
       );
     }
   }
+  return { by_fuel: byFuel };
+}
 
-  for (const [pumpId, totals] of Object.entries(byPump)) {
-    totals.sold_litres = roundMoney(totals.sold_litres);
-    totals.invoice_litres = roundMoney(totals.invoice_litres);
-    totals.remaining_litres = roundMoney(totals.sold_litres - totals.invoice_litres);
-    if (totals.invoice_litres - totals.sold_litres > toleranceLitres) {
-      throw validationError(
-        `Invoice-customer consumption assigned to pump/nozzle ${pumpId} is ${totals.invoice_litres.toFixed(2)} L, but that source sold only ${totals.sold_litres.toFixed(2)} L.`,
-      );
-    }
+// A debt entered as fuel (update #28): the form shows litres and amount, one
+// typed and the other worked out at the shift's pump price. Both arrive; the
+// server checks they agree with its own price and keeps them as shown, so a
+// KES 10,000 sale stays exactly KES 10,000. Only one of the two may be sent.
+export async function fuelDebtFigures(
+  trx: DbConnection,
+  input: { fuelType: string; shiftDate: string; litres?: unknown; amount?: unknown },
+): Promise<{ price: number; litres: number; amount: number }> {
+  const price = await getRetailPriceAsOf(trx, input.fuelType, input.shiftDate);
+  if (price === null || !(Number(price) > 0)) {
+    throw Object.assign(new Error(`No ${input.fuelType} pump price is set for ${input.shiftDate}.`), { http: 400, code: 'NO_PUMP_PRICE' });
   }
-
-  return {
-    by_fuel: byFuel,
-    by_pump: byPump,
-    missing_source_entries: missingSourceEntries,
-  };
+  const hasLitres = input.litres !== undefined && input.litres !== null && input.litres !== '';
+  const hasAmount = input.amount !== undefined && input.amount !== null && input.amount !== '';
+  const litresIn = Number(input.litres);
+  const amountIn = Number(input.amount);
+  if ((hasLitres && !(litresIn > 0)) || (hasAmount && !(amountIn > 0)) || (!hasLitres && !hasAmount)) {
+    throw Object.assign(new Error('Enter the litres or the amount.'), { http: 400, code: 'INVALID_LITRES' });
+  }
+  const litres = hasLitres ? Math.round(litresIn * 1000) / 1000 : Math.round((amountIn / Number(price)) * 1000) / 1000;
+  const amount = hasAmount ? roundMoney(amountIn) : roundMoney(litres * Number(price));
+  if (Math.abs(amount - litres * Number(price)) > 0.5) {
+    throw Object.assign(new Error(`The pump price is KES ${Number(price).toFixed(2)} a litre: ${litres} L is not KES ${amount.toFixed(2)}. Check the figures.`), { http: 409, code: 'PRICE_MISMATCH' });
+  }
+  return { price: Number(price), litres, amount };
 }

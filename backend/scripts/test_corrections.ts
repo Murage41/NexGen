@@ -371,6 +371,12 @@ async function main() {
     assert.equal(lower.body.data.needs_override, false, 'a smaller amount needs no limit approval');
     await db('credit_accounts').where({ id: gamma }).update({ credit_limit: null });
     console.log('PASS a fuel correction past the credit limit needs approval, kept on the customer');
+
+    // Money debts entered as fuel are on account too (update #28).
+    await db('shift_credits').insert({ shift_id: s3.id, customer_name: 'Fuel Debtor', amount: 15200, fuel_type: 'diesel', litres: 80, unit_price: 190 });
+    const capped = await preview({ error_kind: 'missing', account_id: gamma, shift_id: s3.id, fuel_type: 'diesel', litres: 10 });
+    assert.equal(capped.body.code, 'LITRES_EXCEED_PUMP_SALES', JSON.stringify(capped.body));
+    console.log('PASS money debts entered as fuel count against what the pumps sold');
   } finally {
     server?.close();
     await db.destroy();

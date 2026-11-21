@@ -27,7 +27,9 @@ import {
   getInvoiceDocument,
   getInvoiceStatement,
   correctionApi,
+  addPaymentCode,
 } from '../services/api';
+import { AddCode } from '../../../../shared/ui/PaymentCode';
 import { CorrectionForm } from '../../../../shared/ui/Corrections';
 import { CreditLimitDetails, CreditLimitSummary, CustomerAccountForm } from '../../../../shared/ui/CustomerAccountForm';
 import { InvoiceNoteForm } from '../../../../shared/ui/InvoiceNote';
@@ -656,7 +658,7 @@ export default function InvoiceCustomerWorkspace({
                   <tr key={payment.id} className={`border-t border-gray-100 ${payment.status === 'reversed' ? 'bg-red-50/30 text-gray-500' : 'hover:bg-gray-50'}`}>
                     <td className="px-4 py-2">{payment.payment_date}</td>
                     <td className="px-4 py-2 capitalize">{payment.payment_method}<p className="text-xs text-gray-400">{payment.received_into || payment.payment_method}</p></td>
-                    <td className="px-4 py-2 text-gray-600">{payment.reference || 'None'}</td>
+                    <td className="px-4 py-2 text-gray-600">{payment.reference || (payment.status === 'reversed' ? 'None' : <AddCode method={payment.payment_method} save={(code) => addPaymentCode({ kind: 'invoice_payment', id: payment.id, reference: code })} onSaved={() => void loadWorkspace()} />)}</td>
                     <td className="px-4 py-2 text-xs">{(payment.allocations || []).map((allocation: any) => allocation.invoice_number || `#${allocation.invoice_id}`).join(', ')}</td>
                     <td className="px-4 py-2 text-right font-semibold">{fmt(payment.amount)}</td>
                     <td className="px-4 py-2 capitalize">{payment.status || 'posted'}{payment.reversal_reason && <p className="text-xs text-red-600">{payment.reversal_reason}</p>}</td>

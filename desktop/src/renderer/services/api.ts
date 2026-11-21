@@ -131,7 +131,7 @@ export const getStaffDebts = (employeeId: number) =>
   api.get(`/shifts/staff-debts/${employeeId}`);
 export const repayDebt = (shiftId: number, amount: number) =>
   api.put(`/shifts/${shiftId}/repay-debt`, { amount });
-export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string }, operationKey?: string) =>
+export const addShiftCreditReceipt = (shiftId: number, data: { account_id: number; amount: number; payment_method?: string; notes?: string; reference?: string }, operationKey?: string) =>
   api.post(`/shifts/${shiftId}/credit-receipts`, data, operationConfig(operationKey));
 // Admin-only, open shift only. The payment is reversed (kept on record), not
 // deleted: the customer owes it again and it leaves the drawer total.
@@ -347,3 +347,5 @@ export const clearStationLogo = () => api.delete('/station-profile/logo');
 export const stationLogoUrl = (version: string | number = '') => `${baseURL}/station-profile/logo${version ? `?v=${version}` : ''}`;
 export const getInvoiceDocument = (id: number) => api.get(`/customer-invoices/${id}/document`, { responseType: 'blob' });
 export const getCreditNoteDocument = (noteId: number) => api.get(`/customer-invoices/adjustments/${noteId}/document`, { responseType: 'blob' });
+// Adds the M-Pesa or bank code to an older payment recorded without one.
+export const addPaymentCode = (data: { kind: string; id: number; reference: string }) => api.post('/payment-codes', data);

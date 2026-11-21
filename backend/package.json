@@ -39,6 +39,7 @@
     "test:shift-history": "tsx scripts/test_shift_history.ts",
     "test:reversal-recounts": "tsx scripts/test_reversal_recounts.ts",
     "test:invoice-followup": "tsx scripts/test_invoice_followup.ts",
+    "test:shift-debts-codes": "tsx scripts/test_shift_debts_codes.ts",
     "test:employee-account": "tsx scripts/test_employee_account.ts",
     "test:closing-total-corrections": "tsx scripts/test_closing_total_corrections.ts",
     "test:customer-shift-corrections": "tsx scripts/test_customer_shift_corrections.ts",

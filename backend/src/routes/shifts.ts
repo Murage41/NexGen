@@ -46,6 +46,7 @@ import { reverseEmployeeDebtReceipt } from '../services/employeePay';
 import {
   resolveConsumptionSource,
   validateInvoiceConsumptionAgainstReadings,
+  fuelDebtFigures,
 } from '../services/invoiceConsumption';
 import { isEverIssuedInvoiceSql } from '../services/issuedInvoiceSource';
 import { cancelOpenShift, previewShiftCancellation } from '../services/shiftCancellation';
@@ -553,10 +554,17 @@ router.get('/:id', requireAuth, requireOwnShiftOrAdmin, async (req, res) => {
         corrections,
       });
 
+      // The pump prices debts are entered at on this shift (litres or amount).
+      const priceDate = String(shift.shift_date || getKenyaDate()).slice(0, 10);
+      const pumpPrices = {
+        petrol: await getRetailPriceAsOf(trx, 'petrol', priceDate),
+        diesel: await getRetailPriceAsOf(trx, 'diesel', priceDate),
+      };
       return { status: 200, body: {
         success: true,
         data: {
           ...shift,
+          pump_prices: pumpPrices,
           readings,
           collections: collections || null,
           close_reconciliation: closeReconciliation || null,
@@ -1245,7 +1253,7 @@ router.delete('/:id/expenses/:expenseId', requireAdmin, async (req, res) => {
 router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(createShiftCreditSchema), async (req, res) => {
   try {
     if (!(await requireOpenShift(req, res))) return;
-    const { account_id: accountId, customer_name, customer_phone, amount, description } = req.body;
+    const { account_id: accountId, customer_name, customer_phone, description, fuel_type: fuelType } = req.body;
     const shiftId = req.params.id;
 
     const key = normalizeIdempotencyKey(req.get('Idempotency-Key'));
@@ -1253,10 +1261,19 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
       db,
       { scope: `shift:${shiftId}:credit`, key, payload: req.body },
       async (trx) => {
-      const shift = await trx('shifts').where({ id: shiftId }).select('status').first();
+      const shift = await trx('shifts').where({ id: shiftId }).select('status', 'shift_date').first();
       if (!shift || shift.status !== 'open') {
         throw Object.assign(new Error('Cannot modify a closed shift.'), { httpStatus: 400 });
       }
+      // A fuel debt is entered in litres or amount at the shift's pump price;
+      // its description says what was taken. Other debts are an amount.
+      const fuel = fuelType === 'petrol' || fuelType === 'diesel'
+        ? await fuelDebtFigures(trx, { fuelType, shiftDate: String(shift.shift_date || getKenyaDate()).slice(0, 10), litres: req.body.litres, amount: req.body.amount })
+        : null;
+      const amount = fuel ? fuel.amount : Number(req.body.amount);
+      const debtDescription = fuel
+        ? `${fuelType === 'petrol' ? 'Petrol' : 'Diesel'} ${fuel.litres.toLocaleString('en-KE', { maximumFractionDigits: 3 })} L at ${fuel.price.toFixed(2)}`
+        : description || null;
       // Customers are created in Credits by an administrator, never here: a
       // typed name that matches no customer is refused for everyone. account_id
       // is what current screens send; the name lookup serves cached clients.
@@ -1308,7 +1325,7 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
         amount,
         balance: amount,
         shift_id: shiftId,
-        description: description || null,
+        description: debtDescription,
         status: 'outstanding',
         account_id: account.id,
       });
@@ -1319,8 +1336,11 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
         customer_name: account.name,
         customer_phone: customer_phone || null,
         amount,
-        description: description || null,
+        description: debtDescription,
         credit_id: mainCreditId,
+        fuel_type: fuel ? fuelType : null,
+        litres: fuel ? fuel.litres : null,
+        unit_price: fuel ? fuel.price : null,
       });
 
       if (approver) {
@@ -1370,7 +1390,7 @@ router.post('/:id/credits', requireAuth, requireOwnShiftOrAdmin, validate(create
     res.status(result.status).json(result.body);
   } catch (err: any) {
     // details carries a limit breach's figures for the approval prompt.
-    res.status(err.httpStatus || 500).json({ success: false, error: err.message, code: err.code, details: err.details });
+    res.status(err.httpStatus || err.http || 500).json({ success: false, error: err.message, code: err.code, details: err.details });
   }
 });
 
@@ -1468,19 +1488,17 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
   try {
     if (!(await requireOpenShift(req, res))) return;
     const shiftId = Number(req.params.id);
-    const { account_id, pump_id, tank_id, fuel_type, litres } = req.body;
+    // The fill is entered in litres or amount (update #28); the pump it came
+    // from is not asked for. An older client may still send pump_id.
+    const { account_id, pump_id, tank_id, fuel_type } = req.body;
 
-    if (!account_id || !fuel_type || litres === undefined) {
+    if (!account_id || !fuel_type || (req.body.litres === undefined && req.body.amount === undefined)) {
       return res
         .status(400)
-        .json({ success: false, error: 'account_id, fuel_type, and litres are required' });
+        .json({ success: false, error: 'Choose the customer and fuel, and enter the litres or the amount' });
     }
     if (fuel_type !== 'petrol' && fuel_type !== 'diesel') {
       return res.status(400).json({ success: false, error: "fuel_type must be 'petrol' or 'diesel'" });
-    }
-    const litresNum = Number(litres);
-    if (!Number.isFinite(litresNum) || litresNum <= 0) {
-      return res.status(400).json({ success: false, error: 'litres must be a positive number' });
     }
 
     const key = normalizeIdempotencyKey(req.get('Idempotency-Key'));
@@ -1509,15 +1527,15 @@ router.post('/:id/invoice-consumption', requireAuth, requireOwnShiftOrAdmin, asy
         throw Object.assign(new Error('Cannot modify a closed shift.'), { http: 400 });
       }
 
-      const priceAsOf = shift.shift_date || getKenyaDate();
-      const retailPrice = await getRetailPriceAsOf(trx, fuel_type, priceAsOf);
-      if (retailPrice === null) {
-        throw Object.assign(
-          new Error(`No fuel_price configured for ${fuel_type} on/before ${priceAsOf}`),
-          { http: 400 },
-        );
-      }
-      const retailAmount = Math.round(litresNum * retailPrice * 100) / 100;
+      const figures = await fuelDebtFigures(trx, {
+        fuelType: fuel_type,
+        shiftDate: String(shift.shift_date || getKenyaDate()).slice(0, 10),
+        litres: req.body.litres,
+        amount: req.body.amount,
+      });
+      const retailPrice = figures.price;
+      const retailAmount = figures.amount;
+      const litresNum = figures.litres;
       const source = await resolveConsumptionSource(trx, {
         fuelType: fuel_type,
         pumpId: pump_id ? Number(pump_id) : null,
@@ -1763,7 +1781,7 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
   if (!(await requireOpenShift(req, res))) return;
   try {
     const shiftId = parseInt(req.params.id as string);
-    const { account_id, amount, payment_method, notes } = req.body;
+    const { account_id, amount, payment_method, notes, reference } = req.body;
     const pay = Math.round(Number(amount) * 100) / 100;
 
     if (!account_id || !Number.isFinite(pay) || pay <= 0) {
@@ -1790,6 +1808,7 @@ router.post('/:id/credit-receipts', requireAuth, requireOwnShiftOrAdmin, async (
           paymentMethod: method,
           paymentDate: today,
           notes,
+          reference,
           shiftId,
         });
         const account = await trx('credit_accounts')
@@ -1944,15 +1963,7 @@ router.put('/:id/close', requireAdmin, validate(closeShiftSchema), async (req: a
       const invoiceConsumption = await trx('invoice_consumption')
         .where({ shift_id: shift.id })
         .whereNull('deleted_at');
-      const invoiceLitreValidation = validateInvoiceConsumptionAgainstReadings(
-        readings,
-        invoiceConsumption,
-      );
-      if (invoiceLitreValidation.missing_source_entries > 0) {
-        warnings.push(
-          `${invoiceLitreValidation.missing_source_entries} invoice-consumption entr${invoiceLitreValidation.missing_source_entries === 1 ? 'y has' : 'ies have'} no pump/nozzle source. Fuel totals were validated, but source-level reconciliation is incomplete.`,
-        );
-      }
+      validateInvoiceConsumptionAgainstReadings(readings, [...invoiceConsumption, ...shiftCredits]);
 
       const employee_wage = normalizedWage;
       const compensationPlan = shift.compensation_plan_id

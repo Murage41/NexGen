@@ -237,13 +237,20 @@ export const createShiftCreditSchema = z.object({
   account_id: z.number().int().positive().optional(),
   customer_name: z.string().trim().min(1, 'customer_name is required').optional(),
   customer_phone: optionalText(),
-  amount: z.number({ error: 'amount is required' }).positive('amount must be greater than 0'),
+  // A fuel debt (update #28) sends the fuel and the litres and amount the form
+  // showed; any other debt (Other) sends only the amount.
+  amount: z.number().positive('amount must be greater than 0').optional(),
+  fuel_type: z.enum(['petrol', 'diesel', 'other']).optional(),
+  litres: z.number().positive('litres must be greater than 0').optional(),
   description: optionalText(),
   limit_override: z.boolean().optional(),
   approval_token: z.string().max(1000).optional(),
 }).refine((data) => data.account_id || data.customer_name, {
   message: 'Select a customer',
   path: ['account_id'],
+}).refine((data) => data.amount || ((data.fuel_type === 'petrol' || data.fuel_type === 'diesel') && data.litres), {
+  message: 'Enter the litres or the amount',
+  path: ['amount'],
 });
 
 // Kenya Revenue Authority PIN: a letter, nine digits, a letter (A012345678Z).

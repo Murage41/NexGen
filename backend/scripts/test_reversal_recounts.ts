@@ -68,7 +68,7 @@ async function main() {
       // Paid 300 at the till on the shift, 200 directly at the office later.
       const atTill = await recordMoneyAccountPayment(db, { accountId: Number(customer), amount: 300, paymentMethod: 'cash', paymentDate: '2026-09-01', shiftId });
       await db('shifts').where({ id: shiftId }).update({ status: 'closed', end_time: '2026-09-01T18:00:00.000Z' });
-      await recordMoneyAccountPayment(db, { accountId: Number(customer), amount: 200, paymentMethod: 'mpesa', paymentDate: '2026-09-05' });
+      await recordMoneyAccountPayment(db, { accountId: Number(customer), amount: 200, paymentMethod: 'mpesa', paymentDate: '2026-09-05', reference: 'QB11BB0001' });
       assert.equal(Number((await db('credits').where({ id: credit }).first()).balance), 0);
       const shiftBefore = (await readShiftFinancials(db, [shiftId])).get(shiftId)!.current;
       const positionBefore = await getReceivablePositionAsOf(db, '2026-09-02');

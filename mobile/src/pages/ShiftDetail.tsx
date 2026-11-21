@@ -237,6 +237,8 @@ export default function ShiftDetail() {
   const expected = shift.expected_sales || 0;
   const balanceBased = shift.reconciliation_basis === 'balances_v1';
   const hasClosingCount = !balanceBased || Boolean(shift.collection_count_recorded);
+  // Readings count as recorded once any pump shows a sale (they open at the opening figures).
+  const readingsEntered = (shift.readings || []).some((r: any) => Number(r.litres_sold || 0) > 0 || Number(r.amount_sold || 0) > 0);
   const openingTotal = balanceBased ? Number(shift.opening_total ?? (Number(shift.opening_funds?.cash_amount || 0) + Number(shift.opening_funds?.mpesa_amount || 0))) : 0;
   const fundsAdded = balanceBased ? Number(shift.funds_added_total || 0) : 0;
   const fundsRemoved = balanceBased ? Number(shift.funds_removed_total || 0) : 0;
@@ -307,18 +309,13 @@ export default function ShiftDetail() {
           </ul>
         </div>
       )}
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <button type="button" onClick={() => neighbors.previous && navigate(`/shifts/${neighbors.previous.id}${location.search}`)} disabled={!neighbors.previous} className="flex items-center justify-center gap-1 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 disabled:opacity-40">
-          <ChevronLeft size={16} /> Previous
+      {/* Summary, with the previous and next shift as small arrows */}
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <button type="button" onClick={() => neighbors.previous && navigate(`/shifts/${neighbors.previous.id}${location.search}`)} disabled={!neighbors.previous}
+          className="rounded-full border border-gray-300 p-1.5 text-gray-600 disabled:opacity-30" aria-label="Previous shift">
+          <ChevronLeft size={18} />
         </button>
-        <button type="button" onClick={() => neighbors.next && navigate(`/shifts/${neighbors.next.id}${location.search}`)} disabled={!neighbors.next} className="flex items-center justify-center gap-1 py-2.5 border border-gray-300 rounded-lg text-sm text-gray-700 disabled:opacity-40">
-          Next <ChevronRight size={16} />
-        </button>
-      </div>
-
-      {/* Summary */}
-      <div className="flex items-center justify-between mb-3">
-        <div>
+        <div className="flex-1">
           <p className="font-semibold text-gray-800">{shift.employee_name}</p>
           <p className="text-xs text-gray-400">
             {shift.shift_date || new Date(shift.start_time).toLocaleDateString('en-KE')}
@@ -328,7 +325,37 @@ export default function ShiftDetail() {
         <span className={`px-2 py-1 rounded-full text-xs font-medium ${isOpen ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
           {isOpen ? 'Open' : isCancelled ? 'Cancelled' : 'Closed'}
         </span>
+        <button type="button" onClick={() => neighbors.next && navigate(`/shifts/${neighbors.next.id}${location.search}`)} disabled={!neighbors.next}
+          className="rounded-full border border-gray-300 p-1.5 text-gray-600 disabled:opacity-30" aria-label="Next shift">
+          <ChevronRight size={18} />
+        </button>
       </div>
+
+      {/* Steps of an open shift (update #28): what is done, and the next thing to do. */}
+      {isOpen && (
+        <div className={`mb-3 grid gap-2 ${isAdmin ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          <button type="button" onClick={() => navigate(`/shifts/${id}/record?tab=readings`)}
+            className={`rounded-xl border-2 p-2.5 text-center ${readingsEntered ? 'border-green-500 bg-green-50' : 'border-teal-600 bg-white'}`}>
+            <span className={`block text-base font-bold ${readingsEntered ? 'text-green-600' : 'text-teal-700'}`}>{readingsEntered ? '✓' : '1'}</span>
+            <span className="block text-sm font-semibold text-gray-800">Readings</span>
+            <span className="block text-[11px] text-gray-500">{readingsEntered ? fmt(expected) : 'Record'}</span>
+          </button>
+          <button type="button" onClick={() => navigate(`/shifts/${id}/record?tab=collections`)}
+            className={`rounded-xl border-2 p-2.5 text-center ${hasClosingCount ? 'border-green-500 bg-green-50' : readingsEntered ? 'border-teal-600 bg-white' : 'border-gray-200 bg-white'}`}>
+            <span className={`block text-base font-bold ${hasClosingCount ? 'text-green-600' : 'text-teal-700'}`}>{hasClosingCount ? '✓' : '2'}</span>
+            <span className="block text-sm font-semibold text-gray-800">Count</span>
+            <span className="block text-[11px] text-gray-500">{hasClosingCount ? fmt(drawerTotal) : 'Cash and M-Pesa'}</span>
+          </button>
+          {isAdmin && (
+            <button type="button" onClick={openCloseReview} disabled={!hasClosingCount}
+              className={`rounded-xl border-2 p-2.5 text-center ${hasClosingCount ? 'border-teal-600 bg-teal-600 text-white' : 'border-dashed border-gray-300 bg-white text-gray-400'}`}>
+              <Lock size={16} className="mx-auto" />
+              <span className="block text-sm font-semibold">Close</span>
+              <span className="block text-[11px]">{hasClosingCount ? 'Review and lock' : 'After the count'}</span>
+            </button>
+          )}
+        </div>
+      )}
 
       <nav className="flex gap-1 mb-3 rounded-xl bg-gray-200 p-1" aria-label="Shift sections">
         {SHIFT_TABS.filter((t) => t.id !== 'close' || !isCancelled).map((t) => (
@@ -421,6 +448,9 @@ export default function ShiftDetail() {
 
       </>)}
       {activeTab === 'close' && (<>
+      {!isOpen && shift.notes && (
+        <div className="mb-3 rounded-xl bg-white p-3 text-sm shadow-sm"><p className="text-xs font-semibold text-gray-500">Notes</p><p className="text-gray-800 whitespace-pre-wrap">{shift.notes}</p></div>
+      )}
       {/* Outstanding Debt Banner (admin only) */}
       {isAdmin && isOpen && totalDebt > 0 && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3 flex items-center justify-between">
@@ -831,21 +861,6 @@ export default function ShiftDetail() {
       )}
 
       </>)}
-      {/* Actions */}
-      {isOpen && (
-        <div className="space-y-2 mt-4">
-          <button onClick={() => navigate(`/shifts/${id}/record`)}
-            className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-2">
-            <Edit3 size={18} /> Record Readings & Collections
-          </button>
-          {isAdmin && (
-            <button onClick={openCloseReview} disabled={!hasClosingCount}
-              className="w-full bg-red-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-2">
-              <Lock size={18} /> Close & Lock Shift
-            </button>
-          )}
-        </div>
-      )}
 
       {reviewAction && (
         <div className="mobile-modal-overlay flex items-end justify-center">
@@ -960,6 +975,10 @@ export default function ShiftDetail() {
             </div>
 
 
+            <label className="mb-4 block text-sm font-medium text-gray-700">Notes
+              <textarea value={closeNotes} onChange={e => setCloseNotes(e.target.value)} rows={2}
+                placeholder="Anything to remember about this shift" className="mt-1 w-full border border-gray-300 rounded-lg p-3 text-base" />
+            </label>
             {closeError && <p className="text-sm text-red-600 mb-3">{closeError}</p>}
             {/* Confirm */}
             <button onClick={handleClose} disabled={closing || !closeReviewComplete}
