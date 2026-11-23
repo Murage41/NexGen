@@ -8,6 +8,8 @@
     "dev": "vite",
     "dev:electron": "ELECTRON=true vite",
     "build": "set CSC_IDENTITY_AUTO_DISCOVERY=false&& tsc && vite build && electron-builder --config.win.signAndEditExecutable=false",
+    "build:web": "tsc && vite build",
+    "serve": "vite preview --port 5173 --strictPort",
     "preview": "vite preview"
   },
   "dependencies": {

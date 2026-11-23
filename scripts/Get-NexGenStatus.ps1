@@ -2,7 +2,7 @@ $ErrorActionPreference = "SilentlyContinue"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
-Write-Host "Expected station mode ports: backend 3001, desktop 5173, ngrok inspector 4040."
+Write-Host "Expected station mode ports: backend 3001, desktop 5173, and ngrok inspector 4040 while ngrok is the remote link."
 Write-Host "Port 5174 is the mobile Vite dev server and is only expected in full dev mode.`n"
 
 Write-Host "Startup tasks"
@@ -46,13 +46,19 @@ try {
   Write-Host "Backend is not responding on http://127.0.0.1:3001/api/health"
 }
 
-Write-Host "`nNgrok tunnel"
-try {
-  $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
-  $tunnels.tunnels | Select-Object name, public_url, proto, @{Name = "addr"; Expression = { $_.config.addr } } |
-    Format-Table -AutoSize
-} catch {
-  Write-Host "Ngrok inspector is not responding on http://127.0.0.1:4040"
+$cloudflare = Get-Service -Name "cloudflared" -ErrorAction SilentlyContinue
+if ($cloudflare) {
+  Write-Host "`nRemote link: Cloudflare"
+  Write-Host "Windows service cloudflared is $($cloudflare.Status) (it should say Running)."
+} else {
+  Write-Host "`nNgrok tunnel"
+  try {
+    $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+    $tunnels.tunnels | Select-Object name, public_url, proto, @{Name = "addr"; Expression = { $_.config.addr } } |
+      Format-Table -AutoSize
+  } catch {
+    Write-Host "Ngrok inspector is not responding on http://127.0.0.1:4040"
+  }
 }
 
 Write-Host "`nRecent startup logs"

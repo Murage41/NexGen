@@ -23,7 +23,12 @@ if (Test-PortListening -Port 3001) {
   exit 0
 }
 
-$npmCommand = if ($WithTunnel) { "npm run station:tunnel" } else { "npm run station" }
+# When the Cloudflare connector is installed as a Windows service, Windows keeps
+# the remote link running, so NexGen no longer starts ngrok.
+$cloudflare = Get-Service -Name "cloudflared" -ErrorAction SilentlyContinue
+$useNgrok = $WithTunnel -and -not $cloudflare
+$npmCommand = if ($useNgrok) { "npm run station:tunnel" } else { "npm run station" }
+$remoteLink = if ($cloudflare) { "Cloudflare (Windows service cloudflared: $($cloudflare.Status))" } elseif ($useNgrok) { "ngrok" } else { "none" }
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if (-not $npm) {
@@ -38,10 +43,12 @@ Add-Content -Path $LogFile -Value "`n[$timestamp] Starting NexGen station stack 
 Add-Content -Path $LogFile -Value "Root: $Root"
 Add-Content -Path $LogFile -Value "npm: $($npm.Source)"
 Add-Content -Path $LogFile -Value "Command: $npmCommand"
+Add-Content -Path $LogFile -Value "Remote link: $remoteLink"
 
 $cmdArgs = "/c cd /d `"$Root`" && $npmCommand >> `"$LogFile`" 2>&1"
 Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -WindowStyle Hidden
 
 Write-Host "NexGen station stack started in the background."
+Write-Host "Remote link: $remoteLink"
 Write-Host "Log file: $LogFile"
 Write-Host "Status: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Get-NexGenStatus.ps1"

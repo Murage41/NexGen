@@ -4,12 +4,12 @@ Read at the start of every session; update when code, the station or the plan
 changes. What is left to build: `ROADMAP.md`. How to build:
 `ENGINEERING-STANDARDS.md`. How each area works: the manuals below.
 
-Last updated: 2026-11-21.
+Last updated: 2026-11-23.
 
 ## Station PC
 
-- **Runs update #27** (`9453542`, installed 2026-11-20 per the owner's
-  report; see below), on top of #26 `1a428d9`, #25 `16b9642`, #24 `dab2acb`, #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
+- **Runs update #28** (`69b0532`, installed 2026-11-21 per the owner's
+  report, backup taken; see below), on top of #27 `9453542`, #26 `1a428d9`, #25 `16b9642`, #24 `dab2acb`, #23 `123eb2a`, #22 `cdca8fa` and #21 `c97a87f` (one page per employee: owed, earned, pay due; tabs Pay,
   Shortages, Pay plan & details). Before it #20 `90e3022` (phone shift page
   in tabs, cash count first in Money) and #19 `c35dc4e` (desktop shift page
   in tabs, one-press close, "Record my shift"). Latest migration
@@ -90,15 +90,36 @@ Last updated: 2026-11-21.
   the credit limit. New suite `test:invoice-followup`; 50 suites. No database
   change, no new packages; **the phone app needs a rebuild** (`npm run
   build:mobile`).
-- **Pending station update #28** (owner asked for the station commands
-  2026-11-21; pushed to `main` in the commit after `9453542`; next update
-  number #29; `ROADMAP.md` item 6): payment codes required
+- **Update #28 installed 2026-11-21** (owner's report; station now at
+  `69b0532`; backup taken; `ROADMAP.md` item 6): payment codes required
   for M-Pesa/bank/cheque on every payment, never reused, Add code on older
   payments; debts in litres or amount at the pump price for every customer, no
   pump choice, litres checked per fuel; light customer picker; phone step bar
   Readings · Count · Close; notes back on Close. Migration
   `20261121_058_payment_codes_and_debt_fuel` (needs a backup at install);
   phone rebuild. Suite `test:shift-debts-codes`; 51 suites.
+- **Station keys, 2026-11-21:** the station had no `backend\.env`, so it ran
+  on the test session secret and desktop key that are in the public code while
+  the ngrok link was public. The owner created its own keys that evening
+  (`backend\.env` and the matching `desktop\.env`; everyone signed in again).
+  NexGen's logs don't record who made each change, so earlier misuse can't be
+  ruled out; the owner was asked to look over Corrections and recent shifts.
+- **Pending station update #29** (`ROADMAP.md` item 7, phases 1-3; next update
+  number #29): the phone app installs from its link (own icon, full screen),
+  keeps only its own files on the phone (never figures), opens with "Can't
+  reach the station" when the station is out of reach, and offers **Install
+  NexGen** under More. Also phase 2: the desktop screens are built
+  (`npm run build:desktop`) and served on `localhost:5173` instead of the
+  development server, installable from Edge as a NexGen window. And the
+  NexGen side of phase 3 (Cloudflare, owner's choice 2026-11-23): once
+  Cloudflare's connector runs as a Windows service the station stops starting
+  ngrok, and an expired Cloudflare sign-in shows its sign-in page on the
+  phone; the switch itself waits for the company domain. No backend
+  change, no migration, no new packages; phone and desktop builds. Owner,
+  2026-11-22: build every phase first, then one station pass to test and
+  install. Committed 2026-11-23 on branch `claude/project-thread-kp6nr7`
+  (a pull request into `main`); the station pins to that commit, then
+  fast-forwards onto `main` once it is merged.
 - **Also in #25:** one dated shortages list (latest first, red
   adds, green takes off, owed after each line; server `ledger` on the
   statement, no database change), **My Pay renamed My Account** with tabs Pay
