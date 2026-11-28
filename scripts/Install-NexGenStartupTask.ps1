@@ -25,7 +25,7 @@ if ($DelaySeconds -gt 0) {
   $trigger.Delay = "PT${DelaySeconds}S"
 }
 $principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited
-$description = "Starts NexGen backend, desktop dev server, and optional ngrok tunnel when the Windows user logs in. Mobile is served from the backend /mobile build."
+$description = "Starts the NexGen backend and desktop screens when the Windows user logs in, plus the ngrok link unless Cloudflare runs as a Windows service. Mobile is served from the backend /mobile build."
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `

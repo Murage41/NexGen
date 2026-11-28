@@ -31,6 +31,12 @@ analyses stay in `D:\NexGen\.claude\plans\`.
 6. **Shift screens: debts, payment codes, closing** (owner, 2026-11-20; agreed
    2026-11-21 without a notes box on Add debt, and with the close notes back).
    Plan below; built for #28.
+7. **Phone and Windows apps** (owner, 2026-11-21: a native-feeling phone app
+   and maybe a Windows app, keeping remote control from the phone). Plan
+   below; phases 1 (installable phone app) and 2 (desktop as a Windows app)
+   and the NexGen side of 3 (Cloudflare link, owner's choice 2026-11-23)
+   built for #29; owner, 2026-11-22: build every phase, then one station
+   test-and-install pass.
 
 Done: shift date on the open-shift form and B2 (money-only invoice notes)
 both went to the station with #18.
@@ -402,6 +408,77 @@ and Close sat below all tab content.
   the M-Pesa code is the key for matching the statement and spotting
   duplicates (https://tallysolutions.com/ssa/business-guides/reconcile-mpesa-bank-payments-kenya/).
 - Won't solve: NexGen can't confirm a code is real; old debts keep no litres.
+
+## Phone and Windows apps (owner, 2026-11-21)
+
+Plan doc: https://claude.ai/artifact/BzMppiSBDGiRm7bDtHMvQL. The old plan on
+`codex/production-readiness` (Capacitor Android package, Tailscale with plain
+http, Electron installer) is history only: its migrations 029/030 clash with
+`main`, and a package freezes the screens so every station update would need a
+new package on every phone.
+
+**Rule:** the station serves every screen and every device installs it from the
+station. One set of phone screens, one set of desktop screens, one update step.
+Phones stay online-only; nothing financial is kept on a phone.
+
+- **Phase 0, done 2026-11-21:** the station had no `backend\.env`, so it ran on
+  the public test session secret and desktop key while ngrok was public. The
+  owner created the keys (`backend\.env` and the matching `desktop\.env`).
+- **Phase 1, built for #29:** the phone app installs from its link (manifest,
+  icons from the built-in logo, `mobile/public`), a service worker built by
+  `mobile/vite.config.ts` from `mobile/sw/sw.js` keeps only the app's own
+  files (never `/api`), fetches the app page fresh on every open and drops the
+  previous build's files; "Can't reach the station" banner; **Install NexGen**
+  under More when the phone offers it. No backend change, no new packages.
+  Check after install: on a real phone over ngrok, install, open from the
+  icon, airplane mode. If ngrok's warning page blocks it, phase 3 comes next.
+- **Phase 2, built for #29:** `npm run build:desktop` builds the desktop
+  screens (`desktop/dist`, no Electron) and `station`/`station:tunnel` serve
+  them with `vite preview` on `localhost:5173` (this PC only) instead of the
+  development server; manifest and icons in `desktop/public`; installed from
+  Edge as an app with auto-start (`STATION-PC.md`). Needs the phase 0 keys: a
+  production desktop build has no fallback key
+  (`desktop/src/renderer/services/api.ts:7-8`). Check at the station: the
+  window opens Today with figures, no "Authentication required".
+- **Phase 3, Cloudflare Tunnel + Access on the company domain (owner,
+  2026-11-23; free up to 50 users, deny by default); NexGen side built for
+  #29:** `scripts/Start-NexGenStationStack.ps1` stops starting ngrok once the
+  `cloudflared` Windows service exists, and the status script shows it. The
+  phone service worker fetches the app page with `redirect: 'manual'` and
+  hands a sign-in redirect to the browser, so an expired Access sign-in shows
+  Cloudflare's sign-in page instead of a kept copy stuck on "Can't reach the
+  station" (the Gramps Web case). The manifest link sends cookies
+  (`crossorigin="use-credentials"`). Checked in headless Chrome behind a
+  stand-in sign-in proxy (first visit, expiry on open, expiry mid-use then
+  Try again, offline); with the fix removed the phone stays stuck. Setup is
+  owner steps in `STATION-PC.md` (domain, Access app with emailed codes and a
+  1-month session, then the tunnel) and waits for the company domain. After
+  the switch, remove the old ngrok address from `NexGen-Migration-Guide.md`.
+  Rejected: ngrok Hobbyist ($8-10 a month), Tailscale (owner only).
+- **Later:** with G1 named logins, the backend as a Windows service and desktop
+  screens on other PCs; only for other stations, a Play Store listing as a
+  Trusted Web Activity and a signed Windows installer.
+
+Sources: Capacitor config, `server.url` "not intended for use in production"
+(https://capacitorjs.com/docs/v6/config); web.dev install criteria
+(https://web.dev/articles/install-criteria); Microsoft Edge PWAs on Windows
+(https://learn.microsoft.com/en-us/microsoft-edge/progressive-web-apps/ux);
+Chrome Trusted Web Activity
+(https://developer.chrome.com/docs/android/trusted-web-activity/quick-start);
+ngrok free limits (https://ngrok.com/docs/pricing-limits/free-plan-limits) and
+pricing (https://ngrok.com/pricing.md); Tailscale pricing
+(https://tailscale.com/pricing); Cloudflare Access
+(https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/index.md,
+https://www.cloudflare.com/en-gb/sase/products/access/); Access deny by
+default
+(https://developers.cloudflare.com/learning-paths/clientless-access/access-application/create-access-app/),
+session lengths up to one month
+(https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/),
+one-time PIN (https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/one-time-pin/index.md),
+cookies and `use-credentials`
+(https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/cors/index.md);
+an installed web app stuck after its Access sign-in expired
+(https://gramps.discourse.group/t/cannot-access-gramps-web-once-cloudflare-access-session-expires/9386).
 
 ## Later, in order
 

@@ -311,7 +311,9 @@ pushed commits.
    `git fetch origin` (first block), `git merge --ff-only <commit>`,
    `npm run backup:database -w backend` (always when a migration is included),
    `npm install` (when dependencies changed), `npm run build:mobile` (the
-   phone app is served from `mobile/dist`), `npm run station:bg`.
+   phone app is served from `mobile/dist`), `npm run build:desktop` (from
+   #29 the desktop screens are served from `desktop/dist`, with the key from
+   `desktop\.env` built in), `npm run station:bg`.
    Why stop first (the owner caught this, 2026-09-25): the station backend runs
    `tsx watch`, so a merge while it runs restarts it on the new files, and it
    migrates the database on start, i.e. **before** the backup step.
@@ -331,6 +333,12 @@ plain `git` / `npm` lines, and anything PowerShell-only wrapped as
 `powershell -NoProfile -Command "..."`. Before giving commands, check the
 scripts and docs they rely on; don't assume. Say what each check should show,
 and to stop and report if something differs.
+
+**One command per line, pasted one at a time** (2026-11-21): pasting a whole
+block into Command Prompt once joined the lines into one, which ran the wrong
+commands. Say so above every block. A new station PC needs its own
+`backend\.env` and `desktop\.env` keys before ngrok starts (`STATION-PC.md`);
+without them the backend uses the public test keys.
 
 **Station infrastructure** (start-up task, `scripts/*.ps1`): change only what
 the owner asked, with the smallest change, and give the way back. A broad

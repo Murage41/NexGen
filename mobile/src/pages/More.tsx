@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import { Users, Fuel, DollarSign, BarChart3, LogOut, Droplets, Truck, FileText, WalletCards } from 'lucide-react';
+import { Users, Fuel, DollarSign, BarChart3, LogOut, Droplets, Truck, FileText, WalletCards, Download } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
+import { installApp, useCanInstallApp } from '../utils/installApp';
 
 type MenuItem = {
   label: string;
@@ -27,6 +28,7 @@ const menuItems: MenuItem[] = [
 export default function More() {
   const navigate = useNavigate();
   const { logout, isAdmin } = useAuth();
+  const canInstall = useCanInstallApp();
 
   const visibleItems = menuItems.filter(item => !item.adminOnly || isAdmin);
 
@@ -48,6 +50,18 @@ export default function More() {
           </button>
         ))}
       </div>
+
+      {canInstall && (
+        <button
+          onClick={installApp}
+          className="w-full mt-3 bg-white rounded-xl p-4 shadow-sm flex items-center gap-4 active:bg-gray-50"
+        >
+          <div className="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center">
+            <Download size={22} className="text-gray-700" />
+          </div>
+          <span className="text-base font-medium text-gray-800">Install NexGen</span>
+        </button>
+      )}
 
       <button
         onClick={logout}

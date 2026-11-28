@@ -26,6 +26,16 @@ function operationConfig(key?: string) {
   return key ? { headers: { 'Idempotency-Key': key } } : undefined;
 }
 
+// NexGen's API never answers with a web page; one means the link answered instead.
+function isLinkPage(response: any): boolean {
+  return !!response && String(response.headers?.['content-type'] || '').includes('text/html');
+}
+
+// Tells the "Can't reach the station" banner whether the station answered.
+function stationAnswered(answered: boolean) {
+  window.dispatchEvent(new Event(answered ? 'nexgen:station-reachable' : 'nexgen:station-unreachable'));
+}
+
 // Attach session token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('nexgen_token');
@@ -39,13 +49,24 @@ api.interceptors.request.use((config) => {
 // NexGen cannot be reached or the server fails. Form errors stay on the form.
 api.interceptors.response.use(
   (response) => {
+    if (isLinkPage(response)) {
+      // A web page from the link (a tunnel warning or error page), not NexGen's reply.
+      stationAnswered(false);
+      notify('error', errorText({}));
+      return Promise.reject(Object.assign(new Error('No connection to NexGen'), { config: response.config }));
+    }
+    stationAnswered(true);
     const done = doneMessageFor(response.config.method, response.config.url);
     if (done) notify('success', done);
     return response;
   },
   (error) => {
     const status = error?.response?.status;
+    // No answer, or a web page from the link instead of NexGen's reply: the station is out of reach.
+    const linkPage = isLinkPage(error?.response);
+    stationAnswered(!!error?.response && !linkPage);
     if (!error?.response || status >= 500) notify('error', errorText(error));
+    else if (linkPage) notify('error', errorText({}));
     const url = String(error?.config?.url || '');
     if (status === 401 && !url.includes('/auth/login')) {
       localStorage.removeItem('nexgen_token');
